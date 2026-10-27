@@ -1,0 +1,42 @@
+# Every server's packages: a shared list and a list per server. The playbook
+# installs these and never removes anything that isn't named in remove.
+shared:
+  - acl
+  - age
+  - bat
+  - ca-certificates
+  - curl
+  - fzf
+  - git
+  - git-lfs
+  - gnupg
+  - jq
+  - lynis
+  # The playbook's deb822_repository needs it.
+  - python3-debian
+  - tmux
+  - tree
+  - ufw
+  - unattended-upgrades
+  - vim
+  - zoxide
+  - zsh
+
+per_host:
+  dor-lomin: []
+  # Rivendell's deploy runs rivendell.py with the system Python, which needs
+  # click.
+  rivendell:
+    - python3-click
+  esgaroth: []
+
+# Installed only where the release packages them: Ubuntu 24.04 and later,
+# Debian 13 and later.
+newer_releases:
+  - eza
+
+# Removed where nothing prints.
+remove:
+  - cups
+  - cups-browsed
+  - cups-daemon

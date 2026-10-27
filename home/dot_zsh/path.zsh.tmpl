@@ -1,0 +1,17 @@
+# Sourced by ~/.zshenv for every shell, and again by ~/.zprofile, because on
+# macOS /etc/zprofile runs path_helper in between and moves the system paths
+# back in front. ~/.local/bin goes first: Claude Code, T3 and Hermes install
+# there.
+
+typeset -gU path PATH
+path=(
+  $HOME/.local/bin
+{{- if .isMac }}
+  /opt/homebrew/bin
+  /opt/homebrew/sbin
+  /Library/TeX/Distributions/.DefaultTeX/Contents/Programs/texbin
+  $HOME/bin
+{{- end }}
+  $path
+)
+export PATH

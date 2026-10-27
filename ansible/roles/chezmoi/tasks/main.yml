@@ -1,0 +1,74 @@
+# Last: the admin user's home folder belongs to chezmoi, applied as a server.
+# Ansible owns the system; chezmoi owns the home folder.
+
+- name: Fetch chezmoi {{ pins.chezmoi.version }}
+  ansible.builtin.get_url:
+    url: "https://github.com/twpayne/chezmoi/releases/download/v{{ pins.chezmoi.version }}/chezmoi_{{ pins.chezmoi.version }}_linux_{{ deb_arch }}.deb"
+    dest: "/var/cache/chezmoi_{{ pins.chezmoi.version }}_linux_{{ deb_arch }}.deb"
+    checksum: "sha256:{{ pins.chezmoi.sha256[deb_arch] }}"
+    mode: "0644"
+
+- name: Look for the fetched package
+  ansible.builtin.stat:
+    path: "/var/cache/chezmoi_{{ pins.chezmoi.version }}_linux_{{ deb_arch }}.deb"
+  register: chezmoi_deb
+
+# In --check nothing is fetched, so a package not cached yet can't be shown.
+- name: Install chezmoi
+  ansible.builtin.apt:
+    deb: "/var/cache/chezmoi_{{ pins.chezmoi.version }}_linux_{{ deb_arch }}.deb"
+    lock_timeout: 300
+  when: not ansible_check_mode or chezmoi_deb.stat.exists
+
+- name: Find the admin user's home folder
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ admin_user }}"
+
+- name: Look for the dotfiles checkout
+  ansible.builtin.stat:
+    path: "{{ getent_passwd[admin_user][4] }}/.local/share/chezmoi/.git"
+  register: dotfiles_checkout
+
+# dotfiles_repo is GitHub's ctejada10/dotfiles; a rehearsal on a throwaway
+# VM points it at a local copy with -e dotfiles_repo=<url>.
+- name: Set up the home folder from the dotfiles, as a server
+  ansible.builtin.command: >-
+    chezmoi init --apply --no-tty --promptChoice role=server
+    --promptString "hostname={{ inventory_hostname }},displayName={{ display_name }}"
+    {{ dotfiles_repo | default('ctejada10') }}
+  become: true
+  become_user: "{{ admin_user }}"
+  changed_when: true
+  when: not dotfiles_checkout.stat.exists
+
+# chezmoi won't overwrite a file edited since it wrote it, and without a
+# terminal it would stop with a cryptic error. Name the files instead.
+- name: Look for managed files edited on the server
+  ansible.builtin.command: chezmoi status --no-tty
+  become: true
+  become_user: "{{ admin_user }}"
+  register: chezmoi_status
+  changed_when: false
+  check_mode: false
+  when: dotfiles_checkout.stat.exists
+
+- name: Stop if any were
+  ansible.builtin.assert:
+    that: edited | length == 0
+    fail_msg: >-
+      These files in {{ admin_user }}'s home on {{ inventory_hostname }} were changed since
+      chezmoi wrote them: {{ edited | join(', ') }}. Move the change into the dotfiles repo,
+      or run chezmoi apply --force there to drop it, then run the playbook again.
+    quiet: true
+  vars:
+    edited: "{{ chezmoi_status.stdout_lines | select('match', '^[^ ]') | map('regex_replace', '^.. ', '') | list }}"
+  when: dotfiles_checkout.stat.exists
+
+- name: Bring the home folder up to date with the dotfiles
+  ansible.builtin.command: chezmoi update --apply --no-tty --verbose
+  become: true
+  become_user: "{{ admin_user }}"
+  register: chezmoi_update
+  changed_when: "'diff --git' in chezmoi_update.stdout"
+  when: dotfiles_checkout.stat.exists

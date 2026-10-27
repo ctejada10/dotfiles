@@ -1,0 +1,26 @@
+# The global gitignore keeps agent config out of every repo. This repo is where
+# that config lives, so its copies under home/dot_claude and home/dot_codex
+# are re-included. This comes first, so the rules below still apply inside it.
+!home/dot_claude/
+!home/dot_claude/**
+!home/dot_codex/
+!home/dot_codex/**
+
+# Licensed fonts never enter this repo, not even encrypted, and neither does
+# the zip they come in. MonoLisa comes from 1Password at setup time; open fonts
+# come from Homebrew casks.
+*.ttf
+*.otf
+*.ttc
+*.woff
+*.woff2
+*.zip
+
+.DS_Store
+
+# The playbook's tools and collections, installed from ansible/uv.lock and
+# ansible/requirements.yml.
+ansible/.venv/
+ansible/collections/
+# ansible-core and ansible-lint leave their cache at the project root.
+.ansible/

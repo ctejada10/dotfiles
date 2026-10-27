@@ -1,0 +1,21 @@
+# esgaroth: the Home Assistant box at home, reached over the tailnet only.
+# The playbook hardens Ubuntu and Debian; it stops at its first check if
+# esgaroth runs Home Assistant OS.
+
+# No public address, so nothing to scan and SSH is open on tailscale0 only.
+public_ports: []
+ssh_tailnet_only: true
+# Open to the home network only, from private addresses. Home Assistant's web
+# port; check what else esgaroth serves at home before its first run.
+lan_ports:
+  - { port: 8123, proto: tcp, comment: home assistant }
+ufw_remove: []
+
+docker: false
+docker_loopback_default: false
+tailscale: true
+samba: false
+
+reboot_time: "03:00"
+password_login: false
+deploy_public_key: ""

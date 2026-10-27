@@ -1,0 +1,316 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /*
+  Claude Code writes this file itself: extraKnownMarketplaces when a
+  marketplace is added, preferences from /config, autoMode. So chezmoi sets
+  only the keys below and keeps everything else; autoMode stays local to each
+  machine. When the managed keys already match, the file is left byte for byte
+  as it is, so `chezmoi verify` doesn't flag Claude Code's own key order.
+*/ -}}
+{{- $raw := "" -}}
+{{- if hasKey .chezmoi "stdin" }}{{ $raw = .chezmoi.stdin }}{{ end -}}
+{{- $current := dict -}}
+{{- if $raw }}{{ $current = fromJson $raw }}{{ end -}}
+{{- $s := deepCopy $current -}}
+{{- $home := .chezmoi.homeDir -}}
+{{- $laptop := eq .role "laptop" -}}
+
+{{- $s = setValueAtPath "cleanupPeriodDays" 90 $s -}}
+{{- $s = setValueAtPath (list "env" "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD") "1" $s -}}
+{{- $s = setValueAtPath "theme" "auto" $s -}}
+{{- $s = setValueAtPath "tui" "fullscreen" $s -}}
+{{- $s = setValueAtPath "skipWorkflowUsageWarning" true $s -}}
+{{- $s = setValueAtPath "agentPushNotifEnabled" true $s -}}
+{{- /* No AI attribution in commits or PRs, on any machine: empty strings turn
+       off the Co-Authored-By trailer and the "Generated with" line. */ -}}
+{{- $s = setValueAtPath (list "attribution" "commit") "" $s -}}
+{{- $s = setValueAtPath (list "attribution" "pr") "" $s -}}
+{{- $s = setValueAtPath (list "attribution" "sessionUrl") false $s -}}
+{{- /* The mini's agents follow ~/.codex/AGENTS.md for Git, which lets them
+       commit and push their own branches; Claude Code's built-in Git
+       instructions say never to push unless asked, and would argue with it. */ -}}
+{{- if .isAgent -}}
+{{-   $s = setValueAtPath "includeGitInstructions" false $s -}}
+{{- end -}}
+
+{{- $allow := list
+  "Bash(ls:*)" "Bash(cat:*)" "Bash(head:*)" "Bash(tail:*)" "Bash(wc:*)"
+  "Bash(find:*)" "Bash(rg:*)" "Bash(grep:*)" "Bash(sed -n:*)" "Bash(awk:*)"
+  "Bash(jq:*)" "Bash(sort:*)" "Bash(uniq:*)" "Bash(cut:*)" "Bash(tr:*)"
+  "Bash(diff:*)" "Bash(stat:*)" "Bash(file:*)" "Bash(which:*)"
+  "Bash(command -v:*)" "Bash(echo:*)" "Bash(date:*)" "Bash(xattr -p:*)"
+  "Bash(git status:*)" "Bash(git log:*)" "Bash(git show:*)" "Bash(git diff:*)"
+  "Bash(git ls-files:*)" "Bash(git ls-tree:*)" "Bash(git rev-parse:*)"
+  "Bash(git rev-list:*)" "Bash(git for-each-ref:*)" "Bash(git blame:*)"
+  "Bash(git remote -v)" "Bash(git config --get:*)" "Bash(git fetch:*)"
+  "Bash(git fsck:*)"
+  "Bash(gh pr view:*)" "Bash(gh pr list:*)" "Bash(gh pr diff:*)"
+  "Bash(gh pr checks:*)" "Bash(gh run list:*)" "Bash(gh run view:*)"
+  "Bash(gh issue view:*)" "Bash(gh issue list:*)"
+  "Bash(pytest:*)" "Bash(uv run pytest:*)" "Bash(uv run ruff:*)"
+  "Bash(uv run mypy:*)" "Bash(ruff check:*)" "Bash(pip show:*)"
+  "Bash(pip list:*)" "Bash(uv pip list:*)" "Bash(docker ps:*)"
+  "WebSearch"
+  "WebFetch(domain:github.com)" "WebFetch(domain:raw.githubusercontent.com)"
+  "WebFetch(domain:docs.claude.com)"
+  "Skill(run)" "Skill(code-review)"
+  "Read(//private/tmp/**)"
+-}}
+
+{{- /* Absolute patterns, with a leading //: a relative pattern only covers the
+       folder Claude Code was started in and the folders below it. */ -}}
+{{- $deny := list
+  (printf "Read(/%s/.ssh/**)" $home)
+  (printf "Read(/%s/.aws/**)" $home)
+  (printf "Read(/%s/.config/gh/**)" $home)
+  (printf "Read(/%s/.config/op/**)" $home)
+  (printf "Read(/%s/.config/rclone/**)" $home)
+  (printf "Read(/%s/.config/sops/**)" $home)
+  (printf "Read(/%s/Library/Application Support/sops/**)" $home)
+  (printf "Read(/%s/.netrc)" $home)
+  (printf "Read(/%s/.claude/.credentials.json)" $home)
+  (printf "Read(/%s/.claude-api/**)" $home)
+  (printf "Read(/%s/.codex/auth.json)" $home)
+  (printf "Read(/%s/.hermes/.env)" $home)
+  (printf "Read(/%s/Documents/armenelos/.obsidian/**)" $home)
+  "Read(//**/.env)" "Read(//**/.env.local)" "Read(//**/.env.*.local)"
+  "Read(//**/.env.production)" "Read(//**/.env.development)" "Read(//**/.env.test)"
+  "Read(//**/.env.staging)" "Read(//**/*.pem)" "Read(//**/*.key)"
+  "Read(//**/id_rsa*)" "Read(//**/id_ed25519*)" "Read(//**/credentials*.json)"
+  (printf "Edit(/%s/Documents/armenelos/.obsidian/**)" $home)
+  "Edit(//**/.env)" "Edit(//**/*.pem)" "Edit(//**/*.key)"
+  "Bash(git push --force:*)" "Bash(git push -f:*)"
+-}}
+{{- /* T3: on the mini, where agents run inside it, only its secrets and
+       state are off limits; its worktrees, attachments and browser
+       artifacts are the agents' working files. Elsewhere, all of it. */ -}}
+{{- if .isAgent -}}
+{{-   $deny = concat $deny (list
+        (printf "Read(/%s/.t3/service.env)" $home)
+        (printf "Read(/%s/.t3/userdata/*.sqlite*)" $home)
+        (printf "Read(/%s/.t3/userdata/settings.json)" $home)
+        (printf "Read(/%s/.t3/userdata/secrets/**)" $home)
+        (printf "Read(/%s/.t3/userdata/logs/**)" $home)
+        (printf "Read(/%s/.t3/dev/**)" $home)
+        (printf "Read(/%s/.t3/caches/**)" $home)) -}}
+{{- else -}}
+{{-   $deny = append $deny (printf "Read(/%s/.t3/**)" $home) -}}
+{{- end -}}
+
+{{- $ask := list
+  "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)" "Bash(git reset:*)"
+  "Bash(git rebase:*)" "Bash(git checkout:*)" "Bash(git switch:*)"
+  "Bash(git restore:*)" "Bash(git merge:*)" "Bash(git clean:*)"
+  "Bash(git stash:*)" "Bash(git branch:*)" "Bash(git gc:*)" "Bash(git repack:*)"
+  "Bash(git prune:*)" "Bash(git tag:*)" "Bash(git filter-branch:*)"
+  "Bash(gh auth:*)" "Bash(gh repo:*)" "Bash(gh api:*)" "Bash(gh pr merge:*)"
+  "Bash(gh pr close:*)" "Bash(gh pr create:*)" "Bash(gh issue close:*)"
+  "Bash(gh issue create:*)" "Bash(gh release:*)"
+  "Bash(curl:*)" "Bash(wget:*)" "Bash(ssh:*)" "Bash(scp:*)" "Bash(rsync:*)"
+  "Bash(osascript:*)"
+  "Bash(pip install:*)" "Bash(pip3 install:*)" "Bash(uv sync:*)" "Bash(uv add:*)"
+  "Bash(uv pip install:*)" "Bash(uv tool install:*)" "Bash(npm install:*)"
+  "Bash(brew install:*)"
+  "Bash(rm:*)" "Bash(mv:*)" "Bash(chmod:*)" "Bash(ln:*)" "Bash(unzip:*)"
+  "Bash(tee:*)" "Bash(xargs:*)" "Bash(sqlite3:*)"
+  "Bash(docker volume:*)" "Bash(docker system:*)" "Bash(docker compose down:*)"
+  "Bash(env)" "Bash(printenv)" "Bash(xattr -w:*)" "Bash(xattr -d:*)"
+  "Bash(obsidian:*)"
+-}}
+
+{{- /* The mini runs agents nobody is watching. An ask rule still prompts in
+       T3's full-access mode, and T3 holds the prompt with no time limit, so
+       the mini has none: what its rules forbid is denied instead, and the
+       rest runs. hooks/guard-git.py blocks the Git forms a prefix misses. */ -}}
+{{- if .isAgent -}}
+{{-   $ask = list -}}
+{{-   $deny = concat $deny (list
+        "Bash(git gc:*)" "Bash(git repack:*)" "Bash(git prune:*)" "Bash(git maintenance:*)"
+        "Bash(git worktree prune:*)" "Bash(git filter-branch:*)" "Bash(git stash:*)"
+        "Bash(git commit --no-verify:*)" "Bash(git push --no-verify:*)"
+        "Bash(gh auth token:*)" "Bash(gh auth login:*)" "Bash(gh auth logout:*)"
+        "Bash(gh auth refresh:*)" "Bash(gh auth setup-git:*)" "Bash(gh auth switch:*)"
+        "Bash(gh repo create:*)" "Bash(gh repo delete:*)" "Bash(gh repo edit:*)"
+        "Bash(gh repo fork:*)" "Bash(gh repo rename:*)" "Bash(gh repo archive:*)"
+        "Bash(gh repo unarchive:*)" "Bash(gh repo sync:*)" "Bash(gh repo set-default:*)"
+        "Bash(gh repo deploy-key:*)"
+        "Bash(gh release create:*)" "Bash(gh release delete:*)" "Bash(gh release edit:*)"
+        "Bash(gh release upload:*)" "Bash(gh release delete-asset:*)"
+        "Bash(ssh:*)" "Bash(scp:*)" "Bash(rsync:*)" "Bash(osascript:*)"
+        "Bash(brew install:*)" "Bash(uv tool install:*)"
+        "Bash(chezmoi apply:*)" "Bash(chezmoi update:*)" "Bash(chezmoi init:*)"
+        "Bash(chezmoi destroy:*)" "Bash(chezmoi purge:*)"
+        "Bash(op:*)"
+        "Bash(env)" "Bash(printenv)") -}}
+{{- /* The deployed agent and shell config, which the rules say never to
+       edit. An Edit rule covers Edit, Write and NotebookEdit. The dotfiles
+       source that makes them is guarded by hooks/guard-paths.sh instead. */ -}}
+{{-   range $path := list ".codex/**" ".claude/settings.json" ".claude/CLAUDE.md" ".claude/attended.md"
+        ".claude/hooks/**" ".claude/skills/**" ".claude/agents/**" ".claude/plugins/**"
+        ".local/share/claude-plugins/**" ".gitconfig" ".zshrc" ".zshenv" ".zprofile" ".zsh/**" -}}
+{{-     $deny = append $deny (printf "Edit(/%s/%s)" $home $path) -}}
+{{-   end -}}
+{{-   $deny = concat $deny (list
+        "Skill(superpowers:using-superpowers)"
+        "Bash(git push --force-with-lease:*)" "Bash(git push --force-if-includes:*)"
+        "Bash(git push origin main:*)" "Bash(git push origin master:*)"
+        "Bash(gh pr merge:*)" "Bash(gh pr ready:*)") -}}
+{{- end -}}
+
+{{- /* A fetch on the laptop writes objects into a mini repo's .git, which
+       Dropbox shares; the read-only guard stops it, but nothing should start one. */ -}}
+{{- if $laptop -}}
+{{-   $allow = without $allow "Bash(git fetch:*)" -}}
+{{- end -}}
+
+{{- $s = setValueAtPath (list "permissions" "allow") $allow $s -}}
+{{- $s = setValueAtPath (list "permissions" "deny") $deny $s -}}
+{{- $s = setValueAtPath (list "permissions" "ask") $ask $s -}}
+{{- if $laptop -}}
+{{-   $s = setValueAtPath (list "permissions" "additionalDirectories") (list (printf "%s/Documents/armenelos" $home)) $s -}}
+{{- end -}}
+
+{{- /* Hooks. Only the ones this repo ships are managed: each apply takes
+       every one of them out of whatever entry holds it, drops entries left
+       empty, and adds back this role's set. Hooks other tools add, in any
+       entry or event, stay where they are. */ -}}
+{{- $hookDir := printf "%s/.claude/hooks" $home -}}
+{{- $shipped := list -}}
+{{- range $name := list "guard-paths.sh" "warn-risky.sh" "guard-git.py" "guard-vault.py" "worktree.sh create" "worktree.sh remove" "agent-gate.sh" -}}
+{{-   $shipped = append $shipped (printf "%s/%s" $hookDir $name) -}}
+{{- end -}}
+{{- $bashHooks := list (dict "type" "command" "command" (printf "%s/warn-risky.sh" $hookDir) "timeout" 10) -}}
+{{- if .isAgent -}}
+{{-   $bashHooks = append $bashHooks (dict "type" "command" "command" (printf "%s/guard-git.py" $hookDir) "timeout" 10) -}}
+{{- end -}}
+{{- if $laptop -}}
+{{-   $bashHooks = append $bashHooks (dict "type" "command" "command" (printf "%s/guard-vault.py" $hookDir) "timeout" 10) -}}
+{{- end -}}
+{{- $ours := dict "PreToolUse" (list
+      (dict "matcher" "Edit|Write|NotebookEdit" "hooks" (list
+        (dict "type" "command" "command" (printf "%s/guard-paths.sh" $hookDir) "timeout" 10)))
+      (dict "matcher" "Bash" "hooks" $bashHooks)) -}}
+{{- if .isAgent -}}
+{{- /* The mini's own Claude Code worktrees go in ~/worktrees, outside Dropbox,
+       instead of inside the repo. */ -}}
+{{-   $_ := set $ours "WorktreeCreate" (list (dict "hooks" (list
+        (dict "type" "command" "command" (printf "%s/worktree.sh create" $hookDir) "timeout" 120)))) -}}
+{{-   $_ := set $ours "WorktreeRemove" (list (dict "hooks" (list
+        (dict "type" "command" "command" (printf "%s/worktree.sh remove" $hookDir) "timeout" 60)))) -}}
+{{- /* agent-gate.sh keeps superpowers' skills from waiting on Carlos when
+       Carlos isn't in the session (see the hook). */ -}}
+{{-   $gate := dict "type" "command" "command" (printf "%s/agent-gate.sh" $hookDir) "timeout" 10 -}}
+{{-   $_ := set $ours "PreToolUse" (append (get $ours "PreToolUse") (dict "matcher" "Skill|AskUserQuestion" "hooks" (list $gate))) -}}
+{{-   $_ := set $ours "SessionStart" (list (dict "matcher" "startup|resume|clear|compact|fork" "hooks" (list $gate))) -}}
+{{- end -}}
+{{- range $event := list "PreToolUse" "SessionStart" "WorktreeCreate" "WorktreeRemove" -}}
+{{-   $kept := list -}}
+{{-   range $entry := (get (get $s "hooks" | default dict) $event | default list) -}}
+{{-     $left := list -}}
+{{-     range $h := (get $entry "hooks" | default list) -}}
+{{-       if not (has (get $h "command" | toString) $shipped) }}{{ $left = append $left $h }}{{ end -}}
+{{-     end -}}
+{{-     if $left -}}
+{{-       $copy := dict -}}
+{{-       range $k, $v := $entry }}{{ $_ := set $copy $k $v }}{{ end -}}
+{{-       $_ := set $copy "hooks" $left -}}
+{{-       $kept = append $kept $copy -}}
+{{-     end -}}
+{{-   end -}}
+{{-   $all := concat $kept (get $ours $event | default list) -}}
+{{-   if $all -}}
+{{-     $s = setValueAtPath (list "hooks" $event) $all $s -}}
+{{-   else if hasKey (get $s "hooks" | default dict) $event -}}
+{{-     $_ := unset (get $s "hooks") $event -}}
+{{-   end -}}
+{{- end -}}
+
+{{- /* Plugins. Claude Code clones a declared marketplace and downloads its
+       enabled plugins in the background after a session starts, so declaring
+       them is the whole install. Entries are set one by one, so plugins added
+       by hand stay. Third-party marketplaces don't auto-update; refresh them
+       with `claude plugin marketplace update <name>`. Which plugin does which
+       job is in AGENTS.md's Routing section. */ -}}
+{{- $marketplaces := dict -}}
+{{- $plugins := dict -}}
+{{- $env := dict -}}
+{{- /* The laptop: personal work and job hunting only. No development tools:
+       all development happens on the mini. */ -}}
+{{- if $laptop -}}
+{{-   $_ := set $marketplaces "obsidian-skills" "kepano/obsidian-skills" -}}
+{{-   $_ := set $plugins "obsidian@obsidian-skills" true -}}
+{{- /* blader/humanizer, not the claude-community entry of the same name,
+       which is a diverged fork. For cover letters, run only when asked. */ -}}
+{{-   $_ := set $marketplaces "humanizer" "blader/humanizer" -}}
+{{-   $_ := set $plugins "humanizer@humanizer" true -}}
+{{- /* freehire's hosted, read-only job search. No token, no account writes. */ -}}
+{{-   $_ := set $marketplaces "freehire" "strelov1/freehire-mcp" -}}
+{{-   $_ := set $plugins "freehire@freehire" true -}}
+{{- /* Development plugins the old setup enabled here, switched off. */ -}}
+{{-   $_ := set $plugins "ty-python-lsp@claude-community" false -}}
+{{- end -}}
+{{- /* The mini: where all development happens. t3-pstack drives the process
+       there; it is installed by hand (README), and its installer writes its own
+       enabledPlugins and marketplace entries, which this keeps. pstack stays
+       off: t3-pstack is its port for T3. */ -}}
+{{- if .isAgent -}}
+{{-   $_ := set $marketplaces "claude-community" "anthropics/claude-plugins-community" -}}
+{{-   $_ := set $marketplaces "trailofbits" "trailofbits/skills" -}}
+{{-   $_ := set $marketplaces "karpathy-skills" "multica-ai/andrej-karpathy-skills" -}}
+{{-   $_ := set $marketplaces "agentsys" "agent-sh/agentsys" -}}
+{{-   $_ := set $marketplaces "ponytail" "DietrichGebert/ponytail" -}}
+{{-   $_ := set $plugins "ty-python-lsp@claude-community" true -}}
+{{-   $_ := set $plugins "supply-chain-risk-auditor@trailofbits" true -}}
+{{-   $_ := set $plugins "property-based-testing@trailofbits" true -}}
+{{-   $_ := set $plugins "mutation-testing@trailofbits" true -}}
+{{-   $_ := set $plugins "spec-to-code-compliance@trailofbits" true -}}
+{{-   $_ := set $plugins "andrej-karpathy-skills@karpathy-skills" true -}}
+{{- /* agentsys carries the current agnix plugin; claude-community's entry is
+       stale. The agnix CLI comes from run_after_56-agent-clis. */ -}}
+{{-   $_ := set $plugins "agnix@agentsys" true -}}
+{{- /* superpowers as a skill library, from the local marketplace in
+       ~/.local/share/claude-plugins/sp-gated: its own session hook is
+       replaced by one that does nothing, so t3-pstack stays the only router.
+       The official copy stays off, so two plugins named superpowers never
+       load. using-superpowers, the bootstrap, is denied below. */ -}}
+{{-   $_ := set $plugins "superpowers@sp-gated" true -}}
+{{-   $_ := set $plugins "superpowers@claude-plugins-official" false -}}
+{{-   $_ := set $env "SUPERPOWERS_DISABLE_TELEMETRY" "1" -}}
+{{- /* The mini's coding agents run with Ponytail's full ruleset, always on. */ -}}
+{{-   $_ := set $plugins "ponytail@ponytail" true -}}
+{{-   $_ := set $env "PONYTAIL_DEFAULT_MODE" "full" -}}
+{{- end -}}
+{{- if .isServer -}}
+{{-   $_ := set $marketplaces "pstack-claude" "michael-denyer/pstack-claude" -}}
+{{-   $_ := set $plugins "pstack@pstack-claude" true -}}
+{{- end -}}
+{{- range $name, $value := $env -}}
+{{-   $s = setValueAtPath (list "env" $name) $value $s -}}
+{{- end -}}
+{{- range $name, $repo := $marketplaces -}}
+{{-   $s = setValueAtPath (list "extraKnownMarketplaces" $name "source") (dict "source" "github" "repo" $repo) $s -}}
+{{- end -}}
+{{- if .isAgent -}}
+{{-   $s = setValueAtPath (list "extraKnownMarketplaces" "sp-gated" "source") (dict "source" "directory" "path" (printf "%s/.local/share/claude-plugins/sp-gated" $home)) $s -}}
+{{- end -}}
+{{- range $id, $on := $plugins -}}
+{{-   $s = setValueAtPath (list "enabledPlugins" $id) $on $s -}}
+{{- end -}}
+{{- /* t3-pstack's installer turns on auto-update from its main branch, the
+       rolling channel, every time it runs. The mini stays on the tag it was
+       installed from. */ -}}
+{{- if and .isAgent (hasKey (get $s "extraKnownMarketplaces" | default dict) "t3-pstack") -}}
+{{-   $s = setValueAtPath (list "extraKnownMarketplaces" "t3-pstack" "autoUpdate") false $s -}}
+{{- end -}}
+
+{{- /* The mini runs agents unattended: none of the account's claude.ai
+       connectors (Gmail, Drive, Calendar) or synced plugins load there. */ -}}
+{{- if .isAgent -}}
+{{-   $s = setValueAtPath "disableClaudeAiConnectors" true $s -}}
+{{-   $s = setValueAtPath "syncClaudeAiPlugins" false $s -}}
+{{- end -}}
+
+{{- if and $raw (eq (toJson $s) (toJson $current)) -}}
+{{-   $raw -}}
+{{- else -}}
+{{-   toPrettyJson $s -}}
+{{- end -}}

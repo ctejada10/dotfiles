@@ -1,0 +1,22 @@
+# ci-runner: not a server. tests/server-playbook.sh hardens the throwaway
+# machine it runs on (CI's Ubuntu runner, or a rehearsal VM) under this name,
+# with connection local, to show a real run works and a second one changes
+# nothing. It lists itself in a hosts file of its own, never in hosts.yaml.
+
+# Nothing to publish or scan: the scan play is skipped there.
+public_ports: []
+lan_ports: []
+ufw_remove: []
+
+# The runner has its own Docker, which the docker role's Docker CE would
+# conflict with, and nothing here logs in to Tailscale.
+docker: false
+docker_loopback_default: false
+tailscale: false
+samba: false
+
+reboot_time: "05:00"
+# Key-only, as every real server is. The script hands the run stand-in device
+# keys, so the guard and the users role see a phone and a tablet.
+password_login: false
+deploy_public_key: ""

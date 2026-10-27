@@ -1,0 +1,136 @@
+# The tests, on Ubuntu on every push and pull request, and weekly on macOS.
+# GitHub has no macOS 27 runner yet, so the Mac job tests one version behind
+# the laptop. Nothing here reads a secret: the tests work in throwaway homes,
+# and the token can only read the repo.
+#
+# Actions are pinned to full commit SHAs and downloads to their release
+# checksums. To update one, change the SHA or the version and its checksum in
+# the same commit.
+
+name: tests
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push cancels an older one on the same branch, but never a scheduled
+# or manual run, nor they a push.
+concurrency:
+  group: tests-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CHEZMOI_VERSION: 2.73.2
+  CHEZMOI_SHA256: 4d7bd8072f15373d5f5c801209bac218527452c8e54f9ae46ba6c5bd4a6eca41
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  UV_VERSION: 0.12.23
+
+jobs:
+  ubuntu:
+    name: Ubuntu 24.04
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # The whole history, so gitleaks sees every commit, not just the tip.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      - name: Install zsh, shellcheck, cloud-init, chezmoi and gitleaks
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends zsh shellcheck cloud-init
+          cd "$RUNNER_TEMP"
+          chezmoi="chezmoi_${CHEZMOI_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "https://github.com/twpayne/chezmoi/releases/download/v${CHEZMOI_VERSION}/$chezmoi"
+          echo "$CHEZMOI_SHA256  $chezmoi" | sha256sum -c -
+          tar -xzf "$chezmoi" chezmoi
+          gitleaks="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$gitleaks"
+          echo "$GITLEAKS_SHA256  $gitleaks" | sha256sum -c -
+          tar -xzf "$gitleaks" gitleaks
+          sudo install -m 0755 chezmoi gitleaks /usr/local/bin/
+
+      - name: Scan the history for secrets
+        run: gitleaks git --redact --no-banner .
+
+      - name: Install the playbook's collections
+        working-directory: ansible
+        run: uv run --locked ansible-galaxy collection install -r requirements.yml
+
+      - name: Run the tests
+        run: bash tests/run.sh
+
+  # The server playbook for real, on this runner as a stand-in server: a run
+  # the device-key guard stops, one a device key cut short stops, a --check,
+  # two runs (the second must change nothing), then sshd, UFW, /tmp,
+  # authorized_keys and a login with a device key.
+  # It hardens the runner, which GitHub throws away after the job.
+  playbook:
+    name: Server playbook on Ubuntu 24.04
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      - name: Install the playbook's collections
+        working-directory: ansible
+        run: uv run --locked ansible-galaxy collection install -r requirements.yml
+
+      - name: Run the server playbook here and check the result
+        run: bash tests/server-playbook.sh
+
+  macos:
+    name: macOS 26
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      # Homebrew's current chezmoi, as on the Macs; .chezmoiversion sets the
+      # oldest one the source accepts. The shell baseline was recorded with
+      # fzf, eza and bat installed.
+      - name: Install chezmoi, shellcheck and the shell's tools
+        run: brew install chezmoi shellcheck fzf eza bat
+
+      - name: Install the playbook's collections
+        working-directory: ansible
+        run: uv run --locked ansible-galaxy collection install -r requirements.yml
+
+      - name: Run the tests
+        run: bash tests/run.sh
+
+      # Last, since it changes the runner: the Brewfile's entries still exist
+      # and a few install, and both Macs' settings apply and then hold.
+      - name: Check the Brewfile and apply both Macs' settings here
+        run: bash tests/macos-ci.sh

@@ -1,0 +1,35 @@
+# The servers, by name. Both public names resolve straight to their servers,
+# and esgaroth has no public address, so it is reached over the tailnet. No IP
+# address belongs in this public repo. The ports are here because they are no
+# secret: anyone who scans the names finds them, and key-only login is what
+# protects the servers.
+#
+# Adding a server means adding an entry here, and its settings in
+# ansible/hosts/<name>.yml. The laptop's SSH config and the Ansible inventory
+# both come from this list; display is the name chezmoi is given on the server.
+hosts:
+  dor-lomin:
+    display: Dor-lómin
+    address: dor-lomin.middlearth.io
+    port: 6969
+    user: ctejada
+    deploy: true
+  rivendell:
+    display: Rivendell
+    address: rivendell.middlearth.io
+    port: 69
+    user: ctejada
+    deploy: true
+  esgaroth:
+    display: Esgaroth
+    address: esgaroth
+    port: 22
+    user: ctejada
+    deploy: false
+
+# Macs the laptop logs in to, over the tailnet. Not servers: the playbook
+# never touches them.
+macs:
+  amon-sul:
+    address: amon-sul
+    user: ctejada

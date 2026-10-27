@@ -1,0 +1,42 @@
+# Included on the laptop for each repo the mini's agents work in. Dropbox syncs
+# those checkouts, .git included, between the two Macs, so the laptop only
+# reads them: two machines writing one .git through Dropbox is how an object
+# store gets destroyed.
+
+[core]
+	# The hook in here refuses any change to a branch, tag or remote ref.
+	hooksPath = ~/.local/share/dotfiles/git/read-only-hooks
+	# No background daemon or cache files written into the shared .git.
+	fsmonitor = false
+	untrackedCache = false
+
+[gc]
+	auto = 0
+
+[maintenance]
+	auto = false
+
+# git diff and difftool would otherwise write the index back after reading
+# it, and to Git every file Dropbox brings down looks changed. The wrapper in
+# ~/.local/bin gives them a copy of the index instead; this covers anything
+# that runs the real git.
+[diff]
+	autoRefreshIndex = false
+
+# Fetch, pull and push stop before they connect, so they never write an
+# object into the shared .git. Git refuses every transport here, a local
+# path included. The remote URLs stay as they are, so gh still finds the
+# repo on GitHub.
+[protocol]
+	allow = never
+
+# Git LFS transfers over its own HTTP client, not Git's transports, so it gets
+# a URL it can't use. It also runs whenever Git hashes an LFS file, which
+# git status does for every file Dropbox brought down, and each time it
+# leaves a temporary file in its storage folder, .git/lfs unless told
+# otherwise. So its storage is a folder of the laptop's own. (git-lfs also
+# writes repositoryformatversion into a repo's own .git/config when that file
+# lacks it; the mini's git-lfs has written it there already.)
+[lfs]
+	url = agent-repo-read-only-on-this-mac://
+	storage = {{ joinPath .chezmoi.destDir ".cache/dotfiles/git-lfs" }}

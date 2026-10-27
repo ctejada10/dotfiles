@@ -1,0 +1,101 @@
+# Docker from Docker's own apt repository, its key checked against the pinned
+# fingerprint, and a daemon.json that caps logs and keeps containers up while
+# the daemon restarts. Settings already in daemon.json stay.
+
+- name: Make the folders for apt keys
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [/etc/apt/keyrings, /var/cache/apt-keys]
+
+# Not under --check. Before a server's first real run there is no copy and no
+# /var/cache/apt-keys either, which check mode doesn't make, and get_url fails
+# on a folder that doesn't exist, so a --check of dor-lomin or Rivendell would
+# stop here. Once there's a copy, check mode asks download.docker.com only
+# whether the key changed since the copy's date, and it says yes whenever
+# Docker republishes the file, even unchanged. A real run then gets the same
+# bytes and leaves the copy and its date alone, so every --check after it would
+# report a change. A real run still fetches it, and the keyring task below
+# checks its fingerprint.
+- name: Fetch Docker's apt key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+    dest: /var/cache/apt-keys/docker.asc
+    mode: "0644"
+  when: not ansible_check_mode
+
+# apt trusts every key in a keyring file, so the file holds only the pinned
+# key: exported from a throwaway keyring, then checked to be one primary key
+# with the pinned fingerprint. If this fails, Docker's key changed: check the
+# new fingerprint against Docker's docs, then update pins.yml.
+- name: Keep only the pinned key in Docker's keyring
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      home=$(mktemp -d)
+      trap 'rm -rf "$home"' EXIT
+      gpg --homedir "$home" --batch --quiet --import /var/cache/apt-keys/docker.asc
+      gpg --homedir "$home" --batch --export {{ pins.apt_keys.docker }} > "$home/key.gpg"
+      [ "$(gpg --batch --list-packets "$home/key.gpg" | grep -c '^:public key packet:')" = 1 ]
+      [ "$(gpg --batch --show-keys --with-colons "$home/key.gpg" | awk -F: '/^fpr:/ { print $10; exit }')" = {{ pins.apt_keys.docker }} ]
+      if ! cmp -s "$home/key.gpg" /etc/apt/keyrings/docker.gpg; then
+        install -m 0644 "$home/key.gpg" /etc/apt/keyrings/docker.gpg
+        echo changed
+      fi
+    executable: /bin/bash
+  register: docker_keyring
+  changed_when: "'changed' in docker_keyring.stdout"
+
+- name: Drop the list get.docker.com wrote; the sources file below replaces it
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/docker.list
+    state: absent
+
+- name: Add Docker's apt repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: "https://download.docker.com/linux/{{ ansible_distribution | lower }}"
+    suites: "{{ ansible_distribution_release }}"
+    components: stable
+    signed_by: /etc/apt/keyrings/docker.gpg
+  register: docker_repo
+
+- name: Install Docker
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: "{{ docker_repo is changed }}"
+    lock_timeout: 300
+
+- name: Read the current daemon.json
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: docker_daemon_current
+  failed_when: false
+
+- name: Write daemon.json
+  ansible.builtin.copy:
+    content: "{{ docker_daemon | to_nice_json }}\n"
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+  vars:
+    current: "{{ (docker_daemon_current.content | b64decode | from_json) if docker_daemon_current.content is defined else {} }}"
+    ours:
+      live-restore: true
+      log-driver: json-file
+      log-opts: { max-size: 10m, max-file: "5" }
+    # "ip" covers only the default bridge; compose networks take their default
+    # from default-network-opts (Docker 24 and later).
+    loopback: >-
+      {{ {'ip': '127.0.0.1',
+          'default-network-opts': {'bridge': {'com.docker.network.bridge.host_binding_ipv4': '127.0.0.1'}}}
+         if docker_loopback_default else {} }}
+    docker_daemon: "{{ current | combine(ours, loopback, recursive=true) }}"
+  notify: Reload Docker

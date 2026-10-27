@@ -1,0 +1,62 @@
+#!/bin/bash
+# deploy-gate, written by the dotfiles playbook. The only thing GitHub
+# Actions' key can run on {{ inventory_hostname }}: its authorized_keys line
+# is restrict,command="/usr/local/bin/deploy-gate".
+#
+# It accepts one request, "deploy <full commit sha>", for a commit on
+# {{ deploy_repo }}'s origin/{{ deploy_branch }}. It checks that commit out
+# and runs that commit's own scripts/deploy.sh, which decrypts with this
+# server's age key; no secret ever comes from GitHub. A deploy that has started
+# finishes even if the client disconnects; the last one's output is in
+# ~deploy/.local/state/deploy-gate/last-deploy.log.
+#
+# The request arrives in SSH_ORIGINAL_COMMAND under the restricted key, and as
+# arguments when the workflow still connects with an older, unrestricted key
+# and runs /usr/local/bin/deploy-gate itself, so a deploy works on either side
+# of the key swap.
+
+set -euo pipefail
+
+repo={{ deploy_repo | quote }}
+branch={{ deploy_branch | quote }}
+lock=/run/lock/deploy-gate.lock
+
+log() { logger -t deploy-gate -- "$*" 2>/dev/null || true; printf 'deploy-gate: %s\n' "$*" >&2; }
+refuse() { log "refused: $*"; exit 1; }
+
+request=${SSH_ORIGINAL_COMMAND:-$*}
+request=${request#/usr/local/bin/deploy-gate }
+# read takes the first line only, so a request with more is refused outright.
+[[ $request != *$'\n'* ]] || refuse "only 'deploy <sha>' is accepted"
+read -r verb sha extra <<< "$request" || true
+[ "${verb:-}" = deploy ] || refuse "only 'deploy <sha>' is accepted"
+[ -z "${extra:-}" ] || refuse "only 'deploy <sha>' is accepted"
+[[ "${sha:-}" =~ ^[0-9a-f]{40}$ ]] || refuse "the sha must be a full 40-character commit id"
+
+# One deploy at a time; a second waits up to half an hour for the first.
+exec 9> "$lock"
+flock -w 1800 9 || refuse "another deploy is still running"
+
+cd "$repo"
+# A GitHub that doesn't answer fails the deploy rather than holding the lock.
+timeout 300 git fetch --quiet origin "$branch" || refuse "couldn't fetch origin/$branch (exit $?)"
+git merge-base --is-ancestor "$sha" "origin/$branch" || refuse "$sha is not on origin/$branch"
+# Checked in the commit, before the checkout: the running containers may read
+# the checkout, so a refused request must leave it where it was.
+[ "$(git ls-tree "$sha" scripts/deploy.sh | cut -d' ' -f1)" = 100755 ] \
+  || refuse "$sha has no executable scripts/deploy.sh"
+git checkout --quiet "$sha"
+
+log "deploying $sha"
+# A deploy runs to the end even if the client goes away part-way: a run
+# cancelled in GitHub, a lost runner, the job's timeout. Its output reaches the
+# client through tee, which keeps writing it to deploy's log once the client's
+# pipe breaks. Without tee the next write kills the deploy, and docker compose
+# stopped mid-recreate leaves a container created and never started.
+trap '' HUP
+out=${XDG_STATE_HOME:-$HOME/.local/state}/deploy-gate
+mkdir -p "$out"
+rc=0
+./scripts/deploy.sh "$sha" 2>&1 | tee -p "$out/last-deploy.log" || rc=$?
+if [ "$rc" = 0 ]; then log "deployed $sha"; else log "deploy of $sha failed (exit $rc)"; fi
+exit "$rc"

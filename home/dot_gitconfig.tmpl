@@ -1,0 +1,152 @@
+[user]
+	name = Carlos E. Tejada
+	email = carlos@carlosetejada.com
+{{- if and (eq .role "laptop") .ssh.signing.public }}
+	signingkey = {{ .ssh.signing.public }}
+{{- else if .isAgent }}
+	signingkey = ~/{{ .ssh.miniSigningPath }}
+{{- end }}
+{{- if or (eq .role "laptop") .isAgent }}
+
+[gpg]
+	format = ssh
+
+[gpg "ssh"]
+{{-   if eq .role "laptop" }}
+	program = /Applications/1Password.app/Contents/MacOS/op-ssh-sign
+{{-   else }}
+	program = ssh-keygen
+{{-   end }}
+	allowedSignersFile = ~/.ssh/allowed_signers
+
+[commit]
+	gpgsign = true
+
+[tag]
+	gpgsign = true
+{{- end }}
+{{- if .isAgent }}
+
+# Agents push at any hour, so Git on the mini never waits for 1Password: it
+# talks to GitHub over HTTPS with gh's token and signs with a key made on the
+# mini. The credential lines are the ones `gh auth setup-git` writes, kept
+# here so an apply never strips them.
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+
+[credential "https://github.com"]
+	helper = 
+	helper = !/opt/homebrew/bin/gh auth git-credential
+
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/opt/homebrew/bin/gh auth git-credential
+{{- end }}
+
+[init]
+	defaultBranch = main
+
+[core]
+	excludesfile = ~/.gitignore_global
+	autocrlf = false
+{{- if .isMac }}
+	fsmonitor = true
+{{- end }}
+	untrackedcache = true
+
+[push]
+	default = simple
+	autoSetupRemote = true
+
+[pull]
+	rebase = false
+
+[fetch]
+	prune = true
+	pruneTags = true
+
+[branch]
+	sort = -committerdate
+
+[rebase]
+	autoStash = true
+	autoSquash = true
+	updateRefs = true
+
+[merge]
+	conflictstyle = zdiff3
+
+[diff]
+	algorithm = histogram
+	colorMoved = default
+	tool = nvimdiff
+
+[difftool "nvimdiff"]
+	cmd = "vi -d -u ~/.vimrc \"$LOCAL\" \"$REMOTE\""
+
+[difftool]
+	prompt = false
+
+[rerere]
+	enabled = true
+	autoupdate = true
+
+[color]
+	ui = auto
+
+[column]
+	ui = auto
+
+[help]
+	autocorrect = prompt
+
+[filter "lfs"]
+	required = true
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+
+[alias]
+	graphsig = log --graph --color --pretty=format:"%C(yellow)%H%C(green)%d%C(reset)%n%x20%cd%n%x20%cn%C(blue)%x20(%ce)%x20%C(cyan)[sig:%GK%x20%G?]%C(reset)%n%x20%s%n"
+	graph = log --graph --color --pretty=format:"%C(yellow)%H%C(green)%d%C(reset)%n%x20%cd%n%x20%cn%C(blue)%x20(%ce)%x20%C(cyan)%C(reset)%n%x20%s%n"
+	stat = status -sb
+	last = log -1 --stat
+	unstage = reset HEAD --
+	cached = diff --cached
+	d = difftool
+	c = clone
+	grog = log --graph --abbrev-commit --decorate --all --format=format:\"%C(bold blue)%h%C(reset) - %C(bold cyan)%aD%C(dim white) - %an%C(reset) %C(bold green)(%ar)%C(reset)%C(bold yellow)%d%C(reset)%n %C(white)%s%C(reset)\"
+	cleanup = !git fetch && git branch -vv | grep ': gone]' | awk '{print $1}' | xargs git branch -d 2>/dev/null; true
+
+{{- /* Last, because Git keeps the last value it reads: these must win over
+       [core] and everything above for the repos they match. */}}
+{{- if and .isMac (not .ci) }}
+
+# No automatic gc or maintenance in any repo Dropbox syncs, on either Mac.
+[includeIf "gitdir/i:{{ .dropboxRepositories }}/"]
+	path = ~/.local/share/dotfiles/git/dropbox.gitconfig
+{{- end }}
+
+{{- if .isAgent }}
+
+# On the mini, git diff leaves a Dropbox checkout's index alone too.
+[includeIf "gitdir/i:{{ .dropboxRepositories }}/"]
+	path = ~/.local/share/dotfiles/git/mini-dropbox.gitconfig
+{{-   range $dir, $_ := index .repos "agent-mini" }}
+
+# Except in the worktrees of {{ $dir }}, whose index only the mini writes.
+[includeIf "gitdir/i:{{ joinPath $.dropboxRepositories $dir }}/.git/worktrees/"]
+	path = ~/.local/share/dotfiles/git/agent-worktree.gitconfig
+{{-   end }}
+{{- end }}
+
+{{- if eq .role "laptop" }}
+{{-   range $dir, $_ := index .repos "agent-mini" }}
+
+# {{ $dir }} belongs to the mini's agents: read-only on this Mac. Git resolves
+# ~/src to the Dropbox folder before matching, so the real path is used, and
+# matches it whatever its case, as macOS does.
+[includeIf "gitdir/i:{{ joinPath $.dropboxRepositories $dir }}/"]
+	path = ~/.local/share/dotfiles/git/agent-owned.gitconfig
+{{-   end }}
+{{- end }}

@@ -1,0 +1,72 @@
+# Packages, the server's name, unattended upgrades and a first Lynis baseline.
+
+# A refresh only rereads the package lists, so it isn't a change to the
+# server. Without this, every run more than an hour after the last refresh,
+# which is nearly every run, reported one.
+- name: Refresh the package lists
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+  changed_when: false
+
+- name: Install the shared packages and this server's own
+  ansible.builtin.apt:
+    name: "{{ packages.shared + packages.per_host.get(inventory_hostname, []) }}"
+    state: present
+    lock_timeout: 300
+
+- name: Install what only newer releases package
+  ansible.builtin.apt:
+    name: "{{ packages.newer_releases }}"
+    state: present
+    lock_timeout: 300
+  when: >-
+    (ansible_distribution == "Ubuntu" and ansible_distribution_version is version("24.04", ">="))
+    or (ansible_distribution == "Debian" and ansible_distribution_major_version | int >= 13)
+
+- name: Remove CUPS, since nothing prints
+  ansible.builtin.apt:
+    name: "{{ packages.remove }}"
+    state: absent
+    lock_timeout: 300
+
+- name: Name the server
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+# cloud-init sets the provider's name again at every boot unless told not
+# to. A new server's user-data already says so; an existing one gets it here.
+- name: Look for cloud-init's settings folder
+  ansible.builtin.stat:
+    path: /etc/cloud/cloud.cfg.d
+  register: cloud_cfg_d
+
+- name: Keep cloud-init from renaming the server at boot
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud.cfg.d/99-dotfiles-hostname.cfg
+    content: |
+      # Written by the dotfiles playbook, which owns the server's name.
+      preserve_hostname: true
+    mode: "0644"
+  when: cloud_cfg_d.stat.exists
+
+- name: Let the server resolve its own name, so sudo doesn't stall on it
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    line: "127.0.1.1 {{ inventory_hostname }}"
+
+- name: Reboot for a new kernel at a set time, and wait out apt's lock
+  ansible.builtin.template:
+    src: 52dotfiles-upgrades.j2
+    dest: /etc/apt/apt.conf.d/52dotfiles-upgrades
+    mode: "0644"
+
+- name: Record a Lynis baseline before the first hardening
+  ansible.builtin.command:
+    cmd: >-
+      lynis audit system --quick --no-colors
+      --report-file /var/log/lynis-before.dat --logfile /var/log/lynis-before.log
+    creates: /var/log/lynis-before.dat
+  tags: [lynis]

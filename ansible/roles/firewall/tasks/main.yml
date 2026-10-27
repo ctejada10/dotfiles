@@ -1,0 +1,100 @@
+# UFW, one rule at a time, each added or deleted by itself; never a reset.
+# Runs before sshd changes, so a new SSH port is open before sshd moves to it.
+
+- name: Refuse to make a tailnet-only server unreachable
+  ansible.builtin.assert:
+    that: not (ssh_tailnet_only | default(false)) or tailscale
+    fail_msg: "{{ inventory_hostname }} takes SSH from the tailnet only, but isn't set up for Tailscale."
+    quiet: true
+
+- name: Read Tailscale's state
+  ansible.builtin.command: tailscale status --json
+  register: tailscale_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ssh_tailnet_only | default(false)
+
+- name: Refuse to close everything but the tailnet while Tailscale is down
+  ansible.builtin.assert:
+    that: ((tailscale_state.stdout or '{}') | from_json).BackendState | default('') == "Running"
+    fail_msg: "{{ inventory_hostname }} takes SSH from the tailnet only, and Tailscale isn't running there. Log it in first."
+    quiet: true
+  when: ssh_tailnet_only | default(false)
+
+- name: Deny incoming by default
+  community.general.ufw:
+    default: deny
+    direction: incoming
+
+- name: Allow outgoing by default
+  community.general.ufw:
+    default: allow
+    direction: outgoing
+
+- name: Allow SSH on its port
+  community.general.ufw:
+    rule: allow
+    port: "{{ ssh_port | string }}"
+    proto: tcp
+    comment: ssh
+  when: not (ssh_tailnet_only | default(false))
+
+- name: Keep the port this run connected on open until sshd has moved
+  community.general.ufw:
+    rule: allow
+    port: "{{ ansible_port | string }}"
+    proto: tcp
+    comment: ssh until the port move
+  when: port_move
+
+- name: Allow the public ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto }}"
+    comment: "{{ item.comment }}"
+  loop: "{{ public_ports }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto }}"
+
+- name: Allow the home network's ports from private addresses
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.0.port | string }}"
+    proto: "{{ item.0.proto }}"
+    from_ip: "{{ item.1 }}"
+    comment: "{{ item.0.comment }}"
+  loop: "{{ lan_ports | default([]) | product(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']) | list }}"
+  loop_control:
+    label: "{{ item.0.port }}/{{ item.0.proto }} from {{ item.1 }}"
+
+- name: Allow everything from the tailnet
+  community.general.ufw:
+    rule: allow
+    direction: in
+    interface: tailscale0
+    comment: tailnet
+  when: tailscale
+
+- name: Delete rules nothing needs any more
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto | default(omit) }}"
+    delete: true
+  loop: "{{ ufw_remove }}"
+  loop_control:
+    label: "{{ item.port }}"
+
+# UFW applies its own sysctl file each time it starts, which would undo the
+# OS role's values after every reboot. devsec's own template leaves this empty.
+- name: Leave sysctls to the OS role
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: '^IPT_SYSCTL='
+    line: IPT_SYSCTL=
+
+- name: Turn UFW on
+  community.general.ufw:
+    state: enabled

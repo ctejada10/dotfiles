@@ -1,0 +1,86 @@
+{{- /*
+  Asked once per machine by `chezmoi init`. Each prompt's text is its key, so
+  CI and Ansible can answer without a terminal:
+    chezmoi init --promptChoice role=server \
+      --promptString hostname=rivendell,displayName=Rivendell
+  Templates use .hostname, never .chezmoi.hostname, which changes after a
+  rename and, on macOS, with the network.
+*/ -}}
+
+{{- $roles := list "laptop" "agent-mini" "server" "ci" -}}
+{{- $role := promptChoiceOnce . "role" "role" $roles -}}
+{{- if not (has $role $roles) -}}
+{{-   fail (printf "unknown role %q: choose one of %s" $role (join ", " $roles)) -}}
+{{- end -}}
+
+{{- $os := .chezmoi.os -}}
+{{- if and (has $role (list "laptop" "agent-mini")) (ne $os "darwin") -}}
+{{-   fail (printf "role %q is for macOS" $role) -}}
+{{- end -}}
+{{- if and (eq $role "server") (ne $os "linux") -}}
+{{-   fail "role \"server\" is for Linux" -}}
+{{- end -}}
+
+{{- /* Default to the current names, so re-running init on a machine that is
+       already set up changes nothing. */ -}}
+{{- $currentName := "" -}}
+{{- $currentDisplay := "" -}}
+{{- if eq $os "darwin" -}}
+{{-   $currentName = output "scutil" "--get" "LocalHostName" | trim | lower -}}
+{{-   $currentDisplay = output "scutil" "--get" "ComputerName" | trim -}}
+{{- else -}}
+{{-   if stat "/etc/hostname" -}}
+{{-     $currentName = include "/etc/hostname" | trim | lower -}}
+{{-   end -}}
+{{-   if stat "/etc/machine-info" -}}
+{{-     $currentDisplay = include "/etc/machine-info" | regexFind "PRETTY_HOSTNAME=.*" | trimPrefix "PRETTY_HOSTNAME=" | trimAll "\"'" -}}
+{{-   end -}}
+{{- end -}}
+
+{{- /* One name that is legal everywhere: Bonjour, DNS, Tailscale and NetBIOS,
+       whose limit is 15 characters. No accents. */ -}}
+{{- $hostname := promptStringOnce . "hostname" "hostname" $currentName -}}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,13}[a-z0-9])?$" $hostname) -}}
+{{-   fail (printf "hostname %q must be lowercase letters, digits and hyphens, start and end with a letter or digit, and be at most 15 characters" $hostname) -}}
+{{- end -}}
+
+{{- /* The name people see: ComputerName on macOS (Find My, AirDrop, the
+       Apple Account device list), the pretty hostname on Linux. Capitals,
+       spaces and accents are fine. Quotes and shell metacharacters are not,
+       because scripts embed it. */ -}}
+{{- $displayName := promptStringOnce . "displayName" "displayName" ($currentDisplay | default $hostname) -}}
+{{- if not (regexMatch "^[^'\"\\\\$`]{1,63}$" $displayName) -}}
+{{-   fail (printf "displayName %q must be 1 to 63 characters with no quotes, backslashes, dollar signs or backticks" $displayName) -}}
+{{- end -}}
+
+[data]
+  role = {{ $role | quote }}
+  hostname = {{ $hostname | quote }}
+  displayName = {{ $displayName | quote }}
+  isMac = {{ eq $os "darwin" }}
+  isServer = {{ eq $role "server" }}
+  isAgent = {{ eq $role "agent-mini" }}
+  isHeadless = {{ has $role (list "agent-mini" "server" "ci") }}
+  use1Password = {{ eq $role "laptop" }}
+  ci = {{ eq $role "ci" }}
+{{- if eq $os "darwin" }}
+  # Both Macs keep their repos here; ~/src and ~/Repositories link to it.
+  # destDir is the home folder, or a test's throwaway one.
+  dropboxRepositories = {{ joinPath .chezmoi.destDir "Library/CloudStorage/Dropbox/repositories" | quote }}
+  # The laptop's ~/.config links here, so its app configs sync through Dropbox.
+  dropboxConfig = {{ joinPath .chezmoi.destDir "Library/CloudStorage/Dropbox/config-files" | quote }}
+{{- end }}
+
+# Scripts that call op guard themselves; templates never call it. This is a
+# second lock in case one ever does.
+[onepassword]
+  prompt = false
+
+# Scripts run on every apply by design, so they are left out of the commands
+# that report drift: `chezmoi diff` stays empty and `chezmoi verify` exits 0.
+[diff]
+  exclude = ["scripts"]
+[status]
+  exclude = ["scripts"]
+[verify]
+  exclude = ["scripts"]

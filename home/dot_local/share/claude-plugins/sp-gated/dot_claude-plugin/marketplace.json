@@ -1,0 +1,23 @@
+{
+  "name": "sp-gated",
+  "owner": { "name": "local" },
+  "plugins": [
+    {
+      "name": "superpowers",
+      "source": "./superpowers",
+      "hooks": {
+        "SessionStart": [
+          {
+            "matcher": "startup|clear|compact",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "[ \"${SP_BOOTSTRAP:-0}\" = 1 ] || exit 0; exec \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

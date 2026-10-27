@@ -1,0 +1,5 @@
+precmd:
+omz_termsupport_precmd
+omz_termsupport_cwd
+preexec:
+omz_termsupport_preexec

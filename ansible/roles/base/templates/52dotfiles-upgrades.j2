@@ -1,0 +1,14 @@
+// Written by the dotfiles playbook. Sorts after 20auto-upgrades and
+// 50unattended-upgrades, so these values win.
+//
+// Security updates install every day, but a new kernel only runs after a
+// reboot, which Ubuntu never does on its own. A server whose containers don't
+// restart themselves turns it off with automatic_reboot: false.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade::Automatic-Reboot "{{ 'true' if automatic_reboot | default(true) else 'false' }}";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "{{ reboot_time }}";
+
+// Wait for another apt run to finish instead of failing.
+DPkg::Lock::Timeout "300";

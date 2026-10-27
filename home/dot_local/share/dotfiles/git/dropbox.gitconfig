@@ -1,0 +1,19 @@
+# Included on both Macs for every repo in the Dropbox repositories folder.
+# Git's automatic gc and background maintenance repack and prune the object
+# store, and doing that in a folder Dropbox is syncing is how one was
+# destroyed. If a repo ever needs compacting, pause Dropbox and do it by hand.
+
+[gc]
+	auto = 0
+	# Nor a manual gc: it would prune worktree records the mini still has.
+	worktreePruneExpire = never
+
+[maintenance]
+	auto = false
+
+# Nothing Git only caches goes into a .git Dropbox syncs: no fsmonitor daemon,
+# whose socket and cookie files churn, and no untracked cache. With
+# GIT_OPTIONAL_LOCKS=0, which both Macs set, status then writes nothing.
+[core]
+	fsmonitor = false
+	untrackedCache = false

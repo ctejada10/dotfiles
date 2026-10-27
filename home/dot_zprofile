@@ -1,0 +1,4 @@
+# Login shells only. Runs after macOS's /etc/zprofile, whose path_helper call
+# reorders PATH, so this puts the same entries back in front.
+
+source $HOME/.zsh/path.zsh

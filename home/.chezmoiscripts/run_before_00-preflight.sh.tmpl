@@ -1,0 +1,71 @@
+{{- if and .isMac (not .ci) -}}
+#!/bin/bash
+# Stops the apply while the old tilde still runs this home folder. Its stow
+# links point into the Dropbox checkout, and the cutover is the one moment
+# they should be replaced. Run the cutover apply with DOTFILES_CUTOVER=1.
+# ~/.ssh must be a real folder first, so nothing is written through the old
+# link into Dropbox. ~/src and ~/Repositories, and on the laptop ~/.config,
+# become links into Dropbox; chezmoi would delete a real folder in their place
+# without asking, so a real one with anything in it stops the apply.
+
+set -uo pipefail
+SCRIPT=preflight
+{{ template "script-lib.sh" . }}
+
+status=0
+
+if [ -L "$HOME/.ssh" ]; then
+  warn "the .ssh folder in your home is still a link to $(readlink "$HOME/.ssh"). Make it a real folder first (see the README's cutover steps)."
+  status=1
+fi
+
+old=()
+for target in .zshrc .zsh .gitconfig .gitignore_global .tmux.conf .condarc \
+              .claude/settings.json .claude/CLAUDE.md .claude/hooks; do
+  link="$HOME/$target"
+  if [ -L "$link" ]; then
+    case "$(readlink "$link")" in
+      *[Rr]epositories/tilde/*) old+=("$target") ;;
+    esac
+  fi
+done
+if [ ${#old[@]} -gt 0 ] && [ "${DOTFILES_CUTOVER:-}" != 1 ]; then
+  warn "the old tilde still owns ${old[*]}."
+  warn "this apply would replace them. If this is the cutover, run: DOTFILES_CUTOVER=1 chezmoi apply"
+  status=1
+fi
+
+# A real folder where a link into Dropbox goes.
+replaced=(src Repositories)
+{{- if eq .role "laptop" }}
+# ~/.config only once config-files exists: until then the link is held back.
+[ -e {{ .dropboxConfig | squote }} ] && replaced+=(.config)
+{{- end }}
+for name in "${replaced[@]}"; do
+  folder="$HOME/$name"
+  if [ -d "$folder" ] && [ ! -L "$folder" ] && [ -n "$(ls -A "$folder" 2>/dev/null)" ]; then
+    warn "$folder is a real folder with files in it, and this apply would replace it with a link into Dropbox."
+    if [ "$name" = .config ]; then
+      warn "move $folder/chezmoi into {{ .dropboxConfig }}, replacing any chezmoi folder already there, then link the folder yourself and apply:"
+      # 1Password's CLI makes its folder the first time it runs, so on a
+      # wiped laptop the apply's own 1Password check leaves one here holding
+      # only op's socket. The real one is in config-files.
+      only_socket=1
+      for entry in "$folder/op"/* "$folder/op"/.[!.]*; do
+        [ -e "$entry" ] || continue
+        [ "${entry##*/}" = op-daemon.sock ] || only_socket=0
+      done
+      if [ -d "$folder/op" ] && [ "$only_socket" = 1 ]; then
+        warn "  rm -r $folder/op    (it holds only the socket op made during this setup)"
+      fi
+      warn "  rmdir $folder && ln -s {{ .dropboxConfig }} $folder && chezmoi apply"
+      warn "rmdir refuses if anything else is still in $folder; move that into {{ .dropboxConfig }} first."
+    else
+      warn "move what you want to keep out of it, remove it, then run chezmoi apply again."
+    fi
+    status=1
+  fi
+done
+
+exit "$status"
+{{ end -}}

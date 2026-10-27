@@ -1,0 +1,152 @@
+# Checks the result rather than trusting the tasks: what sshd actually
+# enforces, which SSH units start at boot, where Samba listens, and Lynis's
+# score against the first run's.
+
+- name: Read sshd's effective settings
+  ansible.builtin.command: sshd -T
+  register: sshd_effective
+  changed_when: false
+
+- name: Check what sshd enforces
+  ansible.builtin.assert:
+    that:
+      - ("port " ~ ssh_port) in sshd_effective.stdout_lines
+      - ("listenaddress 0.0.0.0:" ~ ssh_port) in sshd_effective.stdout_lines
+      - ("listenaddress [::]:" ~ ssh_port) in sshd_effective.stdout_lines
+      - "'subsystem sftp internal-sftp -l INFO -f LOCAL6 -u 0022' in sshd_effective.stdout_lines"
+      - ("passwordauthentication " ~ ("yes" if password_login | bool else "no")) in sshd_effective.stdout_lines
+      - "'kbdinteractiveauthentication no' in sshd_effective.stdout_lines"
+      - "'permitrootlogin no' in sshd_effective.stdout_lines"
+      - "'allowagentforwarding no' in sshd_effective.stdout_lines"
+    fail_msg: "sshd -T on {{ inventory_hostname }} doesn't match the playbook. Run it there and compare."
+    quiet: true
+
+# Only reads: the systemd module would set the units' state, not report it.
+- name: Read which SSH units start at boot
+  ansible.builtin.command: systemctl is-enabled ssh ssh.socket  # noqa: command-instead-of-module
+  register: ssh_units
+  changed_when: false
+  failed_when: false
+
+- name: Check that sshd itself starts at boot, not the socket
+  ansible.builtin.assert:
+    that: ssh_units.stdout_lines == ["enabled", "masked"]
+    fail_msg: "systemctl is-enabled ssh ssh.socket printed {{ ssh_units.stdout_lines }}, not enabled and masked."
+    quiet: true
+
+- name: Read where Samba listens
+  ansible.builtin.command: ss -Hltn "( sport = :445 or sport = :139 )"
+  register: samba_sockets
+  changed_when: false
+  when: samba
+
+- name: Check that Samba listens on loopback and the tailnet only
+  ansible.builtin.assert:
+    that: exposed | length == 0
+    fail_msg: "Samba listens on {{ exposed | join(', ') }}. Bind it to the Tailscale address only."
+    quiet: true
+  vars:
+    addresses: "{{ samba_sockets.stdout_lines | map('split') | map(attribute=3) | list }}"
+    private: '^(127\.|\[::1\]|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|\[fd7a:115c:a1e0:)'
+    exposed: "{{ addresses | reject('match', private) | list }}"
+  when: samba
+
+# Docker publishes past UFW, and the scan from the laptop sees TCP only, so
+# read what Docker publishes on every address, UDP included, from here.
+- name: Read the ports Docker publishes on every address
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    docker ps --format '{% raw %}{{.Ports}}{% endraw %}' | tr ',' '\n' |
+    sed -nE 's#^ *(0\.0\.0\.0|\[::\]|::):([0-9]+)(-([0-9]+))?->.*/(tcp|udp)$#\2 \4 \5#p' | sort -u
+  args:
+    executable: /bin/bash
+  register: docker_published
+  changed_when: false
+  check_mode: false
+  when: docker
+
+- name: Check that Docker publishes nothing undeclared
+  ansible.builtin.assert:
+    that: undeclared | length == 0
+    fail_msg: >-
+      Docker publishes {{ undeclared | join(', ') }} on every address of {{ inventory_hostname }},
+      past UFW. Declare it in public_ports with its proto, or publish it on 127.0.0.1 or the
+      Tailscale address in its compose file.
+    quiet: true
+  vars:
+    published: >-
+      {%- set out = [] -%}
+      {%- for line in docker_published.stdout_lines -%}
+      {%- set f = line.split() -%}
+      {%- set last = (f[1] if f | length == 3 else f[0]) | int -%}
+      {%- for port in range(f[0] | int, last + 1) -%}{%- set _ = out.append(port ~ '/' ~ f[-1]) -%}{%- endfor -%}
+      {%- endfor -%}
+      {{- out | unique | sort -}}
+    declared: "{{ public_ports | map(attribute='port') | zip(public_ports | map(attribute='proto')) | map('join', '/') | list }}"
+    undeclared: "{{ published | reject('in', declared) | list }}"
+  when: docker
+
+# Once GitHub takes a read key, everything in the checkout that fetches that
+# repo has to go through its alias, or the server still depends on today's key
+# and taking that key off GitHub breaks deploys. Worked out here and checked in
+# the playbook's last play, so a mismatch still lets chezmoi, the sudo password
+# step and the scan run first.
+- name: Work out which repos deploy fetches without their alias
+  ansible.builtin.set_fact:
+    deploy_off_alias: "{{ off_alias }}"
+    # A Git error isn't a URL in the wrong form, and neither is a
+    # core.sshCommand; each leaves every repo in doubt, so each gets its own
+    # message.
+    deploy_off_alias_msg: >-
+      {% if deploy_fetch_urls.rc | default(0) != 0 -%}
+      Git couldn't read where deploy's checkout on {{ inventory_hostname }} fetches from
+      ({{ deploy_fetch_urls.stderr_lines | map('trim') | select | join('; ') }}), so the run
+      can't tell whether it fetches {{ off_alias | join(', ') }} through their aliases. It
+      read: {{ fetch_urls | join(', ') or 'nothing' }}. Fix what Git says and run
+      again.{%- elif ssh_commands | length > 0 -%}
+      deploy's Git on {{ inventory_hostname }} sets core.sshCommand ({{ ssh_commands | join('; ') }}),
+      which decides how it connects whatever the aliases say, so {{ off_alias | join(', ') }}
+      may still be fetched with the key used before. Take it out and run
+      again.{%- else -%}
+      deploy's checkout on {{ inventory_hostname }} doesn't fetch {{ off_alias | join(', ') }}
+      through its alias, so it still depends on the key it used before. Git rewrites only
+      git@{{ deploy_git_host }}:<repo>.git, and the checkout fetches from:
+      {{ fetch_urls | join(', ') }}. Set the origin or the submodule's url to that form
+      and run again.{%- endif %}
+  vars:
+    taken: "{{ deploy_read_access.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | map(attribute='item') | list }}"
+    fetch_urls: "{{ deploy_fetch_urls.stdout_lines | reject('match', '^core\\.sshCommand ') | list }}"
+    # Git names the checkout's own config file:.git/config, which doesn't say
+    # whose; the deploy role reads it from inside the checkout.
+    ssh_commands: "{{ deploy_fetch_urls.stdout_lines | select('match', '^core\\.sshCommand ') | map('regex_replace', '^core\\.sshCommand ', '') | map('regex_replace', '^file:\\.git/', 'file:' ~ deploy_repo ~ '/.git/') | map('replace', '\t', ': ') | list }}"
+    off_alias: >-
+      {%- set out = [] -%}
+      {%- for repo in taken -%}
+      {%- set alias = 'git@github-' ~ (repo.split('/') | last) ~ ':' ~ repo ~ '.git' -%}
+      {%- set urls = fetch_urls | select('search', '(^|[:/])' ~ (repo | regex_escape) ~ '(\\.git)?/?$', ignorecase=true) | list -%}
+      {%- if deploy_fetch_urls.rc | default(0) != 0 or ssh_commands | length > 0 or alias not in urls or urls | reject('equalto', alias) | list | length > 0 -%}{%- set _ = out.append(repo) -%}{%- endif -%}
+      {%- endfor -%}
+      {{- out -}}
+  when:
+    - deploy
+    - deploy_read_access.results is defined
+    - deploy_fetch_urls.stdout_lines is defined
+
+- name: Run Lynis again
+  ansible.builtin.command: >-
+    lynis audit system --quick --no-colors
+    --report-file /var/log/lynis-report.dat --logfile /var/log/lynis.log
+  changed_when: false
+  tags: [lynis]
+
+- name: Read Lynis's hardening index, first run and now
+  ansible.builtin.command: grep -h '^hardening_index=' /var/log/lynis-before.dat /var/log/lynis-report.dat
+  register: lynis_index
+  changed_when: false
+  failed_when: false
+  tags: [lynis]
+
+- name: Show Lynis's hardening index
+  ansible.builtin.debug:
+    msg: "Lynis on {{ inventory_hostname }}, first run then now: {{ lynis_index.stdout_lines | map('regex_replace', '^hardening_index=', '') | join(' -> ') }}"
+  tags: [lynis]

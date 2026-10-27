@@ -1,0 +1,7 @@
+# A reload, never a restart, so the playbook never takes the services down.
+# live-restore applies at once; the log caps and the default address apply to
+# containers created after the next full restart, such as the kernel reboot.
+- name: Reload Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    state: reloaded

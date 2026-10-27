@@ -1,0 +1,67 @@
+# At the end of a new server's first run: the admin user gets a sudo
+# password, typed here and never stored in a file, and cloud-init's
+# passwordless grant goes. From then on the playbook runs with -K.
+
+- name: Read the admin user's password state
+  ansible.builtin.command: passwd -S {{ admin_user }}
+  register: password_state
+  changed_when: false
+  check_mode: false
+
+- name: Set a sudo password
+  when: password_state.stdout.split()[1] != "P" and not ansible_check_mode
+  block:
+    - name: Ask for the password
+      ansible.builtin.pause:
+        prompt: >-
+          {{ admin_user }} on {{ inventory_hostname }} has no password yet. Type the
+          sudo password to give it: 12 to 40 characters using three of lowercase,
+          uppercase, digits and symbols, or 8 or more using all four
+        echo: false
+      register: first_entry
+      no_log: true
+
+    - name: Ask for it again
+      ansible.builtin.pause:
+        prompt: Type it again
+        echo: false
+      register: second_entry
+      no_log: true
+
+    # The OS role's passwdqc (min=disabled,disabled,16,12,8, max 40) would
+    # refuse anything else, so refuse it here, before anything changes.
+    - name: Refuse a mismatch, or a password passwdqc would reject
+      ansible.builtin.assert:
+        that:
+          - first_entry.user_input == second_entry.user_input
+          - first_entry.user_input | length <= 40
+          - (first_entry.user_input | length >= 12 and classes | int >= 3) or (first_entry.user_input | length >= 8 and classes | int == 4)
+        fail_msg: >-
+          The two didn't match, or the password breaks the rule in the prompt.
+          Nothing changed; run the playbook again.
+        quiet: true
+      vars:
+        classes: >-
+          {{ [first_entry.user_input is search('[a-z]'), first_entry.user_input is search('[A-Z]'),
+              first_entry.user_input is search('[0-9]'), first_entry.user_input is search('[^a-zA-Z0-9]')]
+             | select | list | length }}
+      no_log: true
+
+    - name: Set it
+      ansible.builtin.command: chpasswd
+      args:
+        stdin: "{{ admin_user }}:{{ first_entry.user_input }}"
+      register: set_password
+      no_log: true
+      changed_when: set_password.rc == 0
+      failed_when: false
+
+    - name: Say why it wasn't set
+      ansible.builtin.fail:
+        msg: "chpasswd refused it: {{ set_password.stderr }}"
+      when: set_password.rc != 0
+
+- name: Remove cloud-init's passwordless sudo
+  ansible.builtin.file:
+    path: /etc/sudoers.d/90-cloud-init-users
+    state: absent

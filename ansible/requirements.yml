@@ -1,0 +1,9 @@
+# Collections the playbook uses, pinned. Installed into ./collections, which
+# is not committed.
+collections:
+  - name: devsec.hardening
+    version: "11.0.0"
+  - name: community.general
+    version: "13.5.0"
+  - name: ansible.posix
+    version: "2.2.2"

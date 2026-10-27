@@ -1,0 +1,9 @@
+{{- if .isServer -}}
+#!/bin/bash
+# On servers the playbook owns the name. This only says so when it has drifted.
+want={{ .hostname | squote }}
+have=$(hostnamectl --static 2>/dev/null || cat /etc/hostname 2>/dev/null)
+if [ "$have" != "$want" ]; then
+  echo "check-hostname: this machine is '$have' but was set up as '$want'. The playbook sets the name." >&2
+fi
+{{ end -}}

@@ -1,0 +1,29 @@
+# Repos in ~/src. On both Macs ~/src and ~/Repositories link to the Dropbox
+# repositories folder, and Dropbox carries the repos between them.
+#
+# laptop: tools chezmoi clones once, when they're missing and Dropbox has
+#   finished bringing the folder down. Never pulled: they update themselves.
+# agent-mini: the development repos. All development happens on the mini,
+#   where agents work in them on their own branches and worktrees. The mini clones them once over HTTPS through gh if they aren't
+#   in Dropbox yet. On the laptop they are read-only: Git refuses any change to
+#   their refs there, and Claude Code can't edit them. Read them on the laptop;
+#   change them on the mini.
+#
+# The lists are revisited in *Do a fresh-start pass on every repo: structure
+# and CI/CD*.
+repos:
+  laptop:
+    career-ops: career-ops-hq/career-ops
+    ai-job-search: ai-job-search-dev/ai-job-search
+  agent-mini:
+    hurin: ctejada10/hurin
+    rivendell: ctejada10/rivendell
+    scripts: ctejada10/scripts
+    cad-a11y: cad-accessibility/cad-a11y
+    erestor: ctejada10/erestor
+    readme: ctejada10/ctejada10
+    arwen: ctejada10/arwen
+    faramir: ctejada10/faramir
+# Any other repo in the Dropbox folder is the laptop's: writable there, and
+# changed on the mini only through a clone in ~/worktrees. cv is one on
+# purpose: its applications live in git-ignored folders of its checkout.

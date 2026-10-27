@@ -1,0 +1,78 @@
+{{- if .isAgent -}}
+{{- $home := joinPath .chezmoi.homeDir .firstmate.home -}}
+{{- $repos := index .repos "agent-mini" -}}
+#!/bin/bash
+# Lays FirstMate out on the mini so its churn stays out of Dropbox and its
+# work lands in the repos there:
+#   ~/firstmate               the FirstMate checkout, which is the whole tool,
+#                             cloned once at {{ .pins.firstmate.commit | trunc 7 }}
+#   {{ .firstmate.home }}   its state, data, config and projects ($FM_HOME)
+#   projects/<repo>           a link to each agent-mini repo in Dropbox, and
+#                             nothing else: FirstMate fetches, prunes and
+#                             fast-forwards every folder in projects, so the
+#                             laptop's repos must never appear there
+#   ~/.treehouse              its crews' worktrees, treehouse's default
+# Commits made in those worktrees land in the Dropbox repo's .git. Its
+# bootstrap, treehouse and the CLIs it wants are installed by hand (README).
+
+set -uo pipefail
+SCRIPT=firstmate
+{{ template "script-lib.sh" . }}
+
+code="$HOME/firstmate"
+home={{ $home | squote }}
+listed=" {{ keys $repos | sortAlpha | join " " }} "
+
+if [ ! -d "$code/.git" ]; then
+  if [ -e "$code" ]; then
+    warn "$code exists but isn't a Git checkout; left alone"
+  else
+    tmp=$(mktemp -d "$HOME/.firstmate-clone.XXXXXX")
+    if git clone --quiet --no-checkout {{ printf "https://github.com/%s" .pins.firstmate.repo | squote }} "$tmp/firstmate" \
+      && git -C "$tmp/firstmate" checkout --quiet -B main {{ .pins.firstmate.commit | squote }} \
+      && git -C "$tmp/firstmate" branch --quiet --set-upstream-to=origin/main main \
+      && mv "$tmp/firstmate" "$code"; then
+      say "cloned FirstMate at {{ .pins.firstmate.commit | trunc 7 }}"
+    else
+      warn "couldn't clone FirstMate; the next apply tries again"
+    fi
+    rm -rf "$tmp"
+  fi
+fi
+
+mkdir -p "$home/projects" "$home/data"
+
+{{- range $dir, $_ := $repos }}
+link="$home/projects/{{ $dir }}"
+target={{ joinPath $.dropboxRepositories $dir | squote }}
+if [ -L "$link" ]; then
+  [ "$(readlink "$link")" = "$target" ] || ln -sfn "$target" "$link"
+elif [ -e "$link" ]; then
+  warn "$link exists and isn't a link; left alone"
+else
+  ln -s "$target" "$link"
+fi
+{{- end }}
+
+# A repo dropped from the list stops being a project.
+for link in "$home/projects"/*; do
+  [ -L "$link" ] || continue
+  case "$(readlink "$link")" in
+    {{ .dropboxRepositories | squote }}/*)
+      case "$listed" in *" $(basename "$link") "*) ;; *) rm "$link" && say "removed project $(basename "$link")" ;; esac ;;
+  esac
+done
+
+# The registry, written once. FirstMate keeps it from then on; without it, its
+# first session would rebuild one from whatever is in projects.
+registry="$home/data/projects.md"
+if [ ! -e "$registry" ]; then
+  {
+{{- range $dir, $slug := $repos }}
+    printf '%s\n' {{ printf "- %s [%s] - %s" $dir $.firstmate.mode $slug | squote }}" (added $(date +%F))"
+{{- end }}
+  } > "$registry"
+  say "wrote FirstMate's project registry: {{ len $repos }} repos, {{ .firstmate.mode }}"
+fi
+exit 0
+{{ end -}}

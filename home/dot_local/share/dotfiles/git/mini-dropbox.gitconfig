@@ -1,0 +1,8 @@
+# Included on the mini for every repo in the Dropbox repositories folder, after
+# dropbox.gitconfig. The mini only reads the laptop's repos there, and its own
+# are worked on in worktrees, so nothing it runs in a Dropbox checkout should
+# write that checkout's index. git diff rewrites it after reading, even with
+# GIT_OPTIONAL_LOCKS=0, unless this is off.
+
+[diff]
+	autoRefreshIndex = false

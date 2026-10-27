@@ -1,0 +1,52 @@
+# Interactive shells. The order reproduces the old oh-my-zsh setup without the
+# framework: completion, the library oh-my-zsh used to supply, the minimal
+# prompt, my own files, vi mode, and fzf last, because its key bindings replace
+# Ctrl-R. tests/zsh-baseline.sh checks the result against a recording of the
+# old shell.
+
+# ~/.zsh, not ~/.config/zsh: on the laptop ~/.config is a link into Dropbox.
+ZSH_CONFIG=$HOME/.zsh
+ZSH_CACHE_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/zsh
+[[ -d $ZSH_CACHE_DIR ]] || mkdir -p $ZSH_CACHE_DIR
+
+# History stays out of every repo.
+HISTFILE=${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history
+[[ -d ${HISTFILE:h} ]] || mkdir -p ${HISTFILE:h}
+
+# Completion
+fpath=(
+  $ZSH_CONFIG/functions
+  $ZSH_CONFIG/completions
+{{- if .isMac }}
+  /opt/homebrew/share/zsh/site-functions
+{{- end }}
+  $fpath
+)
+autoload -U compaudit compinit zrecompile
+compinit -i -d $ZSH_CACHE_DIR/zcompdump-$ZSH_VERSION
+
+source $ZSH_CONFIG/lib.zsh
+source $ZSH_CONFIG/prompt.zsh
+
+export LANG=en_US.UTF-8
+
+source $ZSH_CONFIG/exports.zsh
+source $ZSH_CONFIG/aliases.zsh
+source $ZSH_CONFIG/functions.zsh
+
+# Vi mappings
+bindkey -v
+
+# Reverse and forward searches. fzf replaces Ctrl-R below; these remain on a
+# machine without fzf.
+bindkey '^r' history-incremental-search-backward
+bindkey '^R' history-incremental-pattern-search-backward
+
+source $ZSH_CONFIG/fzf.zsh
+
+# Installers that want to change the shell get a drop-in here, tracked in the
+# dotfiles repo, never a line appended to this file.
+for drop_in in $ZSH_CONFIG/conf.d/*.zsh(N); do
+  source $drop_in
+done
+unset drop_in

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Refuses a rebase before it starts, in the mini's repos on the laptop. The
+# reference-transaction hook would refuse it too, but only after the rebase
+# had rewritten the working tree and left .git/rebase-merge behind.
+echo "This repo belongs to the mini's agents and is read-only on this Mac. Rebase it on the mini." >&2
+exit 1

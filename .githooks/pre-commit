@@ -1,0 +1,14 @@
+#!/bin/sh
+# Refuses a commit that carries a private key, a licensed font or a token.
+# Enabled per clone with: git config core.hooksPath .githooks
+
+set -eu
+root=$(git rev-parse --show-toplevel)
+
+sh "$root/tests/check-secrets.sh"
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks is not installed, so the commit is refused" >&2
+  exit 1
+fi
+gitleaks git --pre-commit --staged --redact --no-banner "$root"

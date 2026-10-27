@@ -1,0 +1,78 @@
+{{- if and .isMac (not .ci) -}}
+#!/bin/bash
+# MonoLisa {{ .fonts.monolisa.version }}, from the 1Password document "{{ .fonts.monolisa.item }}".
+# It is licensed, so it never comes from this repo. Nothing happens when the
+# version marker matches and the files are installed. Otherwise this fetches
+# the zip, removes every older MonoLisa file first (MonoLisa's FAQ says to
+# remove an earlier version before installing a new one), installs the static
+# TTFs and writes the marker. Files already installed at this version, by hand
+# or by the old tilde, get the marker without a fetch. When 1Password can't
+# answer without a prompt nobody would see, it says so and exits 0, and the
+# next apply tries again.
+
+set -uo pipefail
+SCRIPT=monolisa
+{{ template "script-lib.sh" . }}
+
+version={{ .fonts.monolisa.version | squote }}
+item={{ .fonts.monolisa.item | squote }}
+vault={{ .fonts.monolisa.vault | squote }}
+fonts="$HOME/Library/Fonts"
+marker="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/fonts/monolisa.version"
+
+installed() { ls "$fonts"/MonoLisa* >/dev/null 2>&1; }
+if [ -f "$marker" ] && [ "$(cat "$marker")" = "$version" ] && installed; then
+  exit 0
+fi
+
+# Each installed MonoLisa file reports this version, as Spotlight reads it from
+# the font, and none is the variable font this script leaves out. A file
+# Spotlight hasn't read yet reports nothing, so the zip is fetched as before.
+same_version() {
+  local file
+  for file in "$fonts"/MonoLisa*; do
+    case "$file" in *[Vv]ariable*) return 1 ;; esac
+    [ "$(mdls -raw -name kMDItemVersion "$file" 2>/dev/null)" = "Version $version" ] || return 1
+  done
+}
+if installed && same_version; then
+  mkdir -p "$(dirname "$marker")"
+  printf '%s\n' "$version" > "$marker"
+  say "MonoLisa $version was already installed; recorded it"
+  exit 0
+fi
+
+if ! op_usable; then
+  warn "1Password's CLI isn't available without a prompt (sign in to 1Password and turn on Settings > Developer > Integrate with 1Password CLI); MonoLisa waits for the next attended apply"
+  exit 0
+fi
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+if ! timeout_run 120 op document get "$item" --vault "$vault" --out-file "$tmp/monolisa.zip" >/dev/null; then
+  warn "couldn't fetch '$item' from 1Password; the next apply tries again"
+  exit 0
+fi
+if ! unzip -q -o "$tmp/monolisa.zip" -d "$tmp/unzipped"; then
+  warn "the zip from 1Password didn't unpack"
+  exit 0
+fi
+
+# One build only: the static TTFs, never the variable font as well.
+found=$(find "$tmp/unzipped" -type f -iname 'MonoLisa*.ttf' ! -path '*__MACOSX*' ! -iname '*variable*')
+if [ -z "$found" ]; then
+  warn "no static MonoLisa TTFs in '$item'"
+  exit 0
+fi
+
+mkdir -p "$fonts"
+find "$fonts" -maxdepth 1 -iname 'MonoLisa*' -exec rm -f {} +
+count=0
+while IFS= read -r file; do
+  cp "$file" "$fonts/" && count=$((count + 1))
+done <<< "$found"
+
+mkdir -p "$(dirname "$marker")"
+printf '%s\n' "$version" > "$marker"
+say "installed MonoLisa $version ($count files)"
+{{ end -}}

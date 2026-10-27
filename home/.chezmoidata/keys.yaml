@@ -1,0 +1,47 @@
+# Public halves only. The laptop's private keys live in 1Password and never
+# leave it; the mini makes its own signing key during setup.
+#
+# The login and signing keys were made in 1Password on 25 Oct 2026, replacing
+# arnor, arnor_claude, arnor_signing and the old RSA keys. If a public half
+# below is ever emptied, the laptop has no signing key configured (commits fail
+# loudly rather than go out unsigned) and the mini's authorized_keys is not
+# written.
+ssh:
+  login:
+    item: "SSH login key"
+    vault: "Private"
+    public: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHNkWXUBz2DtuTrYwmqEKAgTbbhB+jvrQ8z/SW4HqQWb"
+  signing:
+    item: "SSH signing key"
+    vault: "Private"
+    public: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGBK/k7j9ORhQEKlvGhC4OVCWU8ctw8pc4sK4iNnR11x"
+  # The mini signs with a key it made itself.
+  miniSigningPath: ".ssh/mini_signing.pub"
+  # Keys that signed commits in the past. They stay in allowed_signers so old
+  # signatures still verify; validBefore stops them vouching for anything new.
+  retiredSigning:
+    - public: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDBVuQhsH411/O/wIZ8ARUHtYaRB3mZbrwQUKSbmq7WR"
+      validBefore: ""
+  # Phones and tablets that log in to the servers and the mini, each with a key
+  # its SSH app (Blink Shell) made in its Secure Enclave, so the private half
+  # never leaves the device. Empty until the key is pasted in; the playbook won't
+  # turn a server's password login off while one is empty (README, "Adding a
+  # phone or tablet").
+  devices:
+    iphone: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDT1g3U1wSCWQum9AUEeWecYKUyfrqNWRVxL4NGypdRZqzuuPMSbmesE4+YfGgYE/N2A0s5CDM8BwRYJZNlSLmMYhED2PGaU0gYUf4WblSpGIaE+NWHLAYpU8OUNdBhqs/uJB8KF2KC5+Z5WaBfQZwdiKJoDOVS9WrbZ67xK5/1zG0dKiwYxs0zNutqLHmaqcUI3Uy5lcsinjVj3LFaaNHU8Ic8fWBf0O56cgvih1bY3qv3pyVCD6Xq76vvcA8rHqFgkRPD7CAVCSmApb74C0+BCHdzCg8+jHEp2nZtFjt6XBPFxGXdexklajBE+jQo3WZvL0BU9j8HzvqiNAG7HCOwi38Hco7bWkzEFLepuzJ7ec90oGKX2xQdrYMQxlhOBrUs6eEKmTajeVdJ0Jz7Ix4Y7dYFvgC5ZS8vYX2yjSAzRVnAysGPmDJSyDXtKtAomu5GMfSnsYA3k6xEFBM4KGJoL6C4cB68faIs/XCjJCZiiFNAPXxqSVvc92itWzSlcBe99wsE2XaBtwyJGzEYY9+sO6BJXmhQSUj7hzXPidrmUd7xEyVIzMXc/tM+DeU4UpVnpcKmh0coB6qot9KTunnaql3qVI53dADWBz9VNO59ZeyJUDt2hqpeotzttJnwV7fuXHEA80AS6BZlznOPk/CrSYOd5dQ7KRy6a/PGkjgAFw== ctejada@gondolin"
+    ipad: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC25yw+91pqfB8y+x5xDDACcQ5Wmkanqv+PANUxxFz5LUIN6VnXsTbWztoyUR1NPKbNY+6hjEJc9NAKnhHgjtKziMjK9wTWePO4wOgeAUYiemj9ac79pNnD5Q9P4K3UhPoaeUGJ2ywWgX8aTrzPD3R2iMTFGhJIuTrxzrz7D32SMBte9yUvL9HKz57SB/UBt702hTvbkuMToEzEJzjKewdsXxURB4lCh6HgvXMjBdS1ZV/H7z0YtzMeTbYGgYweRdnHFPDGTsgHRvulU6O802P+x8JBqP6jK+liaKoB+ZreuytVOFFFfUxP23mD7eX6cFk7FnLwd7aNr9W715sjN57HmC/nYSMuaMgTJWYoGs3111UnLD72GzvmWw8n3FLiA4+7ff/R2mQBSHBWNowGKSLEGau2QbgORgqQKuxJVPkt9CNrxM/s+70Zevxhhb2TUfXirVCyqGZpS4cEcQ9ofUe33Y0fbioVDs+IPHp7rhQMHBPVjAHpoyPuKeV4tAg1SFcEmgzNHec02P+UwEzVYsDxjgrgtOVW2GeKp0RmdIDqlXIKw/PNgMzhaeTc89VEbKlWBmp1KumprRy2QuoWp2WGA/l9pEPP9Anmnz7KJCQetxRRkgjtGz6+Z/TXPyoVCyFOfjdgtq1qhk0PDkazsULzq9AuFFI1M9nnAxVE/HDybw== ctejada@lothlorien"
+  # Login keys that every server's next run takes out of authorized_keys.
+  retiredLogin: []
+
+email: "carlos@carlosetejada.com"
+
+# The personal age key, in 1Password only. It is read with op when re-sealing
+# on the mini and is never written to disk on any machine. Once each repo's
+# first re-seal is done, every Hurin and Rivendell blob is sealed to its public
+# half and to that server's own key; until then tilde's old key opens them
+# (README, "Re-sealing secrets").
+age:
+  item: "dotfiles age key"
+  vault: "Private"
+  field: "password"
+  public: "age1fkegjycfqp4ktjn5zrzv2mjj04rxexnmsh7rmwvg09hs0cumy5cs0a75pn"

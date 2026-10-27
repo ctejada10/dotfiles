@@ -1,0 +1,32 @@
+# Third-party code pulled in at fixed commits, never a moving branch: the
+# OpenSCAD skill's instructions go straight into Claude Code, and its Makefile
+# builds helpers on this Mac. To update one, read what changed upstream, then
+# change its commit here.
+pins:
+  openscadSkill:
+    repo: swh/openscad-skill
+    commit: 5c626aa2c0f7a550a31147f781e74f19461371d3
+  bosl2:
+    repo: BelfrySCAD/BOSL2
+    commit: 9af06e765ae35b8acb1c5dfa11d30d0e5bea7578
+  # George Wang's skills. No licence, so only two skill folders are
+  # downloaded, never committed: read-only-log-investigation-ops and
+  # frontend-e2e-evaluator-ops.
+  georgeskills:
+    repo: georgewangyu/georgeskills
+    commit: ac9cb3c72293bc2aa1880d347cfc826b65b11449
+  # CLIs installed at a fixed version on the mini.
+  agnix: "0.59.1"
+  noMistakes: "v1.84.0"
+  # superpowers, unchanged from its release, inside the local marketplace in
+  # ~/.local/share/claude-plugins/sp-gated, whose entry replaces the plugin's
+  # session hook. On each release: read its notes, check that hooks/hooks.json
+  # still declares only SessionStart, then change both lines here.
+  superpowers:
+    version: 7.0.1
+    sha256: 2295dd270d929ddbe3f82e43ab5cc6e3dfb4afdbfb56225347394491d34d747d
+  # FirstMate is cloned once at this commit; after that, its own
+  # /updatefirstmate moves it forward when asked.
+  firstmate:
+    repo: kunchenguid/firstmate
+    commit: 86437e280569468bf55cf0d05fc2a2720ff0b255

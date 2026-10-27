@@ -1,0 +1,26 @@
+# What the playbook downloads, pinned. To update one, read what changed
+# upstream, then change it here.
+pins:
+  # Primary key fingerprints of the third-party apt repositories. A key file
+  # that doesn't match stops the run. Checked 23 Oct 2026 against the keys
+  # each project publishes.
+  apt_keys:
+    docker: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+    tailscale: 2596A99EAAB33821893C0A79458CA832957F5868
+  chezmoi:
+    version: 2.73.3
+    sha256:
+      amd64: 2064f23d8d0b8d4b9c12fa1643344fa3cfd0c63b048d511e7bcc6a057b482b75
+      arm64: a74819082655863371e6560d0d4bec969841002ccd4f6072c650b3b5fff8c260
+  sops:
+    version: 3.13.3
+    sha256:
+      amd64: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+      arm64: 53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
+  # GitHub's SSH host keys, which deploy trusts when it fetches. Checked 26 Oct
+  # 2026: api.github.com/meta and an ssh-keyscan of github.com gave the same
+  # three keys, and each matches the fingerprint GitHub publishes.
+  github_ssh_host_keys:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+    - ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+    - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=

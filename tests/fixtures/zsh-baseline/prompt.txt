@@ -1,0 +1,2 @@
+PROMPT=$(_mnml_wrap MNML_PROMPT) 
+RPROMPT=$(_mnml_wrap MNML_RPROMPT)

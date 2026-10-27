@@ -1,0 +1,10 @@
+# Only the laptop. The servers come from home/.chezmoidata/hosts.yaml, added
+# by site.yml's first play.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  children:
+    # Filled in by site.yml's first play.
+    servers: {}

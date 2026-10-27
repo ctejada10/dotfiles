@@ -1,0 +1,10 @@
+{{- /* The mini runs Remote Login, so the laptop, the phone and the iPad can log
+       in to it. Public keys only: the laptop's login key and each device key
+       keys.yaml holds. A device's key leaves with its line there. */ -}}
+{{- if .ssh.login.public -}}
+{{ .ssh.login.public }}
+{{ end -}}
+{{ range $name, $key := .ssh.devices -}}
+{{ if $key }}{{ $key }}
+{{ end -}}
+{{ end -}}

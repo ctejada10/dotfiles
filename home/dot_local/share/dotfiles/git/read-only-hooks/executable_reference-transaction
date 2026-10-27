@@ -1,0 +1,12 @@
+#!/bin/sh
+# Runs before Git changes any ref: a commit, merge, reset, rebase, new branch,
+# tag, stash, fetch or pull. In a repo the mini's agents own it refuses, so the
+# laptop never writes into a .git that Dropbox is syncing to the mini.
+# Git can't stop plain file edits or switching to an existing branch; leave
+# those to the mini too.
+
+[ "$1" = prepared ] || exit 0
+
+repo=$(git rev-parse --show-toplevel 2>/dev/null)
+echo "read-only on this Mac: ${repo##*/} belongs to the mini's agents. Make the change on the mini." >&2
+exit 1

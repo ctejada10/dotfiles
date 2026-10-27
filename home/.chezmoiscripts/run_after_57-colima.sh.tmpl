@@ -1,0 +1,24 @@
+{{- if .isAgent -}}
+#!/bin/bash
+# Keeps Colima, the Linux VM the mini's containers run in, registered as a
+# login service, so Docker is up after every reboot without anyone signing in
+# to an app. The first start downloads the VM image and takes a minute or two.
+
+set -uo pipefail
+SCRIPT=colima
+{{ template "script-lib.sh" . }}
+
+if ! command -v colima >/dev/null 2>&1; then
+  warn "Colima isn't installed yet; it starts on the next apply"
+  exit 0
+fi
+if [ "$(brew services info --json colima 2>/dev/null | jq -r '.[0].running' 2>/dev/null)" = true ]; then
+  exit 0
+fi
+if brew services start colima >/dev/null; then
+  say "started Colima as a login service"
+else
+  warn "couldn't start Colima; see brew services info colima"
+fi
+exit 0
+{{ end -}}

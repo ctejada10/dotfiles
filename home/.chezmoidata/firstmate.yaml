@@ -1,0 +1,11 @@
+# FirstMate on the mini. Its home holds its state, data, config and projects,
+# outside Dropbox. Each repo listed under agent-mini in repos.yaml becomes a
+# project, written into its registry once, before its first session, with this
+# mode:
+#   direct-PR   push the branch and open a PR; once it merges on GitHub,
+#               FirstMate fast-forwards the checkout in Dropbox
+#   local-only  no push: a local branch merged into the checkout in Dropbox
+#               when Carlos says so
+firstmate:
+  home: .local/share/firstmate
+  mode: direct-PR

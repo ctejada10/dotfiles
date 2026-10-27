@@ -1,0 +1,14 @@
+{{- /* Keys whose signatures `git log --show-signature` accepts. */ -}}
+{{- $email := .email -}}
+{{- if .ssh.signing.public }}
+{{ $email }} {{ .ssh.signing.public }}
+{{- end }}
+{{- range .ssh.retiredSigning }}
+{{ $email }} {{ if .validBefore }}valid-before="{{ .validBefore }}" {{ end }}{{ .public }}
+{{- end }}
+{{- if .isAgent }}
+{{-   $mini := joinPath .chezmoi.homeDir .ssh.miniSigningPath }}
+{{-   if stat $mini }}
+{{ $email }} {{ include $mini | trim }}
+{{-   end }}
+{{- end }}

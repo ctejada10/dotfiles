@@ -1,0 +1,49 @@
+# Compiled source #
+###################
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Packages #
+############
+# it's better to unpack these files and commit the raw source
+# git has its own built in compression methods
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Logs and databases #
+######################
+*.log
+*.sql
+*.sqlite
+
+# OS generated files #
+######################
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode
+.vagrant/
+Icon
+
+# Agent config never belongs in a git repo.
+# Matches at any depth. AGENTS.md is included deliberately: even though it is a
+# cross-agent convention rather than a Claude file, it is still agent instructions.
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.claude/

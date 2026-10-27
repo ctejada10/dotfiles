@@ -1,0 +1,44 @@
+{{- if .isAgent -}}
+#!/bin/bash
+# Two command-line tools the mini's Claude Code plugins call, at the
+# versions pinned in .chezmoidata/pins.yaml. Runs on every apply and acts
+# only when a tool is missing or at another version, so a missing uv or Go
+# just means it tries again next time.
+#   agnix {{ .pins.agnix }}: the linter behind the agnix plugin. Installed here, so the
+#     plugin's skill never installs it itself with npm or cargo.
+#   no-mistakes {{ .pins.noMistakes }}: the push gate. Built with go install, which checks the
+#     module against Go's checksum database; no curl into a shell and no sudo.
+#     It runs only when a message Carlos typed names it (AGENTS.md, Git), and is
+#     set up per repo by hand with `no-mistakes init`.
+
+set -uo pipefail
+SCRIPT=agent-clis
+{{ template "script-lib.sh" . }}
+
+export PATH="$HOME/.local/bin:$PATH"
+
+if command -v uv >/dev/null 2>&1; then
+  if [ "$(agnix --version 2>/dev/null | awk '{print $NF}')" != {{ .pins.agnix | squote }} ]; then
+    if uv tool install --force {{ printf "agnix==%s" .pins.agnix | squote }} >/dev/null; then
+      say "installed agnix {{ .pins.agnix }}"
+    else
+      warn "couldn't install agnix; the next apply tries again"
+    fi
+  fi
+else
+  warn "uv isn't installed yet; agnix waits"
+fi
+
+if command -v go >/dev/null 2>&1; then
+  if ! no-mistakes --version 2>/dev/null | grep -qF {{ .pins.noMistakes | trimPrefix "v" | squote }}; then
+    if GOBIN="$HOME/.local/bin" go install {{ printf "github.com/kunchenguid/no-mistakes/cmd/no-mistakes@%s" .pins.noMistakes | squote }}; then
+      say "installed no-mistakes {{ .pins.noMistakes }}"
+    else
+      warn "couldn't build no-mistakes; the next apply tries again"
+    fi
+  fi
+else
+  warn "Go isn't installed yet; no-mistakes waits"
+fi
+exit 0
+{{ end -}}

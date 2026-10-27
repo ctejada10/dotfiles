@@ -1,0 +1,50 @@
+# ssh keeps the first value it finds for each option, so specific hosts come
+# first and Host * comes last.
+{{- if .isAgent }}
+
+# Colima adds this line whenever it's missing; it's here so it stays.
+Include ~/.colima/ssh_config
+{{- end }}
+{{- if eq .role "laptop" }}
+{{-   range $name, $host := .hosts }}
+
+{{/* The address too: the playbook connects by it, and without a match there
+     it would offer every key the agent holds, more than MaxAuthTries 2. */ -}}
+Host {{ $name }}{{ if ne $host.address $name }} {{ $host.address }}{{ end }}
+  HostName {{ $host.address }}
+  User {{ $host.user }}
+  Port {{ $host.port }}
+  IdentityFile ~/.ssh/login.pub
+  IdentitiesOnly yes
+{{-   end }}
+{{-   range $name, $mac := .macs }}
+
+Host {{ $name }}
+  HostName {{ $mac.address }}
+  User {{ $mac.user }}
+  IdentityFile ~/.ssh/login.pub
+  IdentitiesOnly yes
+{{-   end }}
+
+Host github.com
+  User git
+  IdentityFile ~/.ssh/login.pub
+  IdentitiesOnly yes
+{{- end }}
+
+# No agent forwarding anywhere: a forwarded agent lets the far end use my keys.
+# To reach a host through another, use ProxyJump, which leaves no socket on
+# the hop.
+Host *
+  ForwardAgent no
+  ServerAliveInterval 60
+  UpdateHostKeys no
+{{- if eq .role "laptop" }}
+
+# 1Password's agent holds the keys. Its approval prompt appears on this Mac's
+# own screen, so anything that came in over SSH, with a terminal or without
+# one, doesn't use it and fails fast instead of waiting for a click nobody can
+# see.
+Match exec "test -z ${SSH_CONNECTION:+set}"
+  IdentityAgent "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
+{{- end }}

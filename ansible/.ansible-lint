@@ -1,0 +1,15 @@
+# ansible-lint, run by tests/ansible.sh from this folder. CI fails on any
+# finding, warnings included. The installed collections and the virtualenv
+# aren't ours to lint.
+profile: production
+strict: true
+offline: true
+exclude_paths:
+  - .venv/
+  - collections/
+skip_list:
+  # The roles are this repo's own and few, so their variables keep plain
+  # names (deploy_repo, password_login) that the hosts files set.
+  - var-naming[no-role-prefix]
+  # Long lines are Jinja expressions and messages, clearer whole.
+  - yaml[line-length]

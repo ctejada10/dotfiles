@@ -1,0 +1,32 @@
+# Writes the cloud-init user-data for a new server, with the laptop's login
+# key from home/.chezmoidata/keys.yaml:
+#   uv run ansible-playbook cloud-init.yml -e out=<file>
+# Paste the file into the provider's user-data box, then check it on any
+# Ubuntu machine with `cloud-init schema -c <file>`.
+- name: Render the cloud-init user-data
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    key_data: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../home/.chezmoidata/keys.yaml') | from_yaml }}"
+    hosts_data: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../home/.chezmoidata/hosts.yaml') | from_yaml }}"
+    login_key: "{{ key_data.ssh.login.public }}"
+    admin_user: "{{ (hosts_data.hosts.values() | first).user }}"
+  tasks:
+    - name: Refuse to run without a place to write it
+      ansible.builtin.assert:
+        that: out is defined and out | length > 0
+        fail_msg: "Say where to write it: -e out=<file>"
+        quiet: true
+
+    - name: Refuse to run without the login key
+      ansible.builtin.assert:
+        that: login_key | length > 0
+        fail_msg: Put the login key's public half in home/.chezmoidata/keys.yaml first.
+        quiet: true
+
+    - name: Write the user-data
+      ansible.builtin.template:
+        src: cloud-init/user-data.yaml.j2
+        dest: "{{ out }}"
+        mode: "0600"

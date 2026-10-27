@@ -1,0 +1,97 @@
+{{- $repos := dict -}}
+{{- if .isAgent -}}
+{{-   $repos = index .repos "agent-mini" -}}
+{{- else if eq .role "laptop" -}}
+{{-   $repos = .repos.laptop -}}
+{{- end -}}
+{{- if or .isAgent $repos -}}
+#!/bin/bash
+# Clones each repo into ~/src when it's missing, over HTTPS, and never pulls.
+# ~/src is the Dropbox repositories folder, so a clone here is one Dropbox
+# carries to the other Mac.
+{{- if .isAgent }}
+# Agents work in these checkouts on their own branches, and a pull from here
+# would land in the middle of their work. gh's token authenticates.
+{{- else }}
+# These tools update themselves, so a pull from here would fight them. Their
+# personal data stays inside each checkout, untracked, where Dropbox syncs it.
+{{- end }}
+
+set -uo pipefail
+SCRIPT=clone-repos
+{{ template "script-lib.sh" . }}
+
+# Only once Dropbox has brought the folder down: a clone into a folder that is
+# still syncing ends in conflicted copies. hurin is always there when it has.
+if [ ! -e "$HOME/src/hurin/.git" ]; then
+  warn "the Dropbox repositories folder isn't synced yet; cloning waits for the next apply"
+  exit 0
+fi
+
+# A clone that needs credentials gets them from the helper or fails. Git never
+# asks at the terminal: GitHub takes no password there, and an attended apply
+# would stop twice for every private repo.
+export GIT_TERMINAL_PROMPT=0
+gh_ok=1
+{{- if .isAgent }}
+# Without gh's login the private repos can't clone, and the public ones still
+# do. Each clone is tried quietly and the ones that waited are named in one
+# warning at the end, not one warning and one Git error per repo.
+timeout_run 15 gh auth status >/dev/null 2>&1 || gh_ok=0
+{{- end }}
+waiting=""
+
+clone() {
+  local dest="$HOME/src/$1"
+  [ -e "$dest" ] && return 0
+  if [ "$gh_ok" = 1 ]; then
+    if git clone --quiet "https://github.com/$2.git" "$dest"; then
+      say "cloned $2 into ~/src/$1"
+    else
+      warn "couldn't clone $2; the next apply tries again"
+    fi
+  elif git clone --quiet "https://github.com/$2.git" "$dest" 2>/dev/null; then
+    say "cloned $2 into ~/src/$1"
+  else
+    waiting="$waiting $2"
+  fi
+}
+{{  range $dir, $repo := $repos }}
+clone {{ $dir | squote }} {{ $repo | squote }}
+{{- end }}
+if [ -n "$waiting" ]; then
+  warn "gh isn't logged in, so these didn't clone:$waiting. Run gh auth login (HTTPS), then chezmoi apply."
+fi
+{{- if eq .role "laptop" }}
+
+# The job-search tools hold a CV, salary expectations and application history.
+# Their personal files must never leave this Mac through Git, so their push URL
+# goes nowhere. ai-job-search's setup writes the profile into files Git
+# tracks, which no .gitignore can hide, so it also gets a pre-push hook that
+# refuses. Both are checked on every apply.
+for repo in career-ops ai-job-search; do
+  dest="$HOME/src/$repo"
+  [ -d "$dest/.git" ] || continue
+  if [ "$(git -C "$dest" remote get-url --push origin 2>/dev/null)" != no-push ]; then
+    git -C "$dest" remote set-url --push origin no-push && say "turned off pushing from ~/src/$repo"
+  fi
+done
+hook="$HOME/src/ai-job-search/.git/hooks/pre-push"
+if [ -d "$HOME/src/ai-job-search/.git" ] && [ ! -x "$hook" ]; then
+  printf '%s\n' '#!/bin/sh' 'echo "ai-job-search holds personal data and is never pushed." >&2' 'exit 1' > "$hook"
+  chmod +x "$hook" && say "added a pre-push hook that refuses in ~/src/ai-job-search"
+fi
+
+# career-ops installs its own dependencies once, after the first clone.
+# Playwright's browser waits until career-ops first makes a PDF.
+ops="$HOME/src/career-ops"
+if [ -d "$ops" ] && [ ! -d "$ops/node_modules" ] && command -v npm >/dev/null 2>&1; then
+  if (cd "$ops" && npm install --no-fund --no-audit >/dev/null); then
+    say "installed career-ops's dependencies"
+  else
+    warn "npm install failed in $ops"
+  fi
+fi
+{{- end }}
+exit 0
+{{ end -}}

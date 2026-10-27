@@ -1,0 +1,140 @@
+# The rest of the system through devsec.hardening's OS role, with what a
+# Docker and Tailscale host needs left alone. Its sysctls go to
+# /etc/sysctl.d/90-dev-sec.conf, never /etc/sysctl.conf.
+#
+# What the role sets has to survive a reboot, or the first run after every
+# reboot changes it back and the server runs without it until then.
+
+# Apport, Ubuntu's crash reporter, sets fs.suid_dumpable to 2 each time it
+# starts, so after every boot setuid programs could dump core again until the
+# next run. A server sends no crash reports, and removing apport would take
+# ubuntu-server with it.
+- name: Look for apport
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/system/apport.service
+  register: apport_unit
+
+- name: Keep apport off, so core dumps stay off after a reboot
+  ansible.builtin.systemd_service:
+    name: apport
+    state: stopped
+    enabled: false
+    masked: true
+  when: apport_unit.stat.exists
+
+# The role makes pam_faillock's folder in /run, which is emptied at every
+# boot. systemd makes it at boot the same way, so the role finds it there.
+- name: Make faillock's folder at boot too
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/dotfiles-faillock.conf
+    content: |
+      # Written by the dotfiles playbook. devsec's OS role makes the same folder.
+      d /run/faillock 0755 root root -
+    mode: "0644"
+
+# /tmp as tmpfs, cleared at every boot, with nosuid and nodev. Not noexec:
+# chezmoi and some installers run scripts from /tmp, and noexec is easy to get
+# around anyway. This is systemd's own tmp.mount, enabled for the next boot
+# rather than mounted now, since a tmpfs mounted over the live /tmp would hide
+# files that running processes, tmux among them, already have open there.
+#
+# Enabled alone, it doesn't wait for the boot. Every service with PrivateTmp
+# pulls tmp.mount in when it starts, and systemd then mounts it over the live
+# /tmp: on Ubuntu, any apt-get update as root starts two (apt-news and
+# esm-cache), and logrotate does every night. The checks role's Lynis runs
+# one, and the tmpfs hid the files of the module running Lynis, which failed.
+# A flag in /run, which every boot empties, keeps the unit from starting until
+# then. Only while /tmp isn't a mount yet: Ansible's mount facts leave tmpfs
+# out, so findmnt says.
+- name: Look for a mount on /tmp
+  ansible.builtin.command: findmnt --mountpoint /tmp
+  register: tmp_mounted
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Hold /tmp's mount back until the next boot
+  ansible.builtin.copy:
+    dest: /run/dotfiles-tmp-mount-next-boot
+    content: ""
+    mode: "0644"
+  when: tmp_mounted.rc != 0
+
+- name: Mount /tmp as tmpfs from the next boot, with nosuid and nodev
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tmp.mount
+    content: |
+      # Written by the dotfiles playbook: systemd's tmp.mount, without noexec,
+      # and held back while the playbook's flag in /run says so.
+      [Unit]
+      Description=Temporary Directory /tmp
+      Documentation=https://systemd.io/TEMPORARY_DIRECTORIES
+      ConditionPathIsSymbolicLink=!/tmp
+      ConditionPathExists=!/run/dotfiles-tmp-mount-next-boot
+      DefaultDependencies=no
+      Conflicts=umount.target
+      Before=local-fs.target umount.target
+      After=swap.target
+
+      [Mount]
+      What=tmpfs
+      Where=/tmp
+      Type=tmpfs
+      Options=mode=1777,strictatime,nosuid,nodev,size=50%%,nr_inodes=1m
+
+      [Install]
+      WantedBy=local-fs.target
+    mode: "0644"
+  register: tmp_mount_unit
+
+# Not under --check while the unit is still to be written: systemd wouldn't
+# know it yet, and the module fails on a unit it can't find.
+- name: Enable /tmp's mount for the next boot
+  ansible.builtin.systemd_service:
+    name: tmp.mount
+    enabled: true
+    daemon_reload: "{{ tmp_mount_unit is changed }}"
+  when: not (ansible_check_mode and tmp_mount_unit is changed)
+
+- name: Harden the OS
+  ansible.builtin.include_role:
+    name: devsec.hardening.os_hardening
+  vars:
+    # Docker routes its containers' traffic, so forwarding stays on where it
+    # runs; the role would set it to 0 and reload at once. Where Samba is
+    # published on the Tailscale address, Docker can start it at boot before
+    # tailscaled has given tailscale0 that address; it then can't bind the
+    # port and never tries again. Nonlocal binding lets Docker bind it early.
+    sysctl_overwrite: >-
+      {{ ({'net.ipv4.ip_forward': 1} if docker else {})
+         | combine({'net.ipv4.ip_nonlocal_bind': 1} if samba | default(false) and tailscale | default(false) else {}) }}
+    # The accounts log in with keys. A 60-day expiry on their passwords would
+    # lock sudo, and the role would apply it to existing users too.
+    os_auth_pw_max_age: 99999
+    os_user_pw_ageing: false
+    # Home folders keep their modes. The role would set them to 700, which
+    # can cut containers and other users off from files they read there now.
+    os_chmod_home_folders: false
+    # Ubuntu's own 022, not the role's 027: the deploy writes files that
+    # containers running as other users read, as Húrin's do.
+    os_env_umask: "022"
+    # faillock locks an account after failed passwords, sudo included. With
+    # password login open to the internet, anyone could keep it locked.
+    os_auth_retries: "{{ 0 if password_login | bool else 5 }}"
+    # The firewall role owns UFW, defaults included.
+    ufw_manage_defaults: false
+    # Five audit logs of 6 MB, the oldest deleted, as Ubuntu's own auditd
+    # does. The role's keep_logs deletes none, so the logs grow until the
+    # disk is nearly full and auditd stops logging.
+    os_auditd_max_log_file_action: rotate
+    # Snaps mount squashfs. The role skips filesystems mounted during the run,
+    # but blocking it would stop the next snap from installing. vfat is the
+    # EFI partition's: the role means to spare it on EFI machines, but its
+    # filter for that removes nothing, so only a /boot/efi mounted during the
+    # run kept it off the list, and a blocked vfat stops the next boot.
+    os_filesystem_whitelist: [squashfs, vfat]
+    # Ubuntu's rsyslog runs as syslog and needs /var/log group-writable to
+    # start a log file such as ufw.log; its tmpfiles entry sets 0775 at every
+    # boot. The role's own Ubuntu value is 0775 too, but its default of 0755
+    # shadows it, so each run took it away until the next boot.
+    os_mnt_var_log_dir_mode: "{{ '0775' if ansible_distribution == 'Ubuntu' else '0755' }}"

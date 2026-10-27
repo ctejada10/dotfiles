@@ -1,0 +1,10 @@
+# The keys 1Password's SSH agent offers on the laptop. Without this file it
+# offers every SSH key in the default vault.
+
+[[ssh-keys]]
+item = {{ .ssh.login.item | quote }}
+vault = {{ .ssh.login.vault | quote }}
+
+[[ssh-keys]]
+item = {{ .ssh.signing.item | quote }}
+vault = {{ .ssh.signing.vault | quote }}

@@ -1,0 +1,15 @@
+{{- if .isAgent -}}
+#!/bin/bash
+# Turns on this repo's own pre-commit secret check on the mini, which is
+# where this repo is edited.
+
+set -uo pipefail
+SCRIPT=mini-git
+{{ template "script-lib.sh" . }}
+
+repo={{ .chezmoi.workingTree | squote }}
+if [ -d "$repo/.git" ] && [ "$(git -C "$repo" config --local --get core.hooksPath)" != .githooks ]; then
+  git -C "$repo" config --local core.hooksPath .githooks && say "turned on the dotfiles repo's pre-commit check"
+fi
+exit 0
+{{ end -}}

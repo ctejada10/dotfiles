@@ -1,0 +1,440 @@
+# The deploy part, for servers a repo deploys to: the deploy user, sops and
+# age, an age key made here that never leaves the server, the deploy gate, and
+# GitHub Actions' key, which can only ask the gate for a deploy. Keys already
+# in deploy's authorized_keys stay, so today's deploys keep working until the
+# workflow moves to the new key; then deploy_retired_keys takes the old one out.
+# Last, the checkout the gate deploys: deploy's read key for each repo, the
+# clone, and the folders the repo's containers need.
+
+- name: Create the deploy user
+  ansible.builtin.user:
+    name: deploy
+    shell: /bin/bash
+    create_home: true
+  register: deploy_user
+
+- name: Let deploy run Docker
+  ansible.builtin.user:
+    name: deploy
+    groups: docker
+    append: true
+  when: docker
+
+- name: Install sops {{ pins.sops.version }}
+  ansible.builtin.get_url:
+    url: "https://github.com/getsops/sops/releases/download/v{{ pins.sops.version }}/sops-v{{ pins.sops.version }}.linux.{{ deb_arch }}"
+    dest: /usr/local/bin/sops
+    checksum: "sha256:{{ pins.sops.sha256[deb_arch] }}"
+    mode: "0755"
+
+- name: Make deploy's sops folder
+  ansible.builtin.file:
+    path: "{{ deploy_user.home }}/.config/sops/age"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0700"
+
+- name: Make deploy's own age key, once
+  ansible.builtin.command:
+    cmd: age-keygen -o {{ deploy_user.home }}/.config/sops/age/keys.txt
+    creates: "{{ deploy_user.home }}/.config/sops/age/keys.txt"
+  become: true
+  become_user: deploy
+  register: deploy_age_keygen
+
+# Not under --check when the key is still to be made: dor-lomin's folder is
+# empty today and Rivendell's old key is moved aside first, and the file module
+# fails on a file that doesn't exist.
+- name: Keep the age key private to deploy
+  ansible.builtin.file:
+    path: "{{ deploy_user.home }}/.config/sops/age/keys.txt"
+    owner: deploy
+    group: deploy
+    mode: "0600"
+  when: not (ansible_check_mode and deploy_age_keygen is changed)
+
+- name: Read the age key's public half
+  ansible.builtin.command: age-keygen -y {{ deploy_user.home }}/.config/sops/age/keys.txt
+  become: true
+  become_user: deploy
+  register: deploy_age
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Show the public key to seal this server's secrets to
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}'s age key is {{ deploy_age.stdout }}. Add it to
+      .sops.yaml in each repo that deploys here, then re-seal.
+  when: not ansible_check_mode
+
+- name: Install the deploy gate, the only command GitHub Actions' key can run
+  ansible.builtin.template:
+    src: deploy-gate.j2
+    dest: /usr/local/bin/deploy-gate
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Authorize GitHub Actions' key, limited to the deploy gate
+  ansible.posix.authorized_key:
+    user: deploy
+    key: "{{ deploy_public_key }}"
+    key_options: 'restrict,command="/usr/local/bin/deploy-gate"'
+    exclusive: false
+  when: deploy_public_key | length > 0
+
+- name: Take out the deploy keys that are retired
+  ansible.posix.authorized_key:
+    user: deploy
+    key: "{{ item }}"
+    state: absent
+  loop: "{{ deploy_retired_keys | default([]) }}"
+  loop_control:
+    label: "{{ item.split() | last }}"
+
+- name: Read the server's own SSH host key
+  ansible.builtin.slurp:
+    src: /etc/ssh/ssh_host_ed25519_key.pub
+  register: host_key
+
+- name: Show what the deploy workflow pins
+  ansible.builtin.debug:
+    msg: >-
+      Set the repo's Actions variable VPS_HOST_KEY to: {{ (host_key.content | b64decode).split()[:2] | join(' ') }}
+
+# deploy's read keys for GitHub, one per repo it fetches, since GitHub takes a
+# deploy key on one repository only. Each is reached through a Host alias that
+# offers that key first, and Git goes through an alias only once GitHub takes
+# its key, so a server that fetches some other way today keeps doing so until
+# the new key is added there.
+- name: Work out the repos deploy fetches
+  ansible.builtin.set_fact:
+    deploy_fetch_repos: "{{ ([deploy_github_repo] if deploy_github_repo else []) + deploy_submodule_repos }}"
+    # What git ls-remote says when GitHub answered and turned the key down: a
+    # key it doesn't know, or a deploy key of another repo. Anything else (a
+    # timeout, DNS, a host key) means the run couldn't ask.
+    deploy_key_refused: 'Permission denied \(publickey|Repository not found|denied to deploy key|DENIED'
+
+- name: Make deploy's SSH folder
+  ansible.builtin.file:
+    path: "{{ deploy_user.home }}/.ssh"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0700"
+  when: deploy_fetch_repos | length > 0
+
+- name: Trust GitHub's published host keys for deploy
+  ansible.builtin.known_hosts:
+    path: "{{ deploy_user.home }}/.ssh/known_hosts"
+    name: "{{ deploy_git_host }}"
+    key: "{{ deploy_git_host }} {{ item }}"
+  loop: "{{ deploy_git_host_keys if deploy_fetch_repos | length > 0 else [] }}"
+  loop_control:
+    label: "{{ item.split()[0] }}"
+  become: true
+  become_user: deploy
+
+- name: Make deploy's read key for each repo, once
+  ansible.builtin.command:
+    cmd: >-
+      ssh-keygen -q -t ed25519 -N ''
+      -C "deploy@{{ inventory_hostname }} {{ item }}"
+      -f {{ deploy_user.home }}/.ssh/github_{{ item.split('/') | last }}
+    creates: "{{ deploy_user.home }}/.ssh/github_{{ item.split('/') | last }}"
+  loop: "{{ deploy_fetch_repos }}"
+  become: true
+  become_user: deploy
+
+# First in the file, ahead of any Host * of deploy's own: ssh takes the first
+# value it finds for a setting, and tries the identity files of every block
+# that matches, in order. Match all ends the block, so settings that sat at the
+# top of the file, outside any Host block, still apply to every host.
+#
+# The timeouts bound every fetch through the alias, not only the gate's, which
+# timeout wraps: Rivendell's deploy.sh fetches arwen itself when the gate's
+# fetch didn't bring its commit in, under the gate's lock and deaf to the
+# client going away. A GitHub that takes the connection and never answers
+# fails it in seconds instead of holding the lock for hours.
+- name: Give each read key a Host alias that offers that key first
+  ansible.builtin.blockinfile:
+    path: "{{ deploy_user.home }}/.ssh/config"
+    create: true
+    owner: deploy
+    group: deploy
+    mode: "0600"
+    insertbefore: BOF
+    marker: "# {mark} dotfiles: github-{{ item.split('/') | last }}"
+    block: |
+      Host github-{{ item.split('/') | last }}
+        HostName {{ deploy_git_host }}
+        User git
+        IdentityFile ~/.ssh/github_{{ item.split('/') | last }}
+        IdentitiesOnly yes
+        ConnectTimeout 15
+        ServerAliveInterval 15
+        ServerAliveCountMax 4
+      Match all
+  loop: "{{ deploy_fetch_repos }}"
+
+# From the private half, so a missing or swapped .pub can't mislead. Its
+# comment says whether this playbook made it: a key already at that name, say
+# today's own per-repo key, would otherwise pass for the run's, and since
+# GitHub takes it, the run would switch to it with no key to add, and deleting
+# the old deploy keys later would break deploy's fetches. -P '' fails on a key
+# with a passphrase instead of asking for one.
+- name: Read each read key's public half
+  ansible.builtin.command: ssh-keygen -y -P '' -f {{ deploy_user.home }}/.ssh/github_{{ item.split('/') | last }}
+  loop: "{{ deploy_fetch_repos }}"
+  register: deploy_read_keys
+  become: true
+  become_user: deploy
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+# The run asks GitHub about, and switches to, only the keys it made. The
+# others are left as they fetch today, and the playbook's last play fails
+# naming them.
+- name: Work out which read keys this playbook didn't make
+  ansible.builtin.set_fact:
+    deploy_foreign_keys: >-
+      {%- set out = {} -%}
+      {%- for r in deploy_read_keys.results | default([]) if r.rc is defined -%}
+      {%- set comment = (r.stdout.split(None, 2) + ['', '', ''])[2] | trim -%}
+      {%- if r.rc != 0 -%}
+      {#- The last line: on a key others can read, ssh-keygen's first is a row of @. -#}
+      {%- set why = r.stderr_lines | map('trim') | select | last | default('exit ' ~ r.rc) -%}
+      {%- set _ = out.update({r.item: "ssh-keygen couldn't read it: " ~ why ~ ("; if it's the run's own key, chmod 600 it instead of renaming it" if 'bad permissions' in why else '')}) -%}
+      {%- elif comment != 'deploy@' ~ inventory_hostname ~ ' ' ~ r.item -%}
+      {%- set _ = out.update({r.item: ("its comment is '" ~ comment ~ "'" if comment else "it has no comment") ~ ", not 'deploy@" ~ inventory_hostname ~ " " ~ r.item ~ "'"}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{- out -}}
+
+# With the read key alone and the alias's settings on the command line, not
+# deploy's ~/.ssh/config: ssh offers the keys of every block that matches, so
+# a Host * of deploy's own that names today's key would answer for a read key
+# GitHub doesn't take yet, and Git would switch to the alias with no key shown.
+#
+# ConnectTimeout covers the TCP connection and the banner only. A GitHub, or a
+# path to it, that sends the banner and then nothing would hold this question
+# for hours, before the run has hardened anything; the ServerAlive settings,
+# the alias's own, fail it within a minute as one the run couldn't ask. sshd
+# answers those itself, so they don't end a GitHub that takes the key and then
+# never sends the list of heads; timeout ends that one after two minutes, ssh
+# included, the same way.
+- name: Ask GitHub which read keys it takes
+  ansible.builtin.command:
+    cmd: timeout --verbose 120 git ls-remote --heads git@github-{{ item.split('/') | last }}:{{ item }}.git
+  environment:
+    GIT_SSH_COMMAND: >-
+      ssh -F /dev/null -o HostName={{ deploy_git_host }} -o User=git
+      -o IdentityFile={{ deploy_user.home }}/.ssh/github_{{ item.split('/') | last }}
+      -o IdentitiesOnly=yes -o IdentityAgent=none
+      -o UserKnownHostsFile={{ deploy_user.home }}/.ssh/known_hosts
+      -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes
+      -o BatchMode=yes -o ConnectTimeout=15
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=4
+    GIT_TERMINAL_PROMPT: "0"
+  loop: "{{ deploy_fetch_repos }}"
+  register: deploy_read_access
+  become: true
+  become_user: deploy
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode and item not in deploy_foreign_keys
+
+- name: Show the read keys GitHub doesn't take yet
+  ansible.builtin.debug:
+    msg: >-
+      deploy on {{ inventory_hostname }} can't fetch {{ item.item }} with its
+      own key yet ("{{ deploy_git_said }}"). Add this to {{ item.item }} as a
+      read-only deploy key (Settings, Deploy keys), then run again:
+      {{ deploy_read_keys.results[idx].stdout | trim }}
+  loop: "{{ deploy_read_access.results | default([]) }}"
+  loop_control:
+    index_var: idx
+    label: "{{ item.item }}"
+  vars:
+    deploy_git_said: "{{ (item.stderr_lines | default([]) | reject('match', '^(fatal: Could not read from remote|Please make sure|and the repository exists| *$)') | list + ['git exited ' ~ item.rc]) | first }}"
+  when: item.rc is defined and item.rc != 0 and item.stderr is search(deploy_key_refused)
+
+- name: Say which read keys the run couldn't ask GitHub about
+  ansible.builtin.debug:
+    msg: >-
+      Couldn't ask {{ deploy_git_host }} whether it takes deploy's read key for
+      {{ item.item }} ("{{ deploy_git_said }}"). How deploy on
+      {{ inventory_hostname }} fetches {{ item.item }} is unchanged; run again
+      once {{ deploy_git_host }} answers.
+  loop: "{{ deploy_read_access.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  vars:
+    deploy_git_said: "{{ (item.stderr_lines | default([]) | reject('match', '^(fatal: Could not read from remote|Please make sure|and the repository exists| *$)') | list + ['git exited ' ~ item.rc]) | first }}"
+  when: item.rc is defined and item.rc != 0 and item.stderr is not search(deploy_key_refused)
+
+# The other way round too: once GitHub turns a key down, Git fetches that repo
+# the way it did before the alias, so taking a deploy key off GitHub by
+# mistake leaves deploy no worse off than before the switch.
+- name: Fetch the old way again where GitHub turns the read key down
+  community.general.git_config:
+    name: "url.git@github-{{ item.item.split('/') | last }}:{{ item.item }}.git.insteadOf"
+    scope: global
+    state: absent
+  loop: "{{ deploy_read_access.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc is defined and item.rc != 0 and item.stderr is search(deploy_key_refused)
+  become: true
+  become_user: deploy
+
+- name: Fetch each repo through its alias, once GitHub takes its key
+  community.general.git_config:
+    name: "url.git@github-{{ item.item.split('/') | last }}:{{ item.item }}.git.insteadOf"
+    value: "git@{{ deploy_git_host }}:{{ item.item }}.git"
+    scope: global
+  loop: "{{ deploy_read_access.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc is defined and item.rc == 0
+  become: true
+  become_user: deploy
+
+# What Git does now, earlier runs included: a run that couldn't ask GitHub
+# leaves a switch an earlier run made in place.
+- name: Read which repos deploy fetches through their alias
+  # A read by pattern, which the git_config modules can't do: they take one
+  # exact name.
+  ansible.builtin.command: git config --global --get-regexp '^url\.git@github-.*\.insteadof$'  # noqa: command-instead-of-module
+  register: deploy_aliases
+  become: true
+  become_user: deploy
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - deploy_fetch_repos | length > 0
+    - not (ansible_check_mode and deploy_user is changed)
+
+# One line per repo, which the playbook's last play prints, so a run that
+# couldn't ask GitHub, or that GitHub turned down, doesn't pass for a finished
+# switch. The old deploy keys can go only once every line says GitHub takes
+# the read key and Git fetches through the alias.
+- name: Work out where each repo deploy fetches stands
+  ansible.builtin.set_fact:
+    deploy_switch_summary: >-
+      {%- set out = [] -%}
+      {%- for repo in deploy_fetch_repos -%}
+      {%- set name = repo.split('/') | last -%}
+      {%- set on_alias = deploy_aliases.stdout_lines | default([]) | select('match', '^url\\.git@github-' ~ (name | regex_escape) ~ ':' ~ (repo | regex_escape) ~ '\\.git\\.insteadof ') | list | length > 0 -%}
+      {%- set asked = (deploy_read_access.results | default([]) | selectattr('item', 'equalto', repo) | selectattr('rc', 'defined') | list + [{}]) | first -%}
+      {%- set said = (asked.stderr_lines | default([]) | reject('match', '^(fatal: Could not read from remote|Please make sure|and the repository exists| *$)') | list + ['git exited ' ~ asked.rc | default('')]) | first -%}
+      {%- if repo in deploy_foreign_keys -%}
+      {%- set state = "not asked: ~deploy/.ssh/github_" ~ name ~ " isn't a read key the run made and can use (" ~ deploy_foreign_keys[repo] ~ ")" -%}
+      {%- elif ansible_check_mode -%}
+      {%- set state = "not asked under --check" -%}
+      {%- elif asked.rc is not defined -%}
+      {%- set state = "not asked" -%}
+      {%- elif asked.rc == 0 -%}
+      {%- set state = "GitHub takes its read key" -%}
+      {%- elif asked.stderr is search(deploy_key_refused) -%}
+      {%- set state = "GitHub doesn't take its read key yet (\"" ~ said ~ "\"); add the key printed above" -%}
+      {%- else -%}
+      {%- set state = "couldn't ask GitHub (\"" ~ said ~ "\"); run again once it answers" -%}
+      {%- endif -%}
+      {#- A key ssh-keygen can't read is one ssh can't use either, so an alias
+          an earlier run switched to fails until the key is fixed. -#}
+      {%- set unusable = repo in deploy_foreign_keys and deploy_foreign_keys[repo] is match("ssh-keygen couldn't read it") -%}
+      {%- set how = ("Git fetches it through github-" ~ name ~ (", which can't use that key, so deploy's fetches of it fail until the key is fixed." if unusable else ".")) if on_alias else ("Git fetches it as before, not through github-" ~ name ~ ".") -%}
+      {%- set _ = out.append(repo ~ ": " ~ state ~ ". " ~ how) -%}
+      {%- endfor -%}
+      {{- out -}}
+  when: deploy_fetch_repos | length > 0
+
+# A first clone only, kept to one by creates: the deploy gate owns the checkout
+# after that, and nothing here may fetch or check it out again.
+- name: Clone the checkout the gate deploys, once GitHub takes its key
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: git clone git@{{ deploy_git_host }}:{{ deploy_github_repo }}.git {{ deploy_repo }}
+    creates: "{{ deploy_repo }}/.git"
+  environment:
+    GIT_SSH_COMMAND: ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes
+    GIT_TERMINAL_PROMPT: "0"
+  become: true
+  become_user: deploy
+  when:
+    - deploy_github_repo | length > 0
+    - deploy_read_access.results is defined
+    # --check skips the question, and its results have no rc.
+    - deploy_read_access.results[0].rc | default(1) == 0
+
+- name: Look for the checkout
+  ansible.builtin.stat:
+    path: "{{ deploy_repo }}/.git"
+  register: deploy_checkout
+
+# insteadOf rewrites only the exact git@<host>:<repo>.git form, so an origin
+# or submodule written any other way would keep fetching with today's key
+# while the server looks switched. The checks role compares these with the
+# aliases. A Git error here doesn't stop the run before the hardening; the
+# comparison counts it as a mismatch.
+- name: Read where the checkout and its submodules fetch from, as Git rewrites it
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cd {{ deploy_repo }}
+    # git config exits 1 when it finds nothing: no submodules, or no
+    # core.sshCommand. Neither is an error here.
+    submodules() { git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true; }
+    git remote get-url origin
+    submodules | while read -r key path; do
+      name=${key#submodule.}
+      name=${name%.path}
+      if [ -e "$path/.git" ]; then
+        git -C "$path" remote get-url origin || { echo "in the submodule at $path" >&2; exit 1; }
+      else
+        git ls-remote --get-url "$(git config --get "submodule.$name.url" || git config -f .gitmodules --get "submodule.$name.url")"
+      fi
+    done
+    # A core.sshCommand decides how Git connects, whatever the alias says.
+    # In a submodule it is read as Git reads it when it fetches there: the
+    # submodule config, the global and system ones, and the files they
+    # include, with includeIf conditions such as hasconfig:remote.*.url
+    # decided in the submodule.
+    {
+      git config --show-origin --get-all core.sshCommand || true
+      submodules | while read -r key path; do
+        if [ -e "$path/.git" ]; then
+          { git -C "$path" config --show-origin --get-all core.sshCommand || true; } | sed "s|^|$path: |"
+        fi
+      done
+    } | sort -u | sed 's/^/core.sshCommand /'
+  args:
+    executable: /bin/bash
+  register: deploy_fetch_urls
+  become: true
+  become_user: deploy
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: deploy_checkout.stat.exists
+
+# Containers that run as their own users and write into the checkout, which
+# Docker would otherwise create as root. Only the folder itself is changed,
+# to 0755 as Docker makes it unless the folder's entry gives a mode.
+- name: Make the folders the repo's containers need, owned by their users
+  ansible.builtin.file:
+    path: "{{ deploy_repo }}/{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop: "{{ deploy_owned_dirs }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: deploy_checkout.stat.exists

@@ -1,0 +1,23 @@
+{{- if .isAgent -}}
+{{- $signing := joinPath .chezmoi.homeDir (.ssh.miniSigningPath | trimSuffix ".pub") -}}
+#!/bin/bash
+# Git on the mini signs every commit with a key made here, never with
+# 1Password, so an agent pushing at 3 a.m. never waits on a prompt. This makes
+# that key once, if the setup guide hasn't. It runs before the files are
+# written, so allowed_signers lists the key on the same apply.
+
+set -uo pipefail
+SCRIPT=mini-signing-key
+{{ template "script-lib.sh" . }}
+
+key={{ $signing | squote }}
+[ -e "$key" ] && exit 0
+mkdir -p "$(dirname "$key")" && chmod 700 "$(dirname "$key")"
+if ssh-keygen -q -t ed25519 -N "" -C "{{ .hostname }} signing" -f "$key"; then
+  say "made the signing key. Add it to GitHub as a signing key; gh needs a scope for that, so ask for it and drop it after:"
+  say "  gh auth refresh -h github.com -s write:ssh_signing_key && gh ssh-key add $key.pub --type signing --title {{ .hostname }}; gh auth refresh -h github.com -r write:ssh_signing_key"
+else
+  warn "couldn't make the signing key at $key; commits will fail to sign until it exists"
+fi
+exit 0
+{{ end -}}

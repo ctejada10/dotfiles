@@ -1,0 +1,31 @@
+{{- if eq .role "laptop" -}}
+#!/bin/bash
+# Part of the cutover from the old tilde. chezmoi replaces the stow links it
+# manages (~/.zsh, ~/.zshrc, Ghostty's config and the rest) by itself; this
+# removes the ones it doesn't, which would otherwise point into the deleted
+# checkout, and carries the shell history over. Only links into the old repo
+# are removed, whichever spelling of the path they use.
+
+set -uo pipefail
+SCRIPT=retire-old-links
+{{ template "script-lib.sh" . }}
+
+# .config/ghostty is a broken link inside Dropbox's config-files, left by the
+# old setup; Ghostty now reads its config from Application Support.
+for target in .condarc .config/ghostty; do
+  link="$HOME/$target"
+  if [ -L "$link" ]; then
+    case "$(readlink "$link")" in
+      *[Rr]epositories/tilde/*) rm "$link" && say "removed the old link ~/$target" ;;
+    esac
+  fi
+done
+
+history="${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history"
+old_history="$HOME/Library/CloudStorage/Dropbox/repositories/tilde/assets/.zsh-history"
+if [ ! -s "$history" ] && [ -s "$old_history" ]; then
+  mkdir -p "$(dirname "$history")"
+  cp "$old_history" "$history" && chmod 600 "$history" && say "copied the shell history to $history"
+fi
+exit 0
+{{ end -}}

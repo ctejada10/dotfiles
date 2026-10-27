@@ -1,0 +1,6 @@
+{{- /* The public half of the laptop's login key. ssh hands it to 1Password's
+       agent so the agent offers that one key, not every key it holds. Empty,
+       and so not written, until the key exists. */ -}}
+{{- if and (eq .role "laptop") .ssh.login.public -}}
+{{ .ssh.login.public }}
+{{ end -}}

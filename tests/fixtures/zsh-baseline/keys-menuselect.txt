@@ -1,0 +1,12 @@
+bindkey -M menuselect "^I" complete-word
+bindkey -M menuselect "^J" accept-line
+bindkey -M menuselect "^M" accept-line
+bindkey -M menuselect "^O" accept-and-infer-next-history
+bindkey -M menuselect "^[OA" up-line-or-history
+bindkey -M menuselect "^[OB" down-line-or-history
+bindkey -M menuselect "^[OC" forward-char
+bindkey -M menuselect "^[OD" backward-char
+bindkey -M menuselect "^[[A" up-line-or-history
+bindkey -M menuselect "^[[B" down-line-or-history
+bindkey -M menuselect "^[[C" forward-char
+bindkey -M menuselect "^[[D" backward-char

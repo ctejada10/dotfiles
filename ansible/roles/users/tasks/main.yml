@@ -1,0 +1,37 @@
+# The admin user: in the sudo group, zsh as its login shell, and the keys that
+# may log in authorized: the laptop's login key and each phone's and tablet's
+# own key. Keys already there stay, apart from those on the retired list.
+
+- name: Give the admin user sudo and zsh
+  ansible.builtin.user:
+    name: "{{ admin_user }}"
+    groups: sudo
+    append: true
+    shell: /usr/bin/zsh
+
+- name: Authorize the laptop's login key
+  ansible.posix.authorized_key:
+    user: "{{ admin_user }}"
+    key: "{{ login_key }}"
+    exclusive: false
+  when: login_key | length > 0
+
+- name: Authorize each phone's and tablet's key
+  ansible.posix.authorized_key:
+    user: "{{ admin_user }}"
+    key: "{{ item.value }}"
+    exclusive: false
+  loop: "{{ device_keys | dict2items | selectattr('value') | list }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Take out the retired login keys
+  ansible.posix.authorized_key:
+    user: "{{ admin_user }}"
+    key: "{{ item }}"
+    state: absent
+  # The entries site.yml read, so one of blanks alone isn't handed to the
+  # module, which fails on it as an invalid key.
+  loop: "{{ retired_login_keys | map('trim') | select | list }}"
+  loop_control:
+    label: "{{ item.split() | last }}"

@@ -1,0 +1,461 @@
+{{- if and .isMac (not .ci) -}}
+#!/bin/bash
+# macOS settings for {{ .role }}, as they are on arnor today minus the dead
+# ones. Runs on every apply: each setting is compared before it is written, so
+# a Mac that's in line changes nothing, prints nothing and asks for nothing,
+# and anything skipped for want of sudo is picked up by the next apply.
+# For a dry run that writes nothing, this script alone:
+#   DOTFILES_CHECK=1 bash <(chezmoi execute-template < ~/.local/share/chezmoi/home/.chezmoiscripts/run_after_30-macos-settings.sh.tmpl)
+# (DOTFILES_CHECK=1 chezmoi apply dry-runs it too, but applies everything else.)
+
+set -uo pipefail
+SCRIPT=macos-settings
+{{ template "script-lib.sh" . }}
+{{ template "defaults.sh" . }}
+
+###############################################################################
+# General                                                                     #
+###############################################################################
+
+defaults_set NSGlobalDomain AppleHighlightColor string "0.1725490196 0.2862745098 0.4980392157"
+defaults_set NSGlobalDomain NSTableViewDefaultSizeMode int 1
+defaults_set NSGlobalDomain AppleShowScrollBars string WhenScrolling
+defaults_set NSGlobalDomain NSAutomaticCapitalizationEnabled bool false
+defaults_set NSGlobalDomain NSAutomaticPeriodSubstitutionEnabled bool false
+defaults_set NSGlobalDomain com.apple.swipescrolldirection bool true
+defaults_set NSGlobalDomain AppleFontSmoothing int 1
+defaults_set NSGlobalDomain WebKitDeveloperExtras bool true
+defaults_set com.apple.print.PrintingPrefs "Quit When Finished" bool true
+defaults_set com.apple.BluetoothAudioAgent "Apple Bitpool Min (editable)" int 40
+
+# Gatekeeper's prompt for downloaded apps and disk-image verification stay on.
+defaults_unset com.apple.LaunchServices LSQuarantine
+defaults_unset com.apple.frameworks.diskimages skip-verify
+defaults_unset com.apple.frameworks.diskimages skip-verify-locked
+defaults_unset com.apple.frameworks.diskimages skip-verify-remote
+
+###############################################################################
+# Screen                                                                      #
+###############################################################################
+
+defaults_set com.apple.screensaver askForPassword int 1
+defaults_set com.apple.screensaver askForPasswordDelay int 0
+defaults_set com.apple.screencapture type string png
+defaults_set com.apple.screencapture disable-shadow bool true
+defaults_set_root /Library/Preferences/com.apple.windowserver DisplayResolutionEnabled bool true
+
+# Screenshots go to iCloud Drive. macOS ignores the setting if the folder is
+# missing, and the folder appears only once iCloud Drive is signed in.
+icloud="$HOME/Library/Mobile Documents/com~apple~CloudDocs"
+if [ -d "$icloud" ]; then
+  shots="$icloud/Temporary Files/media/screenshots"
+  [ "$CHECK" = 1 ] || mkdir -p "$shots" || { warn "FAILED to make $shots"; FAILED=$((FAILED + 1)); }
+  defaults_set com.apple.screencapture location string "$shots"
+fi
+
+###############################################################################
+# Finder                                                                      #
+###############################################################################
+
+defaults_set com.apple.finder NewWindowTarget string PfHm
+defaults_set com.apple.finder NewWindowTargetPath string "file://$HOME/"
+defaults_set com.apple.finder _FXSortFoldersFirst bool true
+defaults_set com.apple.finder FXDefaultSearchScope string SCcf
+defaults_set com.apple.finder FXEnableExtensionChangeWarning bool false
+defaults_set com.apple.finder WarnOnEmptyTrash bool false
+defaults_set com.apple.desktopservices DSDontWriteNetworkStores bool true
+defaults_set com.apple.desktopservices DSDontWriteUSBStores bool true
+
+for dir in Music Pictures Public Movies Applications Databases; do
+  path="$HOME/$dir"
+  [ -e "$path" ] || continue
+  case "$(stat -f '%Sf' "$path")" in
+    *hidden*) UNCHANGED=$((UNCHANGED + 1)) ;;
+    *) if [ "$CHECK" = 1 ]; then say "would hide ~/$dir"; else chflags hidden "$path" && say "hid ~/$dir"; fi
+       CHANGED=$((CHANGED + 1)) ;;
+  esac
+done
+
+# ~/Downloads is a folder macOS guards: a terminal without access to it can't
+# make these, and says so.
+[ "$CHECK" = 1 ] || mkdir -p "$HOME/Downloads/Documents" "$HOME/Downloads/Media/Images" "$HOME/Downloads/Media/Videos" \
+  || { warn "FAILED to make the folders in ~/Downloads"; FAILED=$((FAILED + 1)); }
+
+###############################################################################
+# Dock                                                                        #
+###############################################################################
+
+defaults_set com.apple.dock tilesize int 36
+defaults_set com.apple.dock minimize-to-application bool true
+defaults_set com.apple.dock show-process-indicators bool true
+defaults_set com.apple.dock mru-spaces bool false
+defaults_set com.apple.dock showhidden bool true
+defaults_set com.apple.dock show-recents bool true
+
+###############################################################################
+# Apps                                                                        #
+###############################################################################
+
+defaults_set com.apple.TimeMachine DoNotOfferNewDisksForBackup bool true
+defaults_set com.apple.ActivityMonitor OpenMainWindow bool true
+defaults_set com.apple.ActivityMonitor ShowCategory int 109
+defaults_set com.apple.ActivityMonitor SortColumn string CPUUsage
+defaults_set com.apple.ActivityMonitor SortDirection int 0
+defaults_set_host com.apple.ImageCapture disableHotPlug bool true
+defaults_set com.apple.commerce AutoUpdate bool true
+
+# Messages: no emoji or smart-quote substitution, no live spell check.
+messages=com.apple.messageshelper.MessageController
+for key in automaticEmojiSubstitutionEnablediMessage automaticQuoteSubstitutionEnabled continuousSpellCheckingEnabled; do
+  if defaults read "$messages" SOInputLineSettings 2>/dev/null | grep -q "\"\{0,1\}$key\"\{0,1\} = 0;"; then
+    UNCHANGED=$((UNCHANGED + 1))
+  elif [ "$CHECK" = 1 ]; then
+    say "would turn off Messages $key"; CHANGED=$((CHANGED + 1))
+  else
+    defaults write "$messages" SOInputLineSettings -dict-add "$key" -bool false && say "turned off Messages $key"
+    CHANGED=$((CHANGED + 1))
+  fi
+done
+
+###############################################################################
+# Software Update                                                             #
+###############################################################################
+
+# Security responses and system data files install on their own.
+su=/Library/Preferences/com.apple.SoftwareUpdate
+defaults_set_root "$su" AutomaticDownload bool true
+defaults_set_root "$su" CriticalUpdateInstall bool true
+defaults_set_root "$su" ConfigDataInstall bool true
+{{- if .isAgent }}
+# macOS itself never updates on its own on the mini: an unattended restart
+# would stop the agents. Without MDM this key may not stick; the read-back
+# reports it if so.
+defaults_set_root "$su" AutomaticallyInstallMacOSUpdates bool false
+{{- else }}
+defaults_set_root "$su" AutomaticallyInstallMacOSUpdates bool true
+{{- end }}
+
+###############################################################################
+# Power                                                                       #
+###############################################################################
+{{- if .isAgent }}
+
+# Never sleeps, restarts after a power failure, wakes for network access.
+pm_set -a sleep 0
+pm_set -a disksleep 0
+pm_set -a autorestart 1
+pm_set -a womp 1
+{{- else }}
+
+# Apple's balanced Automatic mode on both power sources. On battery the screen
+# goes off first and the Mac sleeps soon after; on the charger it never
+# sleeps. Safe sleep (hibernatemode 3, Apple's default for laptops) also keeps
+# a copy of memory on disk, so a flat battery loses nothing.
+pm_set -a powermode 0
+pm_set -a hibernatemode 3
+pm_set -a standby 1
+pm_set -b displaysleep 3
+pm_set -b sleep 5
+pm_set -b powernap 0
+pm_set -b womp 0
+pm_set -b lessbright 1
+pm_set -c displaysleep 15
+pm_set -c sleep 0
+pm_set -c powernap 1
+pm_set -c womp 1
+{{- end }}
+
+# Restart automatically if the Mac freezes. Reading it needs root, so once it
+# has been set a marker stands in for the check, and a Mac that's in line
+# never asks for a password over it.
+freeze_marker="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/restartfreeze-on"
+if [ -f "$freeze_marker" ]; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would turn on restart after freeze"; CHANGED=$((CHANGED + 1))
+elif can_root && as_root systemsetup -setrestartfreeze on >/dev/null 2>&1 \
+     && sudo -n systemsetup -getrestartfreeze 2>/dev/null | grep -qi ': on'; then
+  mkdir -p "$(dirname "$freeze_marker")" && touch "$freeze_marker"
+  say "turned on restart after freeze"; CHANGED=$((CHANGED + 1))
+else
+  warn "couldn't turn on restart after freeze; the next attended apply tries again"
+  SKIPPED=$((SKIPPED + 1))
+fi
+{{- if .isAgent }}
+
+###############################################################################
+# The mini: fixed time zone, remote access, firewall                          #
+###############################################################################
+
+# A fixed zone, not automatic: the guide's handoff check expects it.
+defaults_set_root /Library/Preferences/com.apple.timezone.auto Active bool false
+zone_now() { readlink /etc/localtime | sed 's|.*/zoneinfo/||'; }
+# systemsetup hands the change to tzlinkd and returns. Started cold, as on
+# the first change after a boot, tzlinkd replaces the link a moment later,
+# so the read-back waits up to five seconds for it.
+zone_becomes() {
+  local tries=0
+  while [ "$(zone_now)" != "$1" ] && [ "$tries" -lt 20 ]; do
+    sleep 0.25
+    tries=$((tries + 1))
+  done
+  [ "$(zone_now)" = "$1" ]
+}
+zone=$(zone_now)
+if [ "$zone" = America/New_York ]; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would set the time zone to America/New_York (now: $zone)"; CHANGED=$((CHANGED + 1))
+elif can_root && as_root systemsetup -settimezone America/New_York >/dev/null 2>&1 \
+     && zone_becomes America/New_York; then
+  say "set the time zone to America/New_York"; CHANGED=$((CHANGED + 1))
+else
+  warn "the time zone is $zone, not America/New_York; the next attended apply sets it"
+  SKIPPED=$((SKIPPED + 1))
+fi
+
+# Each is on when its port answers on this Mac, which needs no root to check.
+# systemsetup turns Remote Login on only for a terminal with Full Disk Access.
+# Without it, launchd does the same with sudo alone, as for Screen Sharing:
+# the service enabled, so it stays on after a restart, and loaded. If both
+# fail, say so and carry on: both are on the handoff checklist.
+listening() { nc -z -G 2 127.0.0.1 "$1" >/dev/null 2>&1; }
+
+if listening 22; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would turn on Remote Login"; CHANGED=$((CHANGED + 1))
+elif can_root \
+     && { { as_root systemsetup -setremotelogin on >/dev/null 2>&1 && sleep 2 && listening 22; } \
+          || { as_root launchctl enable system/com.openssh.sshd \
+               && { as_root launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist 2>/dev/null; sleep 2; listening 22; }; }; }; then
+  say "turned on Remote Login"; CHANGED=$((CHANGED + 1))
+else
+  warn "Remote Login is off and couldn't be turned on. Turn it on in General > Sharing."
+  SKIPPED=$((SKIPPED + 1))
+fi
+
+if listening 5900; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would turn on Screen Sharing"; CHANGED=$((CHANGED + 1))
+elif can_root && as_root launchctl enable system/com.apple.screensharing \
+     && { as_root launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null; sleep 2; listening 5900; }; then
+  say "turned on Screen Sharing"; CHANGED=$((CHANGED + 1))
+else
+  warn "Screen Sharing is off and couldn't be turned on. Turn it on in General > Sharing."
+  SKIPPED=$((SKIPPED + 1))
+fi
+
+# Both for this account only. macOS keeps each "Only these users" list as a
+# group, com.apple.access_ssh and com.apple.access_screensharing, nests the
+# admin group in it by default, and lets every account in when the group is
+# missing. A member counts by name (GroupMembership) or by UUID
+# (GroupMembers), so both are checked. The account goes in first, and nothing
+# comes out unless it's there.
+me={{ .chezmoi.username | quote }}
+# dsmemberutil prints a failed lookup's error on stdout, so that's dropped.
+me_uuid=$(dsmemberutil getuuid -U "$me" 2>/dev/null) || me_uuid=
+ds_read() { dscl . -read "/Groups/$1" "$2" 2>/dev/null | sed -n "s/^$2: *//p"; }
+ds_only_me() {
+  local uuids
+  dscl . -read "/Groups/$1" RecordName >/dev/null 2>&1 || return 1
+  uuids=$(ds_read "$1" GroupMembers)
+  [ "$(ds_read "$1" GroupMembership)" = "$me" ] && [ -z "$(ds_read "$1" NestedGroups)" ] \
+    && { [ -z "$uuids" ] || [ "$uuids" = "$me_uuid" ]; }
+}
+only_me() {
+  local group="com.apple.access_$1" what="$2" created=0 m u g
+  if ds_only_me "$group"; then
+    UNCHANGED=$((UNCHANGED + 1))
+  elif [ "$CHECK" = 1 ]; then
+    say "would limit $what to $me"; CHANGED=$((CHANGED + 1))
+  elif ! can_root; then
+    warn "$what isn't limited to $me yet: that needs sudo. The next attended apply does it."
+    SKIPPED=$((SKIPPED + 1))
+  else
+    if ! dscl . -read "/Groups/$group" RecordName >/dev/null 2>&1; then
+      as_root dseditgroup -o create -q "$group" && created=1
+    fi
+    as_root dseditgroup -o edit -a "$me" -t user "$group"
+    case " $(ds_read "$group" GroupMembership) " in
+      *" $me "*) ;;
+      *)
+        # An empty list lets nobody in, so a list made just now goes again.
+        [ "$created" = 1 ] && as_root dseditgroup -o delete -q "$group"
+        warn "FAILED to add $me to $what's list, so nothing was taken out of it"
+        FAILED=$((FAILED + 1))
+        return 0 ;;
+    esac
+    # dseditgroup takes out a name and its UUID together, but refuses a name
+    # whose account is gone, which only dscl can take out.
+    for m in $(ds_read "$group" GroupMembership); do
+      [ "$m" = "$me" ] && continue
+      as_root dseditgroup -o edit -d "$m" -t user "$group" 2>/dev/null \
+        || as_root dscl . -delete "/Groups/$group" GroupMembership "$m"
+    done
+    # A UUID with no name beside it. Without this account's own UUID to keep,
+    # none is taken out, and the check below reports it.
+    if [ -n "$me_uuid" ]; then
+      for u in $(ds_read "$group" GroupMembers); do
+        [ "$u" = "$me_uuid" ] || as_root dscl . -delete "/Groups/$group" GroupMembers "$u"
+      done
+    fi
+    for g in $(ds_read "$group" NestedGroups); do
+      as_root dscl . -delete "/Groups/$group" NestedGroups "$g"
+    done
+    as_root dsmemberutil flushcache 2>/dev/null
+    if ds_only_me "$group"; then
+      say "limited $what to $me"; CHANGED=$((CHANGED + 1))
+    else
+      warn "FAILED to limit $what to $me; set it in General > Sharing"
+      FAILED=$((FAILED + 1))
+    fi
+  fi
+}
+only_me ssh "Remote Login"
+only_me screensharing "Screen Sharing"
+
+# SSH takes keys only. Apple's sshd_config reads sshd_config.d first and keeps
+# the first value it sees, so this file outranks Apple's 100-macos.conf.
+# Keyboard-interactive goes off with passwords: with UsePAM on, as Apple sets
+# it, it's a second way in with a password. UsePAM itself stays on, since
+# Apple's PAM stack for sshd (pam_sacl) checks the list above. Written only
+# while authorized_keys holds a key, so it can't lock the laptop out, and only
+# once Remote Login is on and has made its host keys, without which sshd -t
+# fails whatever the file says.
+keyonly=/etc/ssh/sshd_config.d/010-dotfiles-keyonly.conf
+keyonly_want="# Written by the dotfiles' macos-settings script: keys only, $me only.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AuthenticationMethods publickey
+AllowUsers $me"
+keyonly_now=$(cat "$keyonly" 2>/dev/null)
+keyonly_mode=$(stat -f '%Su:%Sg %Lp' "$keyonly" 2>/dev/null)
+keyonly_in=0
+if [ "$keyonly_now" = "$keyonly_want" ]; then
+  # The right lines, so sshd is key-only. Owner and mode count too: sshd
+  # doesn't check them, and whoever can write the file can change its settings.
+  keyonly_in=1
+  if [ "$keyonly_mode" = "root:wheel 644" ]; then
+    UNCHANGED=$((UNCHANGED + 1))
+  elif [ "$CHECK" = 1 ]; then
+    say "would make $keyonly root:wheel 644 (now: $keyonly_mode)"; CHANGED=$((CHANGED + 1))
+  elif ! can_root; then
+    warn "$keyonly is $keyonly_mode, not root:wheel 644, so whoever can write it can change sshd's settings. Putting that right needs sudo; the next attended apply does it."
+    SKIPPED=$((SKIPPED + 1))
+  elif as_root chown root:wheel "$keyonly" && as_root chmod 644 "$keyonly"; then
+    say "made $keyonly root:wheel 644"; CHANGED=$((CHANGED + 1))
+  else
+    warn "FAILED to make $keyonly root:wheel 644"
+    FAILED=$((FAILED + 1))
+  fi
+elif ! grep -qE '^(ssh-|ecdsa-|sk-)' "$HOME/.ssh/authorized_keys" 2>/dev/null; then
+  warn "SSH still takes passwords: ~/.ssh/authorized_keys has no key, and key-only would lock the laptop out"
+  SKIPPED=$((SKIPPED + 1))
+elif ! listening 22 || ! ls /etc/ssh/ssh_host_*_key.pub >/dev/null 2>&1; then
+  warn "SSH key-only waits until Remote Login is on and has made its host keys; the next apply does it"
+  SKIPPED=$((SKIPPED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would make SSH key-only"; CHANGED=$((CHANGED + 1))
+elif ! can_root; then
+  warn "SSH still takes passwords: making it key-only needs sudo. The next attended apply does it."
+  SKIPPED=$((SKIPPED + 1))
+else
+  staged=$(mktemp)
+  printf '%s\n' "$keyonly_want" > "$staged"
+  # A copy of what's there now, made as root, since this account may not be
+  # able to read it. Outside sshd_config.d, so sshd never reads it.
+  saved=""
+  if [ -e "$keyonly" ]; then
+    saved=$(as_root mktemp /etc/ssh/.dotfiles-keyonly.XXXXXX) && as_root cp -p "$keyonly" "$saved" || saved=""
+  fi
+  if [ -e "$keyonly" ] && [ -z "$saved" ]; then
+    warn "FAILED to make SSH key-only: couldn't keep a copy of $keyonly first, so it's as it was"
+    FAILED=$((FAILED + 1))
+  elif ! as_root install -S -m 0644 -o root -g wheel "$staged" "$keyonly"; then
+    warn "FAILED to write $keyonly"
+    FAILED=$((FAILED + 1))
+  elif sshd_err=$(as_root /usr/sbin/sshd -t 2>&1); then
+    say "made SSH key-only"; CHANGED=$((CHANGED + 1)); keyonly_in=1
+  else
+    # sshd won't take it, so put back what was there. sshd -t reads every
+    # file in sshd_config.d, so the fault may be in another one.
+    if [ -n "$saved" ] && as_root mv -f "$saved" "$keyonly"; then
+      saved=""
+      warn "FAILED to make SSH key-only, so the old file is back. sshd -t said: $sshd_err"
+    elif [ -z "$saved" ] && as_root rm -f "$keyonly"; then
+      warn "FAILED to make SSH key-only, so the file is gone again. sshd -t said: $sshd_err"
+    else
+      warn "FAILED to make SSH key-only and to undo it: new SSH logins fail until $keyonly is fixed${saved:+ (the old one is $saved)}. sshd -t said: $sshd_err"
+      saved=""
+    fi
+    FAILED=$((FAILED + 1))
+  fi
+  [ -z "$saved" ] || as_root rm -f "$saved"
+  rm -f "$staged"
+fi
+
+# Checked on every apply against the sshd that really answers, not the file:
+# a client with no key must be offered publickey and nothing else. It needs no
+# root, and it catches a macOS update that drops the Include. A dry run asks
+# too, since asking changes nothing.
+if [ "$keyonly_in" = 1 ] && listening 22; then
+  offers=$(SSH_AUTH_SOCK='' ssh -F /dev/null -o BatchMode=yes -o PubkeyAuthentication=no \
+             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+             -o ConnectTimeout=5 "$me@127.0.0.1" true 2>&1 \
+           | sed -n 's/.*Permission denied (\(.*\))\..*/\1/p')
+  if [ "$offers" != publickey ]; then
+    warn "SSH offers ${offers:-something unexpected} to a client with no key, not publickey alone. Compare sudo sshd -T with $keyonly."
+    FAILED=$((FAILED + 1))
+  fi
+fi
+
+# The application firewall, with stealth mode. It lets through what Sharing
+# has on, so SSH and Screen Sharing still answer. What it stops is a listener
+# an agent starts that isn't Apple's or signed: its allow prompt has nobody to
+# answer it. Block-all goes off first, since it would shut out SSH and Screen
+# Sharing on the LAN and the tailnet alike. socketfilterfw, not defaults:
+# since macOS 15 the firewall keeps no plist. Its state is one number: 0 off,
+# 1 on, 2 on with block-all. Both 1 and 2 count as on, or with block-all on a
+# dry run or an apply without sudo would also say the firewall is off.
+fw=/usr/libexec/ApplicationFirewall/socketfilterfw
+# fw_ensure <get flag> <set flag> <on|off> <what the get prints when right> <name>
+fw_ensure() {
+  if "$fw" "$1" 2>/dev/null | grep -q "$4"; then
+    UNCHANGED=$((UNCHANGED + 1))
+  elif [ "$CHECK" = 1 ]; then
+    say "would turn $3 $5"; CHANGED=$((CHANGED + 1))
+  elif can_root && as_root "$fw" "$2" "$3" >/dev/null 2>&1 && "$fw" "$1" 2>/dev/null | grep -q "$4"; then
+    say "turned $3 $5"; CHANGED=$((CHANGED + 1))
+    # The firewall's daemon applies a change after socketfilterfw returns,
+    # seconds later on a busy Mac. Stealth mode set while it's still applying
+    # the firewall's own change reads back on but never takes effect, and the
+    # Mac goes on answering ping. So each change gets time to land first.
+    sleep 5
+  else
+    warn "couldn't turn $3 $5; the next attended apply tries again"
+    SKIPPED=$((SKIPPED + 1))
+  fi
+}
+fw_ensure --getblockall --setblockall off "set to disabled" "the firewall's block-all"
+fw_ensure --getglobalstate --setglobalstate on "State = [12]" "the firewall"
+fw_ensure --getstealthmode --setstealthmode on "mode is on" "stealth mode"
+{{- end }}
+{{- if eq .role "laptop" }}
+
+###############################################################################
+# The laptop: time zone                                                       #
+###############################################################################
+
+# The clock follows the laptop's location. macOS also needs Location Services
+# on for System Services > Setting time zone, which only System Settings can
+# turn on; the README lists it.
+defaults_set_root /Library/Preferences/com.apple.timezone.auto Active bool true
+{{- end }}
+
+restart_touched
+defaults_summary
+exit 0
+{{ end -}}

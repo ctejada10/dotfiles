@@ -1,0 +1,73 @@
+# Tailscale from its own apt repository, its key checked against the pinned
+# fingerprint. Joining the tailnet is not done here: its auth key comes from
+# sops at join time, never from this repo or cloud-init.
+
+- name: Make the folders for apt keys
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [/etc/apt/keyrings, /var/cache/apt-keys]
+
+# Not under --check. Before a server's first real run there is no copy and no
+# /var/cache/apt-keys either, which check mode doesn't make, and get_url fails
+# on a folder that doesn't exist. Once there's a copy, pkgs.tailscale.com
+# answers a conditional request with the whole file, so check mode would report
+# a change on every run. A real run fetches it as before, and the keyring task
+# below checks its fingerprint.
+- name: Fetch Tailscale's apt key
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/stable/{{ ansible_distribution | lower }}/{{ ansible_distribution_release }}.noarmor.gpg"
+    dest: /var/cache/apt-keys/tailscale.gpg
+    mode: "0644"
+  when: not ansible_check_mode
+
+# apt trusts every key in a keyring file, so the file holds only the pinned
+# key: exported from a throwaway keyring, then checked to be one primary key
+# with the pinned fingerprint. If this fails, Tailscale's key changed: check the
+# new fingerprint against Tailscale's docs, then update pins.yml.
+- name: Keep only the pinned key in Tailscale's keyring
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      home=$(mktemp -d)
+      trap 'rm -rf "$home"' EXIT
+      gpg --homedir "$home" --batch --quiet --import /var/cache/apt-keys/tailscale.gpg
+      gpg --homedir "$home" --batch --export {{ pins.apt_keys.tailscale }} > "$home/key.gpg"
+      [ "$(gpg --batch --list-packets "$home/key.gpg" | grep -c '^:public key packet:')" = 1 ]
+      [ "$(gpg --batch --show-keys --with-colons "$home/key.gpg" | awk -F: '/^fpr:/ { print $10; exit }')" = {{ pins.apt_keys.tailscale }} ]
+      if ! cmp -s "$home/key.gpg" /usr/share/keyrings/tailscale-archive-keyring.gpg; then
+        install -m 0644 "$home/key.gpg" /usr/share/keyrings/tailscale-archive-keyring.gpg
+        echo changed
+      fi
+    executable: /bin/bash
+  register: tailscale_keyring
+  changed_when: "'changed' in tailscale_keyring.stdout"
+
+- name: Drop the list Tailscale's installer wrote; the sources file below replaces it
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/tailscale.list
+    state: absent
+
+- name: Add Tailscale's apt repository
+  ansible.builtin.deb822_repository:
+    name: tailscale
+    types: deb
+    uris: "https://pkgs.tailscale.com/stable/{{ ansible_distribution | lower }}"
+    suites: "{{ ansible_distribution_release }}"
+    components: main
+    signed_by: /usr/share/keyrings/tailscale-archive-keyring.gpg
+  register: tailscale_repo
+
+- name: Install Tailscale
+  ansible.builtin.apt:
+    name: tailscale
+    state: present
+    update_cache: "{{ tailscale_repo is changed }}"
+    lock_timeout: 300
+
+- name: Keep tailscaled running
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    enabled: true
+    state: started

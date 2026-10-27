@@ -1,0 +1,159 @@
+{{- /*
+  Paths are target paths, relative to the home folder. chezmoi only touches
+  what the source holds, so the first block is a second lock: it stops a stray
+  `chezmoi add` from ever taking in files that tools write themselves or that
+  hold secrets. tests/check-roles.sh checks the same list against what every
+  role would actually manage.
+*/ -}}
+
+.claude.json
+.claude/.credentials.json
+.claude/backups
+.claude/cache
+.claude/file-history
+.claude/history.jsonl
+.claude/ide
+.claude/MAINTENANCE.md
+.claude/paste-cache
+.claude/plans
+.claude/plugins
+.claude/projects
+.claude/scheduled-tasks
+.claude/session-env
+.claude/sessions
+.claude/settings.local.json
+.claude/setup-intake.md
+.claude/shell-snapshots
+.claude/skills/synced
+.claude/spares
+.claude/state
+.claude/statsig
+.claude/telemetry
+.claude/todos
+.claude/uploads
+.claude/.ponytail-*
+.claude/ponytail-statusline.sh
+.claude/skills/no-mistakes
+.agents
+.claude-api
+.t3
+.codex/auth.json
+.hermes/.env
+.no-mistakes
+.colima
+.docker/config.json
+firstmate
+.local/share/firstmate
+.treehouse
+worktrees
+Library/Application Support/email-workflow
+.config/gh
+.config/op
+.config/rclone
+.config/sops
+Library/Application Support/sops
+.ssh/known_hosts
+.ssh/id_*
+.ssh/arnor
+.ssh/arnor_claude
+.ssh/*_signing
+agent-drafts/*
+
+{{- /* Per role. */}}
+
+{{ if or (not .isMac) .ci -}}
+.local/share/dotfiles
+{{- end }}
+
+{{ if not .isMac -}}
+Documents
+Library
+Repositories
+src
+{{- end }}
+
+{{- /* The laptop: personal work and job hunting. */}}
+{{ if ne .role "laptop" -}}
+.config
+.claude/rules/job-search.md
+.claude/agents/vault-researcher.md
+.claude/hooks/guard-vault.py
+.claude/skills/draft-email-reply
+.claude/skills/todoist-triage
+.local/share/dotfiles/git/agent-owned.gitconfig
+.local/share/dotfiles/git/read-only-hooks
+.local/bin/git
+Library/CloudStorage/Dropbox
+{{- end }}
+
+{{- /* The mini: where all development happens. */}}
+{{ if not .isAgent -}}
+.claude/agents/ecc-*
+.claude/agents/rpi-*
+.claude/hooks/guard-git.py
+.claude/hooks/worktree.sh
+.claude/hooks/agent-gate.sh
+.local/share/dotfiles/git/mini-dropbox.gitconfig
+.local/share/dotfiles/git/agent-worktree.gitconfig
+.local/bin/worktree-ttl
+Library/LaunchAgents/com.carlosetejada.worktree-ttl.plist
+.claude/attended.md
+.local/share/claude-plugins
+.claude/skills/codebase-design
+.claude/skills/domain-modeling
+.claude/skills/frontend-e2e-evaluator-ops
+.claude/skills/github-actions-hardening
+.claude/skills/grill-me
+.claude/skills/grill-with-docs
+.claude/skills/grilling
+.claude/skills/i-have-adhd
+.claude/skills/improve-codebase-architecture
+.claude/skills/openscad-bosl2
+.claude/skills/read-only-log-investigation-ops
+.claude/skills/rpi-*
+.claude/skills/to-spec
+.claude/skills/writing-for-agents
+.docker
+.local/share/georgeskills
+.local/share/openscad
+.local/share/openscad-skill
+{{- end }}
+
+{{ if ne .role "laptop" -}}
+.claude/rules/memory.md
+{{- end }}
+
+{{- /* The mini's agents read one shared rules file, ~/.codex/AGENTS.md,
+       which replaces every rules file here. Elsewhere there is no Codex. */}}
+{{ if .isAgent -}}
+.claude/rules
+{{- else -}}
+.codex
+{{- end }}
+
+{{- /* Files written into Dropbox wait until Dropbox has brought the folder
+       down; a folder created here first would fight Dropbox's own. So does
+       the ~/.config link: made earlier, it would point at nothing and take
+       chezmoi's own config and state with the folder it replaced. */}}
+{{ if not (and (hasKey . "dropboxConfig") (stat .dropboxConfig)) -}}
+Library/CloudStorage/Dropbox
+.config
+{{- end }}
+
+{{ if not .isAgent -}}
+agent-drafts
+{{- end }}
+
+{{- /* authorized_keys is written only once the laptop's login key exists:
+       an empty template would delete whatever the file holds now. */}}
+{{ if or (not .isAgent) (not .ssh.login.public) -}}
+.ssh/authorized_keys
+{{- end }}
+
+{{ if .isServer -}}
+.ssh
+{{- end }}
+
+{{ if not .isServer -}}
+.claude/pstack-models.md
+{{- end }}

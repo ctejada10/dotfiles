@@ -1,0 +1,28 @@
+{{- if not .ci -}}
+#!/bin/bash
+# Claude Code from Anthropic's native installer, the one install method on
+# every machine. It updates itself afterwards, so this only acts when
+# ~/.local/bin/claude is missing.
+
+set -uo pipefail
+SCRIPT=claude-code
+{{ template "script-lib.sh" . }}
+
+bin="$HOME/.local/bin/claude"
+if [ ! -x "$bin" ]; then
+  say "installing Claude Code"
+  if ! curl -fsSL https://claude.ai/install.sh | bash; then
+    warn "the installer failed; the next apply tries again"
+    exit 0
+  fi
+fi
+{{- if eq .role "laptop" }}
+
+# One install only: once the native build runs, the Homebrew cask goes.
+if "$bin" --version >/dev/null 2>&1 && command -v brew >/dev/null 2>&1 \
+   && brew list --cask claude-code >/dev/null 2>&1; then
+  brew uninstall --cask claude-code && say "removed the claude-code cask"
+fi
+{{- end }}
+exit 0
+{{ end -}}

@@ -1,0 +1,52 @@
+# Rivendell: the OVH media server. Its address, SSH port and user are in
+# home/.chezmoidata/hosts.yaml.
+
+# Open to the internet besides SSH. The scan after each run fails when what
+# answers differs from this.
+public_ports:
+  - { port: 80, proto: tcp, comment: swag http }
+  - { port: 443, proto: tcp, comment: swag https }
+  - { port: 32400, proto: tcp, comment: plex }
+  # Plex's compose file publishes UDP 32400 too. Whether Plex stays public is
+  # still to decide; until then it is declared as it is.
+  - { port: 32400, proto: udp, comment: plex }
+# Open to the home network only. Rivendell isn't on it.
+lan_ports: []
+# Rules to delete from UFW, matched as they were added: nothing listens on
+# 548 or 636.
+ufw_remove:
+  - { port: "548" }
+  - { port: "636" }
+
+docker: true
+# Off until Rivendell's compose files publish SWAG and Plex on an explicit
+# 0.0.0.0, or they stop answering.
+docker_loopback_default: false
+tailscale: true
+# Samba belongs to Rivendell's repo; the playbook only fails if it listens
+# anywhere but loopback and the tailnet.
+samba: true
+
+reboot_time: "05:00"
+# Off, as on dor-lomin (decided 26 Oct). Only Húrin's plex-collection-suggest
+# logged in with a password, twice a year; its Rivendell step fails until the
+# task *Stop Húrin writing into the old checkout* replaces that login. The run
+# turns it off only once every device key in keys.yaml is authorized here.
+password_login: false
+# The checkout the deploy gate deploys, and the branch a commit must be on.
+deploy_repo: /home/deploy/rivendell
+deploy_branch: main
+# The repo deploy fetches, which the run clones there once GitHub takes the
+# read key it prints, and its arwen submodule, which needs a read key of its
+# own. The deploy brings arwen in itself.
+deploy_github_repo: ctejada10/rivendell
+deploy_submodule_repos: [ctejada10/arwen]
+deploy_owned_dirs: []
+# The public half of the key GitHub Actions deploys with, which can only ask
+# the gate for a deploy. Empty until that key is made, in 1Password as
+# "rivendell deploy key" (README, "The deploy key").
+deploy_public_key: ""
+# Public halves of keys to take out of deploy's authorized_keys. Once the
+# workflow deploys with the key above, today's unrestricted one
+# (github-actions-rivendell) goes here.
+deploy_retired_keys: []

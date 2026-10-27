@@ -1,0 +1,77 @@
+#!/bin/bash
+# PreToolUse guard for Edit/Write/NotebookEdit.
+# Blocks (exit 2) writes to the Obsidian config tree and to secret files.
+# Reads the hook payload as JSON on stdin. No network, no writes.
+
+payload=$(cat)
+path=$(printf '%s' "$payload" | /usr/bin/python3 -I -c \
+  'import json,sys
+try:
+    d=json.load(sys.stdin)
+    ti=d.get("tool_input") or {}
+    print(ti.get("file_path") or ti.get("notebook_path") or "")
+except Exception:
+    print("")' 2>/dev/null)
+
+[ -z "$path" ] && exit 0
+
+# Resolve symlinks so a link pointing at a protected path can't be used as a
+# way around this check.
+real=$(/usr/bin/python3 -I -c \
+  'import os,sys; print(os.path.realpath(sys.argv[1]))' "$path" 2>/dev/null || printf '%s' "$path")
+
+block() {
+  echo "BLOCKED by guard-paths.sh: $1" >&2
+  echo "Target: $path" >&2
+  [ "$real" != "$path" ] && echo "Resolves to: $real" >&2
+  exit 2
+}
+
+# macOS paths are case-insensitive, so a differently cased path must still match.
+shopt -s nocasematch
+
+for p in "$path" "$real"; do
+  case "$p" in
+    */Documents/armenelos/.obsidian/*|*/Documents/armenelos/.obsidian)
+      block "the Obsidian config tree holds live API tokens and is never edited by an agent. Change it in Obsidian's own settings UI." ;;
+  esac
+  case "$p" in
+    *.pem|*.key|*/id_rsa*|*/id_ed25519*|*/.netrc|*/credentials*.json)
+      block "this is a secret file." ;;
+  esac
+  case "$p" in
+    *.env.example|*.env.sample|*.env.template) : ;;
+    *.env|*.env.*)
+      block "this is a secret file (.env.example and .env.sample are allowed)." ;;
+  esac
+  case "$p" in
+    */.ssh/*|*/.aws/*|*/.config/sops/*|*/.config/gh/*|*/Library/Application\ Support/sops/*)
+      block "this path holds keys or tokens. The dotfiles repo manages ~/.ssh; change it there." ;;
+  esac
+{{- if eq .role "laptop" }}
+{{-   range $dir, $_ := index .repos "agent-mini" }}
+  case "$p" in
+    {{ joinPath $.dropboxRepositories $dir }}/*)
+      block "{{ $dir }} belongs to the mini's agents and is read-only on this Mac. Make the change on the mini." ;;
+  esac
+{{-   end }}
+{{- end }}
+{{- if .isAgent }}
+{{-   $agentRepos := index .repos "agent-mini" }}
+  # Nothing on the mini edits a checkout in Dropbox or the dotfiles checkout:
+  # the agents' own repos are changed in a worktree outside Dropbox, a laptop
+  # repo (whose .git is the laptop's) in a clone from GitHub, and the dotfiles
+  # repo, this Mac's live config, in a worktree. See ~/.codex/AGENTS.md.
+  case "$p" in
+{{-   range $dir, $_ := $agentRepos }}
+    {{ joinPath $.dropboxRepositories $dir }}/*)
+      block "this is {{ $dir }}'s main checkout, in Dropbox. Work in a worktree outside it: git worktree add --no-track -b <branch> ~/worktrees/{{ $dir }}/<branch> origin/HEAD" ;;
+{{-   end }}
+    {{ .dropboxRepositories }}/*)
+      block "this repo belongs to the laptop and is never changed in place. Clone it from GitHub into ~/worktrees/<repo>/<branch> and work there." ;;
+    {{ joinPath .chezmoi.homeDir ".local/share/chezmoi" }}/*)
+      block "this is the dotfiles checkout, this Mac's live config, and is never changed in place. Make a worktree of it in ~/worktrees/dotfiles/<branch> and work there." ;;
+  esac
+{{- end }}
+done
+exit 0

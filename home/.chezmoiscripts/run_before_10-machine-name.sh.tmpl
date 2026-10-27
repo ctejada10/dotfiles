@@ -1,0 +1,105 @@
+{{- if and .isMac (not .ci) -}}
+#!/bin/bash
+# Gives the Mac the name chosen at init, in all four places macOS keeps one:
+#   ComputerName   General > About > Name, Find My, AirDrop  -> {{ .displayName }}
+#   LocalHostName  Bonjour, <name>.local                     -> {{ .hostname }}
+#   HostName       hostname, the prompt, SSH                  -> {{ .hostname }}
+#   NetBIOSName    SMB file sharing                           -> {{ .hostname }}
+# Renaming in System Settings updates LocalHostName, scutil doesn't, so each is
+# set explicitly. Runs on every apply but only reads unless a name has
+# drifted; sudo is used only for those that differ, and a rename skipped for
+# want of sudo is picked up by the next attended apply.
+
+set -uo pipefail
+SCRIPT=machine-name
+{{ template "script-lib.sh" . }}
+
+name={{ .hostname | squote }}
+display={{ .displayName | squote }}
+smb=/Library/Preferences/SystemConfiguration/com.apple.smb.server
+
+current() {
+  case "$1" in
+    NetBIOSName) defaults read "$smb" NetBIOSName 2>/dev/null ;;
+    *) scutil --get "$1" 2>/dev/null ;;
+  esac
+}
+wanted() {
+  if [ "$1" = ComputerName ]; then printf '%s' "$display"; else printf '%s' "$name"; fi
+}
+
+# Bonjour renames this Mac <name>-2 when another device on the network
+# already answers to <name>.local, as the old Mac does while both are on, and
+# SMB's name follows it. Renaming them back only starts that again, and asks
+# for sudo on every apply, so they wait until the other device is gone.
+taken_elsewhere() {
+  local ours theirs ip
+  ours=$(ifconfig 2>/dev/null | awk '$1 == "inet" {print $2}')
+  theirs=$(timeout_run 5 dscacheutil -q host -a name "$name.local" 2>/dev/null | awk '$1 == "ip_address:" {print $2}')
+  for ip in $theirs; do
+    grep -qxF "$ip" <<< "$ours" || return 0
+  done
+  return 1
+}
+bonjour_taken=0
+case "$(current LocalHostName)" in
+  "$name"-[0-9]|"$name"-[0-9][0-9])
+    if taken_elsewhere; then
+      bonjour_taken=1
+      warn "another device on this network already answers to $name.local, so macOS named this Mac $(current LocalHostName) on the network. Turn that one off or rename it, then run chezmoi apply."
+    fi ;;
+esac
+
+drift=()
+for key in ComputerName LocalHostName HostName NetBIOSName; do
+  if [ "$bonjour_taken" = 1 ]; then
+    case "$key" in LocalHostName|NetBIOSName) continue ;; esac
+  fi
+  [ "$(current "$key")" = "$(wanted "$key")" ] || drift+=("$key")
+done
+
+if [ ${#drift[@]} -gt 0 ]; then
+  if ! can_root; then
+    warn "${drift[*]} differ from the chosen name, and sudo needs a password; the next attended apply renames the Mac."
+    exit 0
+  fi
+  for key in "${drift[@]}"; do
+    value=$(wanted "$key")
+    case "$key" in
+      NetBIOSName) as_root defaults write "$smb" NetBIOSName -string "$value" ;;
+      *) as_root scutil --set "$key" "$value" ;;
+    esac
+  done
+  failed=0
+  for key in "${drift[@]}"; do
+    if [ "$(current "$key")" = "$(wanted "$key")" ]; then
+      say "set $key to $(wanted "$key")"
+    else
+      warn "$key is still '$(current "$key")', not '$(wanted "$key")'"
+      failed=1
+    fi
+  done
+  [ "$failed" -eq 0 ] || exit 1
+fi
+
+# Tailscale follows the OS name the next time it starts, as long as
+# "Auto-generate from OS hostname" is on. This makes the tailnet name change
+# now. Skipped when Tailscale isn't installed yet. Both calls have a time
+# limit: until Tailscale has been opened, approved and signed in, the app's
+# CLI never returns, and every apply after the one that installed it would
+# hang here.
+ts=""
+for candidate in tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale; do
+  if command -v "$candidate" >/dev/null 2>&1; then ts=$candidate; break; fi
+done
+if [ -n "$ts" ]; then
+  dns=$(timeout_run 10 "$ts" status --json 2>/dev/null | plutil -extract Self.DNSName raw -o - - 2>/dev/null || true)
+  if [ -n "$dns" ] && [ "${dns%%.*}" != "$name" ]; then
+    if timeout_run 10 "$ts" set --hostname="$name" 2>/dev/null; then
+      say "set the Tailscale name to $name"
+    else
+      warn "couldn't set the Tailscale name; it follows the OS name on its next start"
+    fi
+  fi
+fi
+{{ end -}}

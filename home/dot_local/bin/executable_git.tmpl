@@ -1,0 +1,245 @@
+{{- if eq .role "laptop" -}}
+#!/bin/bash
+# git, on the laptop only, first in PATH. In the repos the mini's agents own,
+# it runs only commands that read, and refuses the rest before Git starts:
+# the read-only hook in ~/.gitconfig refuses a change to a ref, but by then a
+# switch, reset or rebase has already rewritten the working tree and index
+# that Dropbox shares with the mini. Everywhere else it is plain git.
+#
+# To run anything anyway, call the real git by its path.
+
+set -u
+all=("$@")
+
+real=
+for candidate in /opt/homebrew/bin/git /usr/bin/git; do
+  if [ -x "$candidate" ]; then real=$candidate; break; fi
+done
+[ -n "$real" ] || { echo "git: no git found in /opt/homebrew/bin or /usr/bin" >&2; exit 127; }
+
+agent_repos=(
+{{- range $dir, $_ := index .repos "agent-mini" }}
+  {{ joinPath $.dropboxRepositories $dir | squote }}
+{{- end }}
+)
+
+# Where the command runs: the folder, after any -C, the subcommand, and any
+# repo or working tree named by --git-dir, --work-tree or Git's environment.
+dir=$PWD
+i=1
+sub=
+named=()
+while [ $i -le $# ]; do
+  arg=${!i}
+  case "$arg" in
+    -C)
+      i=$((i + 1))
+      next=${!i:-}
+      case "$next" in /*) dir=$next ;; *) dir=$dir/$next ;; esac
+      ;;
+    --git-dir|--work-tree) i=$((i + 1)); named+=("${!i:-}") ;;
+    --git-dir=*|--work-tree=*) named+=("${arg#*=}") ;;
+    -c|--namespace|--exec-path|--config-env|--attr-source) i=$((i + 1)) ;;
+    -*) ;;
+    *) sub=$arg; break ;;
+  esac
+  i=$((i + 1))
+done
+[ -z "${GIT_DIR:-}" ] || named+=("$GIT_DIR")
+[ -z "${GIT_WORK_TREE:-}" ] || named+=("$GIT_WORK_TREE")
+
+# Links resolved, as Git resolves them. A named path that isn't a folder, such
+# as a worktree's .git file, resolves through the folder it is in.
+physical=$(cd -P "$dir" 2>/dev/null && pwd -P) || exec "$real" "${all[@]+"${all[@]}"}"
+places=("$physical")
+for p in "${named[@]+"${named[@]}"}"; do
+  case "$p" in /*) ;; *) p=$physical/$p ;; esac
+  if [ -d "$p" ]; then
+    places+=("$(cd -P "$p" && pwd -P)")
+  else
+    places+=("$p" "$(cd -P "${p%/*}/" 2>/dev/null && pwd -P)/${p##*/}")
+  fi
+done
+
+# macOS paths ignore case, so ~/src/Hurin is hurin too.
+owner=
+shopt -s nocasematch
+for place in "${places[@]}"; do
+  for repo in "${agent_repos[@]+"${agent_repos[@]}"}"; do
+    case "$place/" in "$repo"/*) owner=$repo; break 2 ;; esac
+  done
+done
+shopt -u nocasematch
+[ -n "$owner" ] || exec "$real" "${all[@]+"${all[@]}"}"
+
+# In a mini repo. Status checks must not rewrite the index either.
+export GIT_OPTIONAL_LOCKS=0
+globals=()
+[ $i -le 1 ] || globals=("${all[@]:0:$((i - 1))}")
+shift "$i" 2>/dev/null || true
+rest=("$@")
+
+# reads <sub> [<arg>...]: whether the command only reads. Options are matched
+# exactly, because Git takes any unambiguous prefix of a long option: a
+# prefix of a write mode, such as config --remove-s, is refused with the rest.
+depth=0
+scratch=
+refresh=
+reads() {
+  local sub=${1:-} a words=0 list='' first='' value
+  local -a expanded
+  [ $# -eq 0 ] || shift
+  case "$sub" in
+    ""|status|log|show|blame|grep|ls-files|ls-tree|rev-parse|rev-list|for-each-ref|\
+    cat-file|shortlog|help|version|var|check-ignore|check-attr|name-rev|\
+    merge-base|cherry|range-diff|whatchanged|count-objects|verify-commit|\
+    verify-tag|show-ref|show-branch|ls-remote|annotate|bisect-view|diff-tree)
+      return 0 ;;
+    diff-files|diff-index)
+      # Neither refreshes the index, and to Git every file Dropbox brings down
+      # looks changed, so they run on a copy refreshed first. diff-index
+      # --cached compares with the index alone.
+      for a; do
+        case "$a" in
+          --) break ;;
+          --cached) [ "$sub" = diff-index ] && return 0 ;;
+        esac
+      done
+      scratch=1
+      refresh=1
+      return 0 ;;
+    fsck)
+      # Only --lost-found writes, into .git/lost-found, and only it starts --l.
+      for a; do case "$a" in --l*) return 1 ;; esac; done
+      return 0 ;;
+    submodule)
+      # Listing only: no subcommand, status or summary.
+      while [ "${1:-}" = -q ] || [ "${1:-}" = --quiet ]; do shift; done
+      case "${1:-}" in ""|status|summary) return 0 ;; esac
+      return 1 ;;
+    notes)
+      # Listing and showing, from any notes ref.
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --ref=*) shift ;;
+          --ref) shift; [ $# -eq 0 ] || shift ;;
+          *) break ;;
+        esac
+      done
+      case "${1:-}" in ""|list|show) return 0 ;; esac
+      return 1 ;;
+    lfs)
+      # ls-files only. It gets an index copy too, in case Git LFS refreshes
+      # the index while it reads. And only where the mini's own git-lfs has
+      # already written its version into the repo's .git/config: git-lfs
+      # writes it there itself when it finds it missing, and it looks in no
+      # other config file.
+      [ "${1:-}" = ls-files ] || return 1
+      "$real" "${globals[@]+"${globals[@]}"}" config --local --get lfs.repositoryformatversion >/dev/null 2>&1 || return 1
+      scratch=1
+      return 0 ;;
+    diff|difftool)
+      # Both refresh the index and write it back, and to Git every file
+      # Dropbox brings down looks changed. They get a copy to write to.
+      scratch=1
+      return 0 ;;
+    describe)
+      # So do --dirty and --broken, and only they start --di or --b.
+      for a; do case "$a" in --di*|--b*) scratch=1 ;; esac; done
+      return 0 ;;
+    reflog)
+      case "${1:-}" in expire|delete|drop|write) return 1 ;; esac
+      return 0 ;;
+    symbolic-ref)
+      # Reading HEAD, as gh does. -d, -m or a second name would change it.
+      for a; do
+        case "$a" in
+          -q|--quiet|--short|--recurse|--no-recurse) ;;
+          -*) return 1 ;;
+          *) words=$((words + 1)) ;;
+        esac
+      done
+      [ $words -le 1 ] ;;
+    branch|tag)
+      # Listing only: no name to create, delete, rename or move. -l, --list,
+      # tag's -n or a filter makes the other words patterns to list.
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --contains|--no-contains|--merged|--no-merged|--points-at) list=1; [ $# -lt 2 ] || shift ;;
+          --contains=*|--no-contains=*|--merged=*|--no-merged=*|--points-at=*|--list) list=1 ;;
+          --sort|--format) [ $# -lt 2 ] || shift ;;
+          --all|--remotes|--verbose|--show-current|--sort=*|--format=*|\
+          --column|--column=*|--no-column|--color|--color=*|--no-color|--ignore-case|--omit-empty|\
+          --abbrev=*|--no-abbrev) ;;
+          -[arviln]*)
+            # Short flags alone or bundled in any order, as in -va or -ln5:
+            # -a, -r, -v, -i and -l, then -n with its number, which takes the
+            # rest of the bundle.
+            [[ $1 =~ ^-[arvil]*(n[0-9]*)?$ ]] || return 1
+            case "$1" in *[ln]*) list=1 ;; esac ;;
+          -*) return 1 ;;
+          *) words=$((words + 1)) ;;
+        esac
+        shift
+      done
+      [ $words -eq 0 ] || [ -n "$list" ] ;;
+    stash) [ "${1:-}" = list ] || [ "${1:-}" = show ] ;;
+    worktree) [ "${1:-}" = list ] ;;
+    remote)
+      while [ "${1:-}" = -v ] || [ "${1:-}" = --verbose ]; do shift; done
+      [ $# -eq 0 ] || [ "$1" = get-url ] || [ "$1" = show ] ;;
+    config)
+      # get, list, a get or list mode, or a name alone, with only the options
+      # that go with reading.
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          set|unset|rename-section|remove-section|edit) return 1 ;;
+          --get|--get-all|--get-regexp|--get-urlmatch|--get-color|--get-colorbool|--list|-l) list=1 ;;
+          --null|-z|--name-only|--show-origin|--show-scope|--show-names|--includes|--no-includes|\
+          --local|--global|--system|--worktree|--all|--regexp|--fixed-value|--bool|--int|\
+          --bool-or-int|--bool-or-str|--path|--expiry-date|\
+          --type=*|--default=*|--value=*|--url=*|--file=*|--blob=*) ;;
+          --type|--default|--value|--url|--file|-f|--blob) [ $# -lt 2 ] || shift ;;
+          -*) return 1 ;;
+          *) [ $words -gt 0 ] || first=$1; words=$((words + 1)) ;;
+        esac
+        shift
+      done
+      [ -n "$list" ] || [ "$first" = get ] || [ "$first" = list ] || [ $words -eq 1 ] ;;
+    *)
+      # An alias is checked as what it runs. Refused: a real command of that
+      # name, which Git runs instead, and an alias that runs a shell command
+      # or starts with an option such as -c.
+      [ $depth -lt 5 ] || return 1
+      depth=$((depth + 1))
+      case $'\n'"$("$real" "${globals[@]+"${globals[@]}"}" --list-cmds=builtins,main,others 2>/dev/null)"$'\n' in
+        *$'\n'"$sub"$'\n'*) return 1 ;;
+      esac
+      value=$("$real" "${globals[@]+"${globals[@]}"}" config --get "alias.$sub" 2>/dev/null) || return 1
+      case "$value" in ""|!*|-*) return 1 ;; esac
+      # Split near enough as Git splits it: without quotes and backslashes, a
+      # quoted "expire" is still seen.
+      read -r -a expanded <<< "${value//[\"\'\\]/}"
+      [ ${#expanded[@]} -gt 0 ] && reads "${expanded[@]}" "$@" ;;
+  esac
+}
+
+if reads "$sub" "${rest[@]+"${rest[@]}"}"; then
+  [ -n "$scratch" ] || exec "$real" "${all[@]+"${all[@]}"}"
+  # Run on a copy of the index, which Git is free to rewrite.
+  # Git prints its path relative to the folder it runs in.
+  index=$("$real" "${globals[@]+"${globals[@]}"}" rev-parse --git-path index 2>/dev/null) \
+    || exec "$real" "${all[@]+"${all[@]}"}"
+  case "$index" in /*) ;; *) index=$physical/$index ;; esac
+  copy=$(mktemp -d "${TMPDIR:-/tmp}/git-index.XXXXXX") || exit 1
+  trap 'rm -rf "$copy"' EXIT
+  [ ! -f "$index" ] || cp "$index" "$copy/index" || exit 1
+  # Its exit status doesn't matter: the command after it reports any change.
+  [ -z "$refresh" ] || GIT_INDEX_FILE=$copy/index \
+    "$real" "${globals[@]+"${globals[@]}"}" update-index -q --refresh >/dev/null 2>&1
+  GIT_INDEX_FILE=$copy/index "$real" -c diff.autoRefreshIndex=true "${all[@]}"
+  exit $?
+fi
+echo "git: $(basename "$owner") belongs to the mini's agents, so this Mac only reads it; git ${sub:-?} would write into its working tree or .git, which Dropbox shares with the mini. Do it on the mini." >&2
+exit 1
+{{ end -}}

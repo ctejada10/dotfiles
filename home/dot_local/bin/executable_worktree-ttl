@@ -1,0 +1,2014 @@
+#!/bin/bash
+#
+# worktree-ttl: retire agent worktrees under ~/worktrees once they have been
+# unused for TTL days and their work is safe on GitHub or in a branch.
+#
+# Covers Claude Code's hook-made worktrees (~/worktrees/<repo>/<name>),
+# agents' hand-made ones (~/worktrees/<repo>/<branch>), and the full clones
+# of laptop repos that agents make there from GitHub. It only counts the
+# worktrees under ~/.t3/worktrees and ~/.treehouse, which T3 Code and
+# treehouse/FirstMate manage themselves.
+#
+# It never runs git gc, repack, prune, worktree prune or maintenance, never
+# fetches, and never passes --force or -f to git. A worktree's removal is a
+# plain `git worktree remove`, so git's own refusal is the last check. A
+# clone has no such check, so it goes to the Trash instead of being deleted.
+# Every git call runs with GIT_OPTIONAL_LOCKS=0 and with auto maintenance,
+# fsmonitor and hooks switched off for that one command.
+#
+# Usage: worktree-ttl [--dry-run] [--ttl-days N] [--keep-branches]
+#                     [--keep-missing] [--root DIR]... [--repos-root DIR]
+#                     [--log FILE] [--attention-file FILE]
+#        worktree-ttl --check PATH
+
+set -u
+umask 077
+
+PROG=worktree-ttl
+TTL_DAYS=${WORKTREE_TTL_DAYS:-14}
+DRY_RUN=0
+DELETE_BRANCHES=1
+CLEAR_MISSING=1
+ROOTS=""
+CHECK=""
+REPOS_ROOT="$HOME/Library/CloudStorage/Dropbox/repositories"
+TOOL_ROOTS="$HOME/.t3/worktrees|T3 Code storage cleanup (Settings > Storage)
+$HOME/.treehouse|treehouse prune and FirstMate teardown"
+CLAUDE_DIR=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+STATE_DIR="$HOME/Library/Logs/worktree-ttl"
+LOG_FILE="$STATE_DIR/worktree-ttl.log"
+ATTENTION_FILE="$STATE_DIR/attention.txt"
+LOG_MAX_LINES=20000
+MAX_DEPTH=5
+GH_TIMEOUT=60
+GH_FAIL_RUNS_ALERT=3
+# The file in a worktree's admin dir where the WorktreeCreate hook records
+# the hash of each untracked agent file it copied in from the main checkout.
+SEED_LIST=seed-copies
+# Untracked files that never count as work, even where only the global
+# excludes file hides them: OS litter, compiler output, logs, and Claude
+# Code's per-checkout permission file. Everything else that only the global
+# excludes or info/exclude hide (CLAUDE.md, AGENTS.md, *.sql, .claude/...)
+# counts as work and keeps the worktree, unless it is an unchanged copy of
+# the main checkout's file.
+NOISE_PATTERNS='.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+*.o
+*.so
+*.class
+*.dll
+*.exe
+*.log
+/.claude/settings.local.json'
+# Ignored folders and files that hold caches, environments or build output.
+# A recent change in one is no sign anyone used the worktree, since a test
+# run, an install or a build writes there. Any other file the repo's
+# .gitignore hides, such as a .env or notes, counts as use when it changes.
+CACHE_NAMES='node_modules
+.venv
+venv
+__pycache__
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.tox
+.nox
+.hypothesis
+.coverage
+htmlcov
+coverage
+.cache
+.eggs
+*.egg-info
+.ipynb_checkpoints
+.next
+.nuxt
+.turbo
+.parcel-cache
+.svelte-kit
+.gradle
+DerivedData
+build
+dist
+target
+_build'
+TAB=$(printf '\t')
+
+# System tools come first so a GNU tool in Homebrew can never shadow the BSD
+# one this script was written for. git and gh are found by absolute path.
+PATH=${WORKTREE_TTL_PATH:-/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin}
+GIT=${WORKTREE_TTL_GIT:-}
+if [ -z "$GIT" ]; then
+  for c in /opt/homebrew/bin/git /usr/local/bin/git /usr/bin/git; do
+    if [ -x "$c" ]; then GIT=$c; break; fi
+  done
+fi
+GH=${WORKTREE_TTL_GH:-}
+if [ -z "$GH" ]; then
+  for c in /opt/homebrew/bin/gh /usr/local/bin/gh; do
+    if [ -x "$c" ]; then GH=$c; break; fi
+  done
+fi
+# macOS's own command for moving a file to the Trash, used for clones.
+TRASH=${WORKTREE_TTL_TRASH:-/usr/bin/trash}
+LC_ALL=C
+GIT_OPTIONAL_LOCKS=0
+GIT_TERMINAL_PROMPT=0
+GH_PROMPT_DISABLED=1
+GH_NO_UPDATE_NOTIFIER=1
+GH_SPINNER_DISABLED=1
+NO_COLOR=1
+export PATH LC_ALL GIT_OPTIONAL_LOCKS GIT_TERMINAL_PROMPT GH_PROMPT_DISABLED \
+  GH_NO_UPDATE_NOTIFIER GH_SPINNER_DISABLED NO_COLOR
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+
+usage() {
+  cat <<'EOF'
+Usage: worktree-ttl [options]
+
+  -n, --dry-run         Decide and log, but change nothing.
+  --ttl-days N          Days without use before a worktree may go (default 14).
+  --keep-branches       Never delete a local branch, even after a merged PR.
+  --keep-missing        Never clear the entry of a worktree whose folder is gone.
+                        Use this on any machine other than the one that made them.
+  --root DIR            Folder to sweep. Repeatable. Default: ~/worktrees.
+  --repos-root DIR      Where the main checkouts live.
+                        Default: ~/Library/CloudStorage/Dropbox/repositories.
+  --log FILE            Log file. Default: ~/Library/Logs/worktree-ttl/worktree-ttl.log.
+  --attention-file FILE What needs a person, rewritten every run.
+                        Default: ~/Library/Logs/worktree-ttl/attention.txt.
+  --check PATH          Judge only the worktree at PATH, as a sweep would, and
+                        print what removing it would lose; for the
+                        WorktreeRemove hook. Writes no log. Exit 0: nothing,
+                        3: only its branch or the branch's reflog holds work,
+                        so keep the branch, 1: removal would lose work, or
+                        the job cannot tell.
+  -h, --help            Show this help.
+
+Pin a worktree so it is never removed:
+  git worktree lock --reason "keep: <why>" <path>
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    -n | --dry-run) DRY_RUN=1 ;;
+    --ttl-days) shift; TTL_DAYS=${1:-} ;;
+    --ttl-days=*) TTL_DAYS=${1#*=} ;;
+    --keep-branches) DELETE_BRANCHES=0 ;;
+    --keep-missing) CLEAR_MISSING=0 ;;
+    --root) shift; ROOTS="$ROOTS${1:-}
+" ;;
+    --repos-root) shift; REPOS_ROOT=${1:-} ;;
+    --log) shift; LOG_FILE=${1:-} ;;
+    --attention-file) shift; ATTENTION_FILE=${1:-} ;;
+    --check) shift; CHECK=${1:-}; [ -n "$CHECK" ] || { usage >&2; exit 2; } ;;
+    -h | --help) usage; exit 0 ;;
+    *) printf '%s: unknown option: %s\n' "$PROG" "$1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+case $TTL_DAYS in
+  '' | *[!0-9]*) printf '%s: --ttl-days needs a whole number\n' "$PROG" >&2; exit 2 ;;
+esac
+if [ "$TTL_DAYS" -lt 1 ]; then
+  printf '%s: --ttl-days must be at least 1\n' "$PROG" >&2
+  exit 2
+fi
+if [ -z "$GIT" ] || { [ -z "$GH" ] && [ -z "$CHECK" ]; } || [ -z "$LOG_FILE" ] || [ -z "$ATTENTION_FILE" ]; then
+  printf '%s: git, gh, --log or --attention-file is missing\n' "$PROG" >&2
+  exit 2
+fi
+[ -n "$ROOTS" ] || ROOTS="$HOME/worktrees
+"
+
+# ---------------------------------------------------------------- helpers
+
+ts() { date '+%Y-%m-%dT%H:%M:%S%z'; }
+
+log() {
+  local line
+  line="$(ts) $*"
+  printf '%s\n' "$line" >>"$LOG_FILE"
+  printf '%s\n' "$line"
+}
+
+# git with the guards this job relies on. -c settings reach the child
+# `git status` that `git worktree remove` runs, so untracked files are
+# always seen and no fsmonitor daemon is started in the Dropbox .git.
+g() {
+  "$GIT" -c maintenance.auto=false -c gc.auto=0 -c core.fsmonitor=false \
+    -c core.hooksPath=/dev/null -c status.showUntrackedFiles=normal \
+    -c color.ui=false "$@" </dev/null
+}
+
+# The same, for the two calls that read from a pipe.
+g_stdin() {
+  "$GIT" -c maintenance.auto=false -c gc.auto=0 -c core.fsmonitor=false \
+    -c core.hooksPath=/dev/null -c status.showUntrackedFiles=normal \
+    -c color.ui=false "$@"
+}
+
+norm_dir() { (cd -P -- "$1" 2>/dev/null && pwd -P); }
+
+# A path that may no longer exist, with symlinks resolved in its parent.
+canon() {
+  local p=${1%/} d
+  if [ -d "$p" ]; then
+    norm_dir "$p"
+    return
+  fi
+  if d=$(norm_dir "$(dirname -- "$p")"); then
+    printf '%s/%s\n' "${d%/}" "$(basename -- "$p")"
+  else
+    printf '%s\n' "$p"
+  fi
+}
+
+mtime() { stat -f %m -- "$1" 2>/dev/null; }
+
+newer() {
+  # newer EPOCH LABEL: keep the newest timestamp seen in LAST_USE. A value
+  # more than a day ahead of the clock is ignored and noted, so one file
+  # with a bogus date cannot pin a worktree for years.
+  case ${1:-} in '' | *[!0-9]*) return 0 ;; esac
+  if [ "$1" -gt $((NOW + 86400)) ]; then
+    FUTURE_NOTE="${FUTURE_NOTE:+$FUTURE_NOTE, }$2 dated in the future, ignored"
+    return 0
+  fi
+  if [ "$1" -gt "$LAST_USE" ]; then
+    LAST_USE=$1
+    LAST_SRC=$2
+  fi
+}
+
+days_since() { echo $(((NOW - $1) / 86400)); }
+
+count_lines() { printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }'; }
+short_oids() { printf '%s\n' "$1" | awk 'NF { printf "%s%s", (n++ ? " " : ""), substr($1, 1, 10) } n == 3 { exit }'; }
+
+KEPT=0 REMOVED=0 FAILED=0 TOOL_LEFT=0 ATTN=0 GH_OK=0 GH_FAILS=0
+KIND=worktree TAG=""
+
+attention() {
+  ATTN=$((ATTN + 1))
+  printf '%s\n' "$*" >>"$TMP/attention"
+}
+
+write_attention() {
+  {
+    printf '%s worktree-ttl: %s item(s) need a person\n' "$(ts)" "$ATTN"
+    cat "$TMP/attention"
+  } >"$ATTENTION_FILE.tmp" && mv -- "$ATTENTION_FILE.tmp" "$ATTENTION_FILE"
+}
+
+# TAG is "clone, " while a full clone is judged, so the log tells it from a
+# worktree.
+keep() {
+  KEPT=$((KEPT + 1))
+  log "KEEP    $WT | ${TAG:-}$*${HEAD_OID:+ | branch=${BR:-detached}}"
+  if [ -n "${IDLE:-}" ] && [ "$IDLE" -ge $((2 * TTL_DAYS)) ]; then
+    attention "$WT | kept, idle ${IDLE}d: ${TAG:-}$*"
+  fi
+}
+
+# keep_noted REASON WHAT-TO-DO: kept because the job could not tell, so a
+# person should look, whatever the idle time.
+keep_noted() {
+  local IDLE=""
+  keep "$1"
+  attention "$WT | kept: ${TAG:-}$1; $2"
+}
+
+# Kept because git could not read a reflog, or could not say what it holds,
+# so the job cannot tell what removal would lose.
+keep_unread() {
+  keep_noted "$*" "check that git can read the files under its logs folders (a Dropbox file that will not download, or their permissions)"
+}
+
+fail() {
+  FAILED=$((FAILED + 1))
+  log "FAILED  $WT | ${TAG:-}$*${HEAD_OID:+ | branch=${BR:-detached}}"
+  attention "$WT | removal failed: ${TAG:-}$*"
+}
+
+# Why a folder cannot be listed, unless it is simply not there. macOS keeps
+# /bin/bash out of the Dropbox folder until it is given access in Privacy &
+# Security, and every git call and glob there then fails without a word.
+unreadable() {
+  local err
+  /bin/ls -- "$1" >/dev/null 2>"$TMP/ls.err" && return 1
+  err=$(head -n 1 "$TMP/ls.err")
+  case $err in *'No such file or directory'*) return 1 ;; esac
+  err=${err##*: }
+  printf '%s\n' "${err:-ls failed}"
+}
+
+# Processes whose working directory is inside a path, plus live Claude Code
+# sessions from ~/.claude/sessions. `lsof +D` is avoided on purpose: the
+# fsmonitor daemon holds descriptors in a worktree while its cwd is $HOME.
+collect_cwds() {
+  local f pid cwd start now_start
+  : >"$TMP/cwds"
+  lsof -n -P -w -a -d cwd -F n 2>/dev/null | sed -n 's/^n//p' >>"$TMP/cwds"
+  for f in "$CLAUDE_DIR"/sessions/*.json; do
+    [ -f "$f" ] || continue
+    pid=$(plutil -extract pid raw -o - "$f" 2>/dev/null) || continue
+    cwd=$(plutil -extract cwd raw -o - "$f" 2>/dev/null) || continue
+    case $pid in '' | *[!0-9]*) continue ;; esac
+    kill -0 "$pid" 2>/dev/null || continue
+    # A pid can be handed to another process once a session dies without
+    # cleaning up. Claude Code records the start time, in the form
+    # `TZ=UTC ps -o lstart=` prints, so compare it when it is there.
+    if start=$(plutil -extract procStart raw -o - "$f" 2>/dev/null) && [ -n "$start" ]; then
+      now_start=$(TZ=UTC ps -o lstart= -p "$pid" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//')
+      start=$(printf '%s' "$start" | tr -s ' ' | sed 's/^ //; s/ $//')
+      [ "$start" = "$now_start" ] || continue
+    fi
+    if [ -d "$cwd" ]; then cwd=$(norm_dir "$cwd"); fi
+    printf '%s\n' "$cwd" >>"$TMP/cwds"
+  done
+}
+
+in_use() {
+  P=$1 awk 'BEGIN { p = ENVIRON["P"] }
+    $0 == p || index($0, p "/") == 1 { found = 1; exit }
+    END { exit !found }' "$TMP/cwds"
+}
+
+# Per-worktree state that `git worktree remove` would throw away, or that
+# means a git command is running or paused there. busy_state GITDIR clone
+# skips the refs check, since a clone's refs are judged one by one.
+busy_state() {
+  local admin=$1 x
+  for x in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD \
+    BISECT_LOG BISECT_START sequencer; do
+    if [ -e "$admin/$x" ]; then
+      echo "operation in progress ($x)"
+      return 0
+    fi
+  done
+  x=$(find "$admin" -maxdepth 1 -name '*.lock' 2>/dev/null | head -n 1)
+  if [ -n "$x" ]; then
+    echo "git lock file present (${x##*/})"
+    return 0
+  fi
+  if [ "${2:-}" != clone ] && [ -d "$admin/refs" ] &&
+    [ -n "$(find "$admin/refs" -type f 2>/dev/null | head -n 1)" ]; then
+    echo "has per-worktree refs (refs/worktree or refs/bisect), which removal deletes"
+    return 0
+  fi
+  if [ -d "$admin/modules" ]; then
+    echo "has submodule repositories in its admin dir"
+    return 0
+  fi
+  return 1
+}
+
+populated_submodule() {
+  local p
+  g -C "$WT" ls-files -s 2>/dev/null | awk '$1 == "160000"' | cut -f2- |
+    while IFS= read -r p; do
+      if [ -e "$WT/$p/.git" ]; then
+        printf '%s\n' "$p"
+        break
+      fi
+    done
+}
+
+# Is this untracked path an unchanged copy of the main checkout's file, as
+# the WorktreeCreate hook makes? Only by content: identical to the main
+# checkout's file, or to the copy whose hash the hook recorded, which still
+# holds once the main checkout's file has changed. An mtime says nothing
+# here: an agent's edit in the first minutes is work too. A clone has no
+# main checkout, so nothing in it is a seed.
+seeded() {
+  local p=$1 want
+  [ "$KIND" = worktree ] && [ -f "$WT/$p" ] && [ ! -L "$WT/$p" ] || return 1
+  if [ -f "$MAIN/$p" ] && cmp -s -- "$WT/$p" "$MAIN/$p"; then
+    return 0
+  fi
+  [ -f "$ADMIN/$SEED_LIST" ] || return 1
+  want=$(P=$p awk -F '\t' '$2 == ENVIRON["P"] { o = $1 } END { print o }' "$ADMIN/$SEED_LIST")
+  [ -n "$want" ] && [ "$(g -C "$MAIN" hash-object --no-filters -- "$WT/$p" 2>/dev/null)" = "$want" ]
+}
+
+# Untracked files that only the global excludes file or info/exclude hide.
+# git status and git worktree remove both treat these as ignored, so the
+# job lists untracked files against the repository's own .gitignore files
+# and the noise list alone.
+first_unseeded() {
+  local p
+  while IFS= read -r -d '' p; do
+    seeded "$p" && continue
+    printf '%s\n' "$p"
+    return 0
+  done <"$TMP/hu"
+  return 1
+}
+
+# Tracked files whose edits git status hides because an agent set
+# skip-worktree or assume-unchanged. Files absent from disk are skipped so
+# sparse checkouts, which also use skip-worktree, do not count.
+hidden_edits() {
+  local rec p idx cur
+  while IFS= read -r -d '' rec; do
+    p=${rec#* }
+    [ -f "$WT/$p" ] || [ -L "$WT/$p" ] || continue
+    idx=$(g -C "$WT" ls-files -s -- ":(literal)$p" 2>/dev/null | awk '{ print $2; exit }')
+    if [ -L "$WT/$p" ]; then
+      cur=$(printf '%s' "$(readlink -- "$WT/$p")" | g_stdin -C "$WT" hash-object --stdin 2>/dev/null)
+    else
+      cur=$(g -C "$WT" hash-object --path="$p" -- "$WT/$p" 2>/dev/null)
+    fi
+    if [ -z "$idx" ] || [ "$idx" != "$cur" ]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done < <(g -C "$WT" ls-files -v -z 2>/dev/null | grep -z -E '^(S|[a-z]) ')
+  return 1
+}
+
+# Anything that makes removal lose work: changes git status shows, untracked
+# files that only the global excludes or info/exclude hide, edits hidden by
+# index flags, and populated submodules.
+dirty_reason() {
+  local st n
+  if ! st=$(g -C "$WT" status --porcelain=v1 --ignore-submodules=none --untracked-files=normal 2>/dev/null); then
+    echo "git status failed"
+    return 0
+  fi
+  if [ -n "$st" ]; then
+    echo "uncommitted or untracked changes ($(count_lines "$st") path(s))"
+    return 0
+  fi
+  if ! (cd -- "$WT" && g ls-files -z --others --exclude-per-directory=.gitignore \
+    --exclude-from="$NOISE") >"$TMP/hu" 2>/dev/null; then
+    echo "could not list untracked files"
+    return 0
+  fi
+  if n=$(first_unseeded); then
+    echo "untracked file that only the global excludes or info/exclude hide ($n)"
+    return 0
+  fi
+  if n=$(hidden_edits); then
+    echo "edit hidden by skip-worktree or assume-unchanged ($n)"
+    return 0
+  fi
+  n=$(populated_submodule)
+  if [ -n "$n" ]; then
+    echo "populated submodule ($n), which git worktree remove refuses"
+    return 0
+  fi
+  return 1
+}
+
+# Another repository or worktree inside this one, which removal would
+# delete without git noticing: a registered worktree of any repository
+# below it, or a .git inside one of its ignored folders.
+nested_repo() {
+  local e x
+  x=$(P="$WT/" awk 'BEGIN { p = ENVIRON["P"] } index($0, p) == 1 { print; exit }' "$TMP/allwt")
+  if [ -n "$x" ]; then
+    printf '%s\n' "$x"
+    return 0
+  fi
+  while IFS= read -r -d '' e; do
+    case $e in '!! '*) e=${e#!! } ;; *) continue ;; esac
+    [ -d "$WT/$e" ] || continue
+    x=$(find "$WT/$e" -name .git -print -quit 2>/dev/null)
+    if [ -n "$x" ]; then
+      printf '%s\n' "${x%/.git}"
+      return 0
+    fi
+  done < <(g -C "$WT" status --porcelain=v1 -z --ignored=matching --untracked-files=normal 2>/dev/null)
+  return 1
+}
+
+# The admin dir a worktree folder's .git file names, canonical.
+gitfile_target() {
+  local c=$1 gd
+  gd=$(sed -n 's/^gitdir: //p' "$c/.git" 2>/dev/null | head -n 1)
+  [ -n "$gd" ] || return 1
+  case $gd in /*) ;; *) gd="$c/$gd" ;; esac
+  canon "$gd"
+}
+
+# A folder other than this worktree whose .git file points at ADMIN.
+other_pointer() {
+  A=$1 S=$2 awk -F '\t' '$1 == ENVIRON["A"] && $2 != ENVIRON["S"] { print $2; exit }' "$TMP/pointers"
+}
+
+# reflog_missing PATH: 0 when PATH is not there, which is fine, since that
+# ref simply has no reflog; 1 when it is there; 2 when the job cannot even
+# look for it, because a folder above it may not be listed.
+reflog_missing() {
+  [ -e "$1" ] || [ -L "$1" ] && return 1
+  unreadable "$1" >/dev/null && return 2
+  return 0
+}
+
+# Every commit a reflog file names. A reflog that is there but cannot be
+# read, such as a Dropbox placeholder that will not download or a file with
+# no read permission, fails, and so does one the job cannot look for, so
+# the caller keeps the worktree.
+reflog_oids() {
+  local rc
+  reflog_missing "$1"
+  rc=$?
+  [ "$rc" = 0 ] && return 0
+  [ "$rc" = 1 ] || return 1
+  awk '{ for (i = 1; i <= 2; i++) if ($i !~ /^0+$/ && length($i) >= 40) print $i }' "$1" 2>/dev/null
+}
+
+# What a reflog shows was rewritten, for rewrites to judge. Prints ^OID for
+# the old side of an amend, whose change lives on in the amended commit.
+# Prints =OLD NEW FOLDS ONTO for a rewrite that may have left commits
+# behind: the tip a rebase started from, the tip it ended on and the commit
+# it rebased onto, or the same from a rebase's finish entry in a branch
+# reflog. FOLDS counts the squash and fixup steps, each of which folds one
+# commit into the one before it.
+# A rebase runs from its (start) entry to its (finish) or (abort) entry,
+# the next (start), or the end of the file, since a rebase on a detached
+# HEAD writes no (finish) and neither does `rebase --quit`. A rebase that
+# ended back on its starting tip, as an aborted one, a fast-forward or an
+# unchanged `rebase -i` does, rewrote nothing. An aborted rebase's own new
+# commits are abandoned copies of commits that are still there, so each is
+# printed as -OID START, to be left out rather than hidden, unless someone
+# committed during that rebase or the copy shows up anywhere else in the
+# file. Pull runs rebase under its own name, such as
+# "pull -q --rebase origin main (start)".
+# A rebase that was not aborted, during which no other command moved HEAD
+# and no rebase-merges step (reset, label or merge) ran, builds each commit
+# on the one before, or replaces the one before with one that holds its
+# change too, as a squash, fixup or reword does. So everything it made
+# lives on in the tip it ended on. Each commit it made other than that tip,
+# such as a squash's halfway commit or a reword's first copy, is printed as
+# ~OID LAST, to be left out unless it shows up anywhere else in the file.
+# LAST itself is judged as any commit is, so they are safe exactly while it
+# is on a branch or remote, or lives on in a later rewrite. A rebase with
+# no (finish) counts too: the job only judges a worktree with no rebase in
+# progress, and what such a rebase made lives on where it stopped.
+# A commit HEAD only arrived at by "checkout: moving from X to Y", such as a
+# tag or a teammate's branch looked at with `git switch --detach`, is
+# printed as @OID, unless any other entry made it (a commit, rebase, merge,
+# cherry-pick, reset or amend), or an entry left it with none arriving
+# there first. Fails if the file cannot be read.
+rewritten_oids() {
+  local rc
+  reflog_missing "$1"
+  rc=$?
+  [ "$rc" = 0 ] && return 0
+  [ "$rc" = 1 ] || return 1
+  awk -F '\t' '
+    {
+      split($1, f, " ")
+      old = f[1]; new = f[2]; msg = $2
+      head = msg; sub(/:.*/, "", head)
+      tag = ""
+      if (head ~ /^(rebase|pull)( .*)? [(][a-z]+[)]$/) {
+        tag = head; sub(/.*[(]/, "", tag); sub(/[)]$/, "", tag)
+        if (tag !~ /^(start|pick|squash|fixup|reword|edit|continue|merge|reset|label|abort|finish)$/) tag = ""
+      } else if (head ~ /^(rebase|pull)( [^(]*)?$/ && msg ~ /: fast-forward$/) {
+        tag = "fast-forward"
+      }
+      e++; eold[e] = old; enew[e] = new; eses[e] = 0
+      if (old !~ /^0+$/ && (e == 1 || old != enew[e - 1])) mine[old] = 1
+      if (old != new && new !~ /^0+$/) {
+        if (msg ~ /^checkout: moving from /) visit[new] = 1
+        else mine[new] = 1
+      }
+      if (tag == "start") {
+        s++; open = 1; start[s] = old; last[s] = new; onto[s] = new
+        aborted[s] = 0; other[s] = 0; folds[s] = 0; nmade[s] = 0; graph[s] = 0
+        eses[e] = s
+        next
+      }
+      if (tag == "") {
+        if (msg ~ /^commit [(]amend[)]: / && old != new && old !~ /^0+$/) print "^" old
+        if (open) other[s] = 1
+        next
+      }
+      if (!open) {
+        if (tag == "finish" && old != new && old !~ /^0+$/) {
+          on = ""
+          if (match(msg, / onto [0-9a-f]+$/)) on = substr(msg, RSTART + 6)
+          print "=" old " " new " 0 " on
+        }
+        next
+      }
+      eses[e] = s
+      last[s] = new
+      if (tag ~ /^(pick|squash|fixup|reword|edit|continue|merge)$/ && old != new) made[s, ++nmade[s]] = new
+      if (tag ~ /^(squash|fixup)$/) folds[s]++
+      if (tag ~ /^(reset|label|merge)$/) graph[s] = 1
+      if (tag == "abort") { aborted[s] = 1; open = 0 }
+      else if (tag == "finish") open = 0
+    }
+    END {
+      for (i = 1; i <= e; i++) {
+        if (!eses[i] || !aborted[eses[i]]) { seen[eold[i]] = 1; seen[enew[i]] = 1 }
+        n[eold[i]]++; n[enew[i]]++
+        if (eses[i]) { in_s[eses[i], eold[i]]++; in_s[eses[i], enew[i]]++ }
+      }
+      for (i = 1; i <= s; i++) {
+        if (start[i] ~ /^0+$/) continue
+        if (!aborted[i]) {
+          if (last[i] != start[i]) print "=" start[i] " " last[i] " " folds[i] " " onto[i]
+          if (!other[i] && !graph[i])
+            for (j = 1; j <= nmade[i]; j++) {
+              x = made[i, j]
+              if (x != last[i] && n[x] == in_s[i, x]) print "~" x " " last[i]
+            }
+        } else if (!other[i]) {
+          for (j = 1; j <= nmade[i]; j++) if (!(made[i, j] in seen)) print "-" made[i, j] " " start[i]
+        }
+      }
+      for (x in visit) if (!(x in mine)) print "@" x
+    }' "$1" 2>/dev/null
+}
+
+# lives_on OLD NEW FOLDS [ONTO]: whether every commit that OLD's history
+# holds and NEW's does not lives on in NEW's: as a commit with the same
+# change, or as one of the rebase's own copies (those not in ONTO's
+# history) with the same author, author date and subject, which rebase
+# keeps through an edit or a conflict it had to resolve. Up to FOLDS of
+# them may be missing, one for each squash or fixup. A commit a rebase
+# dropped, skipped, cut off with --onto or never reached before --quit
+# does not live on, so it is still work. Merges are left out: a rebase
+# without --rebase-merges drops them, and their parents are judged one by
+# one. Fails when git cannot tell.
+lives_on() {
+  local a=$1 b=$2 folds=${3:-0} onto=${4:-} miss
+  # Nothing to judge when a remote already holds every commit left behind.
+  miss=$(g -C "$MAIN" rev-list --count "$a" --not "$b" --remotes 2>/dev/null) || return 1
+  [ "$miss" = 0 ] && return 0
+  # awk drops rev-list's commit lines rather than sed -i, whose BSD and GNU
+  # forms differ, since the WorktreeRemove hook's tests run this on Linux.
+  g -C "$MAIN" rev-list --no-merges --cherry-pick --right-only --format='%at %ae %an %s' \
+    "$b...$a" >"$TMP/lives.raw" 2>/dev/null || return 1
+  awk '!/^commit [0-9a-f]*$/' "$TMP/lives.raw" >"$TMP/lives.right" || return 1
+  [ -s "$TMP/lives.right" ] || return 0
+  set -- "$b...$a"
+  [ -n "$onto" ] && set -- "$@" "^$onto"
+  g -C "$MAIN" rev-list --no-merges --cherry-pick --left-only --format='%at %ae %an %s' \
+    "$@" >"$TMP/lives.raw" 2>/dev/null || return 1
+  awk '!/^commit [0-9a-f]*$/' "$TMP/lives.raw" >"$TMP/lives.left" || return 1
+  # Each copy stands for at most one of OLD's commits.
+  miss=$(awk 'FILENAME == ARGV[1] { n[$0]++; next } n[$0] > 0 { n[$0]--; next } { m++ }
+    END { print m + 0 }' "$TMP/lives.left" "$TMP/lives.right") || return 1
+  [ "$miss" -le "$folds" ]
+}
+
+# rewritten_oids as rev-list input: ^OID for a commit to hide along with its
+# history, -OID for an abandoned copy or a rebase's own carried-over commit
+# to leave out of the commits that might be lost, and @OID for a commit HEAD
+# only checked out, to leave out as well. A rewrite hides the tip it started
+# from only if lives_on says nothing it left behind is lost. An abandoned
+# copy stays in when it is one of the commits the rebase started from or is
+# built on that tip, or when git cannot tell. A merge HEAD only checked out
+# stays in, since `git stash` makes each stash as a merge and writes no
+# HEAD reflog entry for it: after `git checkout stash@{0}` and a stash
+# drop, only this reflog holds it. When git cannot tell which are merges,
+# all of them stay in. Fails if the reflog cannot be read.
+rewrites() {
+  local line x s n on rc
+  rewritten_oids "$1" >"$TMP/rewrites" || return 1
+  : >"$TMP/rewrites.visit" || return 1
+  while IFS=' ' read -r line s n on; do
+    case $line in
+      '^'*) printf '%s\n' "$line" ;;
+      '='*)
+        x=${line#=}
+        lives_on "$x" "$s" "$n" "$on" && printf '^%s\n' "$x"
+        ;;
+      '-'*)
+        x=${line#-}
+        g -C "$MAIN" merge-base --is-ancestor "$x" "$s" 2>/dev/null
+        rc=$?
+        [ "$rc" = 1 ] || continue
+        g -C "$MAIN" merge-base --is-ancestor "$s" "$x" 2>/dev/null
+        rc=$?
+        [ "$rc" = 1 ] && printf '%s\n' "$line"
+        ;;
+      '~'*) printf -- '-%s\n' "${line#"~"}" ;;
+      '@'*) printf '%s\n' "${line#@}" >>"$TMP/rewrites.visit" ;;
+    esac
+  done <"$TMP/rewrites"
+  [ -s "$TMP/rewrites.visit" ] || return 0
+  g_stdin -C "$MAIN" rev-list --no-walk --min-parents=2 --ignore-missing --stdin \
+    <"$TMP/rewrites.visit" >"$TMP/rewrites.merges" 2>/dev/null || return 0
+  awk 'FILENAME == ARGV[1] { merge[$0] = 1; next } !merge[$0] { print "@" $0 }' \
+    "$TMP/rewrites.merges" "$TMP/rewrites.visit"
+  return 0
+}
+
+# read_reflog FILE GONE HIDE: append the commits reflog FILE names to GONE,
+# less those rewrites leaves out, and the commits rewrites hides to HIDE.
+# Fails if the file cannot be read.
+read_reflog() {
+  rewrites "$1" >"$TMP/reflog.rw" || return 1
+  reflog_oids "$1" >"$TMP/reflog.oids" || return 1
+  awk 'FILENAME == ARGV[1] { if (sub(/^[-@]/, "")) skip[$0] = 1; next } !skip[$0]' \
+    "$TMP/reflog.rw" "$TMP/reflog.oids" >>"$2" || return 1
+  grep '^\^' "$TMP/reflog.rw" >>"$3"
+  return 0
+}
+
+# orphans ADMIN MODE [EXTRA]: print the commits that removing this worktree
+# would leave on no ref and in no surviving reflog. MODE keep-branch means
+# the branch and its reflog stay; drop-branch means they go too. EXTRA is a
+# commit already kept elsewhere (a merged PR's head on GitHub). Tags count
+# as safe only in a repository with no remote, because fetch.pruneTags
+# deletes local-only tags on the next fetch. HEAD is also judged on its own,
+# against what survives and EXTRA only, so no rewritten commit can hide it,
+# unless its reflog shows it only checked out there (see rewritten_oids):
+# a detached look at a tag made nothing in this worktree. Fails if git
+# cannot tell or a reflog cannot be read.
+orphans() {
+  local admin=$1 mode=$2 extra=${3:-} brlog="" o=$TMP/orphans head=$HEAD_OID
+  [ -n "$BR" ] && brlog="$COMMON/logs/refs/heads/$BR"
+  set -- --not --remotes
+  if [ "$mode" = drop-branch ] && [ -n "$BR" ]; then
+    set -- "$@" --exclude="$BR" --branches
+  else
+    set -- "$@" --branches
+  fi
+  [ -n "$HASREM" ] || set -- "$@" --tags
+  : >"$o.gone" && : >"$o.kept" && : >"$o.hide" || return 1
+  read_reflog "$admin/logs/HEAD" "$o.gone" "$o.hide" || return 1
+  [ -n "$head" ] && grep -Fxq -- "@$head" "$TMP/reflog.rw" && head=""
+  if [ -n "$brlog" ]; then
+    if [ "$mode" = drop-branch ]; then
+      read_reflog "$brlog" "$o.gone" "$o.hide" || return 1
+    else
+      reflog_oids "$brlog" >"$o.tmp" || return 1
+      sed 's/^/^/' "$o.tmp" >>"$o.kept"
+    fi
+  fi
+  [ -n "$extra" ] && printf '^%s\n' "$extra" >>"$o.kept"
+  : >"$o.out"
+  if [ -n "$head" ]; then
+    { printf '%s\n' "$head"; cat "$o.kept"; } | sort -u |
+      g_stdin -C "$MAIN" rev-list --ignore-missing --stdin "$@" >>"$o.out" || return 1
+  fi
+  {
+    [ -n "$head" ] && printf '%s\n' "$head"
+    cat "$o.gone" "$o.kept" "$o.hide"
+  } | sort -u | g_stdin -C "$MAIN" rev-list --ignore-missing --stdin "$@" >>"$o.out" || return 1
+  awk '!seen[$0]++' "$o.out"
+}
+
+# Files the repo's .gitignore files hide that changed since the TTL
+# cutoff, NUL-separated. Caches, environments, build output (CACHE_NAMES),
+# nested .git folders and noise are left out, and so is each ignored
+# folder git lists whole, if its name is one of those. Each folder git
+# could not open, which it then leaves out of its lists without failing,
+# and each ignored path find could not read all the way down, goes in
+# $TMP/ignored.unread.
+ignored_changes() {
+  local p=$1 e n
+  local -a skip=(-false)
+  while IFS= read -r n; do
+    case $n in '') ;; /*) skip+=(-o -path "$p$n") ;; *) skip+=(-o -name "$n") ;; esac
+  done <<EOF
+$NOISE_PATTERNS
+EOF
+  g -C "$p" status --porcelain=v1 -z --ignored=traditional --untracked-files=normal \
+    >"$TMP/ignored.st" 2>"$TMP/ignored.err"
+  sed -n "s/^warning: could not open directory '\(.*\)': .*/\1/p" "$TMP/ignored.err" >>"$TMP/ignored.unread"
+  while IFS= read -r -d '' e; do
+    case $e in '!! '*) e=${e#!! } ;; *) continue ;; esac
+    find "$p/${e%/}" \( "${PRUNE_NAMES[@]}" \) -prune -o -type f ! \( "${skip[@]}" \) \
+      -newer "$CUTOFF" -print0 2>/dev/null || printf '%s\n' "$e" >>"$TMP/ignored.unread"
+  done <"$TMP/ignored.st"
+}
+
+# Last use is the newest of: the admin index and HEAD mtimes, the last
+# entry in the admin logs/HEAD, the newest file in the worktree that is
+# tracked or untracked and not ignored by the repo's own .gitignore files,
+# the newest file those .gitignore files hide that is not a cache,
+# environment or build output (ignored_changes), and the newest Claude Code
+# transcript for that path, found by folder name or by the cwd recorded
+# inside it. FETCH_HEAD, the gitdir file and directory mtimes are ignored.
+last_use() {
+  local admin=$1 path=$2 t r enc d p
+  LAST_USE=0
+  LAST_SRC=none
+  FUTURE_NOTE=""
+  newer "$(mtime "$admin/index")" "admin index"
+  newer "$(mtime "$admin/HEAD")" "admin HEAD"
+  if [ -s "$admin/logs/HEAD" ]; then
+    t=$(tail -n 1 "$admin/logs/HEAD" 2>/dev/null | cut -f1 | awk '{ print $(NF-1) }')
+    newer "$t" "reflog"
+  fi
+  if [ -n "$path" ] && [ -d "$path" ]; then
+    r=$(cd -- "$path" 2>/dev/null &&
+      g ls-files -z --cached --others --exclude-per-directory=.gitignore \
+        --exclude-from="$NOISE" 2>/dev/null |
+      xargs -0 stat -f %m -- 2>/dev/null |
+      awk -v lim=$((NOW + 86400)) '$1 > lim { f++; next } $1 > m { m = $1 }
+        END { print m + 0, f + 0 }')
+    newer "${r% *}" "file edit"
+    if [ -n "$r" ] && [ "${r#* }" != 0 ]; then
+      FUTURE_NOTE="${FUTURE_NOTE:+$FUTURE_NOTE, }${r#* } file(s) dated in the future, ignored"
+    fi
+  fi
+  for d in "$path" "${3:-}"; do
+    [ -n "$d" ] || continue
+    enc=$(printf '%s' "$d" | sed 's/[^A-Za-z0-9]/-/g')
+    for p in "$CLAUDE_DIR/projects/$enc" "$CLAUDE_DIR/projects/${enc:0:200}"-*; do
+      [ -d "$p" ] || continue
+      # A name over 200 characters is cut to 200 plus a hash of the path.
+      case $p in "$CLAUDE_DIR/projects/$enc") ;; *) [ "${#enc}" -gt 200 ] || continue ;; esac
+      t=$(stat -f %m -- "$p"/*.jsonl 2>/dev/null | sort -rn | head -n 1)
+      newer "$t" "Claude Code transcript"
+    done
+    t=$(P="$d" awk -F '\t' 'BEGIN { p = ENVIRON["P"] }
+      ($2 == p || index($2, p "/") == 1) && $1 > m { m = $1 } END { if (m) print m }' "$TMP/tcwd")
+    newer "$t" "Claude Code transcript"
+  done
+  # Ignored files come last, so OTHER_USE holds the newest use apart from
+  # them. A change to one is the sign of use the job is least sure of, since
+  # a tool may have written it (see past_ttl). IGNORED_EDIT names the file,
+  # and UNREAD_PATH the first folder or ignored path it could not read.
+  OTHER_USE=$LAST_USE IGNORED_EDIT="" UNREAD_PATH=""
+  if [ -n "$path" ] && [ -d "$path" ]; then
+    : >"$TMP/ignored.unread"
+    r=$(ignored_changes "$path" | xargs -0 stat -f '%m %N' -- 2>/dev/null |
+      awk -v lim=$((NOW + 86400)) '$1 > lim { f++; next }
+        $1 > m { m = $1; p = substr($0, length($1) + 2) }
+        END { print m + 0, f + 0, p }')
+    t=${r%% *}
+    r=${r#* }
+    newer "$t" "ignored file edit"
+    [ "$LAST_SRC" = "ignored file edit" ] && IGNORED_EDIT=${r#* } && IGNORED_EDIT=${IGNORED_EDIT#"$path"/}
+    r=${r%% *}
+    if [ -n "$r" ] && [ "$r" != 0 ]; then
+      FUTURE_NOTE="${FUTURE_NOTE:+$FUTURE_NOTE, }$r ignored file(s) dated in the future, ignored"
+    fi
+    UNREAD_PATH=$(head -n 1 "$TMP/ignored.unread" 2>/dev/null)
+  fi
+}
+
+# Recent transcripts and the working directories recorded in them, so a
+# session that ran in a worktree counts as use even though Claude Code keeps
+# a hook-made worktree's transcript under the launch directory.
+scan_transcripts() {
+  local line f p last="" m="" n
+  : >"$TMP/tcwd"
+  : >"$TMP/tfiles"
+  [ -d "$CLAUDE_DIR/projects" ] || return 0
+  find "$CLAUDE_DIR/projects" -type f -name '*.jsonl' -mtime -$((TTL_DAYS + 1)) \
+    -print0 >"$TMP/tfiles" 2>/dev/null
+  n=$(tr -cd '\000' <"$TMP/tfiles" | wc -c | tr -d ' ')
+  [ "$n" -gt 0 ] || return 0
+  xargs -0 grep -o -H -- '"cwd":"[^"]*"' <"$TMP/tfiles" 2>/dev/null | awk '!seen[$0]++' |
+    while IFS= read -r line; do
+      f=${line%%:\"cwd\":\"*}
+      p=${line#*:\"cwd\":\"}
+      p=${p%\"}
+      if [ "$f" != "$last" ]; then
+        last=$f
+        m=$(mtime "$f")
+      fi
+      [ -n "$m" ] && printf '%s\t%s\n' "$m" "$p"
+    done >"$TMP/tcwd"
+  if [ ! -s "$TMP/tcwd" ]; then
+    attention "transcripts | none of $n recent Claude Code transcripts records a cwd; the format may have changed, so sessions launched elsewhere no longer count as use"
+  fi
+}
+
+github_slug() {
+  printf '%s\n' "$1" |
+    sed -n -E 's#^(git@|ssh://git@|https://([^@/]+@)?)github\.com[:/]([^/]+/[^/]+)$#\3#p' |
+    sed 's#\.git$##; s#/$##'
+}
+
+# gh with a watchdog, since a hung network call would stall the run.
+gh_run() {
+  local out=$1 pid ticks=0
+  shift
+  "$GH" "$@" </dev/null >"$out" 2>"$TMP/gh.err" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$ticks" -ge $((GH_TIMEOUT * 5)) ]; then
+      kill "$pid" 2>/dev/null
+      echo "gh timed out after ${GH_TIMEOUT}s" >"$TMP/gh.err"
+      wait "$pid" 2>/dev/null
+      return 1
+    fi
+    sleep 0.2
+    ticks=$((ticks + 1))
+  done
+  wait "$pid"
+}
+
+# The GitHub repositories a PR for this branch could live in: every remote
+# on github.com, the branch's own remote first, and the parent of any fork.
+pr_repos() {
+  local r u s p
+  : >"$TMP/slugs"
+  { printf '%s\n' "$REMOTE"; g -C "$MAIN" remote 2>/dev/null; } | awk 'NF && !seen[$0]++' >"$TMP/remotes"
+  while IFS= read -r r; do
+    u=$(g -C "$MAIN" config --get "remote.$r.url" 2>/dev/null) || continue
+    s=$(github_slug "$u")
+    [ -n "$s" ] && printf '%s\n' "$s" >>"$TMP/slugs"
+  done <"$TMP/remotes"
+  [ -s "$TMP/slugs" ] || return 0
+  while IFS= read -r s; do
+    printf '%s\n' "$s"
+    p=$(awk -F '\t' -v s="$s" '$1 == s { print $2; f = 1; exit } END { exit !f }' "$TMP/parents") || {
+      if ! gh_run "$TMP/gh.parent" api "repos/$s" --jq '.parent.full_name // empty'; then
+        return 1
+      fi
+      p=$(head -n 1 "$TMP/gh.parent")
+      printf '%s\t%s\n' "$s" "$p" >>"$TMP/parents"
+    }
+    [ -n "$p" ] && printf '%s\n' "$p"
+  done <"$TMP/slugs"
+  return 0
+}
+
+# Does GitHub's commit HEAD_OID lead to OID, so the merged head holds it?
+contains_tip() {
+  gh_run "$TMP/gh.cmp" api "repos/$1/compare/$HEAD_OID...$2" --jq .status || return 1
+  case $(head -n 1 "$TMP/gh.cmp") in identical | ahead) return 0 ;; esac
+  return 1
+}
+
+# Look up PRs in every repository pr_repos lists. A PR under the local
+# branch name, its upstream's name or its push ref's name is the branch's
+# own, whatever its state. A remote branch that holds the tip because a
+# push of this very tip went there, as `git push origin HEAD:<name>` with
+# no upstream does, is looked up too, but a PR there only keeps the
+# worktree while it is open, and only when no PR of the branch's own has
+# merged. Any other remote branch that holds the tip, such as a teammate's
+# branch or the parent's main, is someone else's, so its PRs never count.
+# Sets OPEN_PRS, MERGED_PR, MERGED_HOW and CLOSED_PR. Returns 1 when GitHub
+# could not answer, or when git could not list those branches.
+pr_state() {
+  local s n kind num state oid draft ref pushed=""
+  OPEN_PRS="" MERGED_PR="" MERGED_HOW="" CLOSED_PR=""
+  if ! pr_repos >"$TMP/repos.raw"; then
+    GH_FAILS=$((GH_FAILS + 1))
+    return 1
+  fi
+  awk 'NF && !seen[$0]++' "$TMP/repos.raw" >"$TMP/repos"
+  if ! g -C "$MAIN" for-each-ref --contains "$HEAD_OID" --format='%(refname)' \
+    refs/remotes >"$TMP/names.remote" 2>/dev/null; then
+    echo "git could not list the remote branches that hold $HEAD_OID" >"$TMP/gh.err"
+    return 1
+  fi
+  {
+    printf '%s\n' "$BR"
+    n=$(g -C "$MAIN" config --get "branch.$BR.merge" 2>/dev/null)
+    [ -n "$n" ] && printf '%s\n' "${n#refs/heads/}"
+    n=$(g -C "$MAIN" rev-parse --symbolic-full-name "$BR@{push}" 2>/dev/null)
+    case $n in refs/remotes/*/?*) printf '%s\n' "${n#refs/remotes/*/}" ;; esac
+  } | awk 'NF && !seen[$0]++' >"$TMP/names"
+  # A push writes "update by push" in the remote-tracking branch's reflog.
+  while IFS= read -r ref; do
+    n=${ref#refs/remotes/*/}
+    [ "$n" = HEAD ] && continue
+    grep -Fxq -- "$n" "$TMP/names" && continue
+    H=$HEAD_OID awk -F '\t' '{ split($1, f, " ") }
+      f[2] == ENVIRON["H"] && $2 == "update by push" { found = 1; exit }
+      END { exit !found }' "$COMMON/logs/$ref" 2>/dev/null && printf '%s\n' "$n"
+  done <"$TMP/names.remote" | awk '!seen[$0]++' >"$TMP/names.pushed"
+  awk 'FILENAME == ARGV[1] { print "own\t" $0; next } { print "pushed\t" $0 }' \
+    "$TMP/names" "$TMP/names.pushed" >"$TMP/names.all"
+  while IFS= read -r s; do
+    while IFS="$TAB" read -r kind n; do
+      if ! gh_run "$TMP/gh.out" pr list -R "$s" --head "$n" --state all --limit 100 \
+        --json number,state,headRefOid,isDraft \
+        --jq '.[] | "\(.number)\t\(.state)\t\(.headRefOid)\t\(.isDraft)"'; then
+        GH_FAILS=$((GH_FAILS + 1))
+        return 1
+      fi
+      GH_OK=$((GH_OK + 1))
+      while IFS="$TAB" read -r num state oid draft; do
+        [ -n "$num" ] || continue
+        if [ "$kind" = pushed ]; then
+          if [ "$state" = OPEN ]; then
+            if [ "$draft" = true ]; then pushed="$pushed $s#$num (draft)"
+            else pushed="$pushed $s#$num"; fi
+          fi
+          continue
+        fi
+        case $state in
+          OPEN)
+            if [ "$draft" = true ]; then
+              OPEN_PRS="$OPEN_PRS $s#$num (draft)"
+            else
+              OPEN_PRS="$OPEN_PRS $s#$num"
+            fi
+            ;;
+          MERGED)
+            if [ "$oid" = "$HEAD_OID" ]; then
+              MERGED_PR="$s#$num" MERGED_HOW=exact
+            elif [ "$MERGED_HOW" != exact ] && [ -z "$MERGED_PR" ] && contains_tip "$s" "$oid"; then
+              MERGED_PR="$s#$num" MERGED_HOW=ancestor
+            fi
+            ;;
+          CLOSED) [ "$oid" = "$HEAD_OID" ] && CLOSED_PR="$s#$num" ;;
+        esac
+      done <"$TMP/gh.out"
+    done <"$TMP/names.all"
+  done <"$TMP/repos"
+  [ -z "$MERGED_PR" ] && OPEN_PRS="$OPEN_PRS$pushed"
+  return 0
+}
+
+default_ref() {
+  local r
+  for r in "refs/remotes/$1/HEAD" "refs/remotes/$1/main" "refs/remotes/$1/master"; do
+    if g -C "$MAIN" rev-parse -q --verify "$r^{commit}" >/dev/null 2>&1; then
+      printf '%s\n' "$r"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Remove empty folders left above a removed worktree, but never a direct
+# child of the root: ~/worktrees/<repo> stays, because clearing a missing
+# entry requires that folder to exist on this machine.
+rmdir_empty_parents() {
+  local d
+  d=$(dirname -- "$1")
+  while [ "${d#"$ROOT"/*/}" != "$d" ]; do
+    rmdir -- "$d" 2>/dev/null || break
+    d=$(dirname -- "$d")
+  done
+}
+
+delete_branch() {
+  local b=$1 why=$2 cur
+  if [ "$DELETE_BRANCHES" != 1 ]; then
+    echo "branch kept (--keep-branches)"
+    return
+  fi
+  cur=$(g -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null)
+  case $b in
+    main | master | "$cur")
+      echo "branch kept (default or main checkout branch)"
+      return
+      ;;
+  esac
+  if g -C "$MAIN" worktree list --porcelain 2>/dev/null |
+    B="branch refs/heads/$b" S1="$WT" S2="$WT_STORED" awk '
+      /^worktree / { w = substr($0, 10) }
+      $0 == ENVIRON["B"] && w != ENVIRON["S1"] && w != ENVIRON["S2"] { found = 1 }
+      END { exit !found }'; then
+    echo "branch kept (checked out in another worktree)"
+    return
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    echo "would delete branch ($why)"
+    return
+  fi
+  # Compare-and-delete: only if the branch still points at the tip checked above.
+  if g -C "$MAIN" update-ref -m "$PROG: $why" -d "refs/heads/$b" "$HEAD_OID" 2>/dev/null; then
+    g -C "$MAIN" config --remove-section "branch.$b" 2>/dev/null
+    echo "branch deleted ($why)"
+  else
+    echo "branch kept (it moved since the check)"
+  fi
+}
+
+# ----------------------------------------------------------- decisions
+
+remove_worktree() {
+  # remove_worktree REASON BRANCH-RULE KIND, where KIND is merged, default
+  # or none. BRANCH-RULE empty means the branch stays.
+  local reason=$1 branch_rule=$2 kind=$3 ignored size out note n orph extra=""
+  local bnote=""
+  # Re-check right before acting: the PR lookup can take a while.
+  if [ "$(g -C "$WT" rev-parse -q --verify HEAD 2>/dev/null)" != "$HEAD_OID" ]; then
+    keep "HEAD moved during the run"
+    return
+  fi
+  if n=$(dirty_reason); then
+    keep "$n, which appeared during the run"
+    return
+  fi
+  collect_cwds
+  if in_use "$WT"; then
+    keep "a process started using it during the run"
+    return
+  fi
+  # Reflogs go with the worktree (its HEAD) and with a deleted branch.
+  if [ -n "$BR" ] && [ -n "$branch_rule" ] && [ "$DELETE_BRANCHES" = 1 ]; then
+    [ "$kind" = merged ] && extra=$HEAD_OID
+    if ! orph=$(orphans "$ADMIN" drop-branch "$extra"); then
+      keep_unread "could not read its reflogs"
+      return
+    fi
+    if [ -n "$orph" ]; then
+      if [ "$kind" = merged ]; then
+        bnote=" | reflog-only commits dropped with the branch: $(count_lines "$orph") ($(short_oids "$orph"))"
+      else
+        branch_rule=""
+        bnote=" | branch kept: its reflog holds $(count_lines "$orph") commit(s) found nowhere else ($(short_oids "$orph"))"
+      fi
+    fi
+  fi
+  # A merged branch takes only its own reflog's commits with it. In
+  # keep-branch mode the branch's reflog is set aside, so what is left is
+  # what only the worktree's HEAD reflog holds: work on a detached HEAD or
+  # on a branch since deleted, which the merged PR never held.
+  if [ -z "$BR" ] || [ -z "$branch_rule" ] || [ "$DELETE_BRANCHES" != 1 ] || [ "$kind" = merged ]; then
+    if ! orph=$(orphans "$ADMIN" keep-branch); then
+      keep_unread "could not read its reflogs"
+      return
+    fi
+    if [ -n "$orph" ]; then
+      keep "its HEAD reflog holds $(count_lines "$orph") commit(s) on no branch or remote ($(short_oids "$orph")), idle ${IDLE}d"
+      return
+    fi
+  fi
+  ignored=$(g -C "$WT" status --porcelain=v1 --ignored=traditional --untracked-files=normal 2>/dev/null |
+    sed -n 's/^!! //p' | head -n 8 | tr '\n' ' ' | sed 's/ *$//')
+  size=$(du -sh -- "$WT" 2>/dev/null | awk '{ print $1 }')
+  note="idle ${IDLE}d (last use: $LAST_SRC) | size=${size:-?}"
+  [ -n "$FUTURE_NOTE" ] && note="$note | $FUTURE_NOTE"
+  [ -n "$ignored" ] && note="$note | ignored files deleted with it: $ignored"
+  if [ "$DRY_RUN" = 1 ]; then
+    REMOVED=$((REMOVED + 1))
+    if [ -n "$branch_rule" ] && [ -n "$BR" ]; then
+      note="$note | $(delete_branch "$BR" "$branch_rule")"
+    fi
+    log "WOULD   $WT | $reason | $note$bnote | branch=${BR:-detached}"
+    return
+  fi
+  if ! out=$(g -C "$MAIN" worktree remove -- "$WT" 2>&1); then
+    fail "git worktree remove refused: $(printf '%s' "$out" | tr '\n' ' ')"
+    return
+  fi
+  REMOVED=$((REMOVED + 1))
+  rmdir_empty_parents "$WT"
+  if [ -n "$BR" ]; then
+    if [ -n "$branch_rule" ]; then
+      note="$note | $(delete_branch "$BR" "$branch_rule")"
+    elif [ -z "$bnote" ]; then
+      note="$note | branch kept"
+    fi
+  fi
+  log "REMOVED $WT | $reason | $note$bnote | branch=${BR:-detached}"
+}
+
+handle_missing() {
+  # The directory is gone but the entry in <main>/.git/worktrees remains.
+  # Clear just that entry with `git worktree remove`, never with prune.
+  local d gd n rel top x
+  ADMIN=""
+  for d in "$COMMON"/worktrees/*/; do
+    d=${d%/}
+    [ -f "$d/gitdir" ] || continue
+    gd=$(head -n 1 "$d/gitdir" 2>/dev/null)
+    case $gd in /*) ;; *) gd="$d/$gd" ;; esac
+    if [ "$(canon "${gd%/.git}")" = "$WT" ]; then
+      ADMIN=$(norm_dir "$d")
+      break
+    fi
+  done
+  if [ -z "$ADMIN" ]; then
+    keep "directory missing and its admin entry was not found"
+    return
+  fi
+  # Moved with mv: a folder on disk still points at this admin dir, so
+  # clearing the entry would break it. `git worktree repair` relinks it.
+  x=$(other_pointer "$ADMIN" "$WT")
+  if [ -n "$x" ]; then
+    keep "directory missing, but $x points at this entry (moved?); relink with: git -C '$MAIN' worktree repair '$x'"
+    return
+  fi
+  last_use "$ADMIN" ""
+  if [ "$LAST_USE" -gt 0 ]; then IDLE=$(days_since "$LAST_USE"); fi
+  if [ "$CLEAR_MISSING" != 1 ]; then
+    keep "directory missing; entry kept (--keep-missing)"
+    return
+  fi
+  # On another machine every one of these paths is missing. Requiring the
+  # repo folder under the root to exist here keeps a run there from
+  # clearing them. The job never removes that folder itself.
+  rel=${WT#"$ROOT"/}
+  case $rel in */*) top="$ROOT/${rel%%/*}" ;; *) top=$ROOT ;; esac
+  if [ ! -d "$top" ]; then
+    keep "directory missing and so is $top; entry kept"
+    return
+  fi
+  if [ "$LOCKED" = 1 ] || [ -e "$ADMIN/locked" ]; then
+    keep "directory missing, entry locked: $(head -n 1 "$ADMIN/locked" 2>/dev/null)"
+    return
+  fi
+  if n=$(busy_state "$ADMIN"); then
+    keep "directory missing, entry kept: $n"
+    return
+  fi
+  if [ "$LAST_USE" -eq 0 ]; then
+    keep "directory missing, and the entry's last use could not be read"
+    return
+  fi
+  if [ "$IDLE" -lt "$TTL_DAYS" ]; then
+    keep "directory missing, entry used ${IDLE}d ago (TTL ${TTL_DAYS}d)"
+    return
+  fi
+  if ! n=$(orphans "$ADMIN" keep-branch); then
+    keep_unread "directory missing, and its reflogs could not be read"
+    return
+  fi
+  if [ -n "$n" ]; then
+    keep "directory missing, HEAD reflog holds $(count_lines "$n") commit(s) on no branch or remote ($(short_oids "$n"))"
+    return
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    REMOVED=$((REMOVED + 1))
+    log "WOULD   $WT | stale entry, directory already gone, idle ${IDLE}d | branch=${BR:-detached}"
+    return
+  fi
+  if ! d=$(g -C "$MAIN" worktree remove -- "$WT_STORED" 2>&1); then
+    fail "could not clear stale entry: $(printf '%s' "$d" | tr '\n' ' ')"
+    return
+  fi
+  REMOVED=$((REMOVED + 1))
+  log "REMOVED $WT | stale entry cleared, directory was already gone, idle ${IDLE}d | branch ${BR:-detached} kept"
+}
+
+# Judge the last use of WT. Sets IDLE and returns 0 once it is TTL days
+# old; otherwise keeps the entry and returns 1.
+past_ttl() {
+  local t
+  last_use "$ADMIN" "$WT" "$WT_STORED"
+  if [ "$LAST_USE" -eq 0 ]; then
+    keep "could not determine last use${FUTURE_NOTE:+ ($FUTURE_NOTE)}"
+    return 1
+  fi
+  if [ "$LAST_USE" -gt "$NOW" ]; then
+    keep "last use is in the future ($LAST_SRC); clock skew?"
+    return 1
+  fi
+  IDLE=$(days_since "$LAST_USE")
+  if [ "$IDLE" -lt "$TTL_DAYS" ]; then
+    # Kept, but only for a file that the repo's .gitignore hides and that is
+    # not a known cache: the job cannot tell whether a person or a tool
+    # wrote it, so a person should look.
+    if [ "$LAST_SRC" = "ignored file edit" ] &&
+      { [ "$OTHER_USE" -eq 0 ] || [ "$(days_since "$OTHER_USE")" -ge "$TTL_DAYS" ]; }; then
+      if [ "$OTHER_USE" -eq 0 ]; then t="nothing else shows when it was last used"
+      else t="nothing else shows use for $(days_since "$OTHER_USE")d"; fi
+      attention "$WT | kept: ${TAG:-}its last use is $IGNORED_EDIT, a file its .gitignore hides, which changed ${IDLE}d ago, and $t; the job counts that as use, so check whether a person or a tool wrote it"
+    fi
+    if [ $((NOW - LAST_USE)) -ge $(((TTL_DAYS - 1) * 86400)) ]; then
+      keep "used ${IDLE}d ago ($LAST_SRC); reaches the ${TTL_DAYS}d TTL within a day"
+    else
+      keep "used ${IDLE}d ago ($LAST_SRC), TTL ${TTL_DAYS}d"
+    fi
+    return 1
+  fi
+  # A file below it that the job could not see may have changed since.
+  if [ -n "$UNREAD_PATH" ]; then
+    keep_noted "could not read all of $UNREAD_PATH, so its last use is unknown (idle ${IDLE}d otherwise)" \
+      "check the permissions there"
+    return 1
+  fi
+  return 0
+}
+
+evaluate() {
+  local n unpushed def reason url x
+  if [ "$PRUNABLE" = 1 ] || [ ! -e "$WT" ]; then
+    handle_missing
+    return
+  fi
+  if [ ! -f "$WT/.git" ]; then
+    keep "no .git file at the worktree root"
+    return
+  fi
+  ADMIN=$(g -C "$WT" rev-parse --path-format=absolute --git-dir 2>/dev/null)
+  [ -n "$ADMIN" ] && ADMIN=$(norm_dir "$ADMIN")
+  case $ADMIN in
+    "$COMMON"/worktrees/?*) ;;
+    *) keep "admin dir is not under $COMMON/worktrees (${ADMIN:-unresolved})"; return ;;
+  esac
+  if [ "$LOCKED" = 1 ] || [ -e "$ADMIN/locked" ]; then
+    keep "locked: $(head -n 1 "$ADMIN/locked" 2>/dev/null)"
+    return
+  fi
+  if n=$(busy_state "$ADMIN"); then
+    keep "$n"
+    return
+  fi
+  if in_use "$WT"; then
+    keep "in use (a process or Claude Code session has its cwd here)"
+    return
+  fi
+  past_ttl || return
+  if n=$(dirty_reason); then
+    keep "$n, idle ${IDLE}d"
+    return
+  fi
+  if n=$(nested_repo); then
+    keep "contains another repository or worktree ($n), which removal would delete, idle ${IDLE}d"
+    return
+  fi
+  x=$(other_pointer "$ADMIN" "$WT")
+  if [ -n "$x" ]; then
+    keep "$x also points at this worktree's admin dir (a copy?), so removal would break it, idle ${IDLE}d"
+    return
+  fi
+  # Detached HEAD: safe only if every commit it or its reflog names is on a
+  # branch or remote.
+  if [ -z "$BR" ]; then
+    if ! n=$(orphans "$ADMIN" keep-branch); then
+      keep_unread "detached HEAD, and its reflog could not be read, idle ${IDLE}d"
+    elif [ -n "$n" ]; then
+      keep "detached HEAD with $(count_lines "$n") commit(s) on no branch or remote ($(short_oids "$n")), idle ${IDLE}d"
+    else
+      remove_worktree "detached HEAD, every commit is on a branch or remote" "" none
+    fi
+    return
+  fi
+
+  REMOTE=$(g -C "$MAIN" config --get "branch.$BR.remote" 2>/dev/null)
+  case $REMOTE in '' | .) REMOTE=origin ;; esac
+  if [ -z "$HASREM" ]; then
+    # --exclude takes the name without refs/heads/ when it precedes --branches.
+    unpushed=$(g -C "$MAIN" rev-list --count "$HEAD_OID" --not \
+      --exclude="$BR" --branches --tags 2>/dev/null)
+    case ${unpushed:-x} in *[!0-9]* | x) keep "could not count unpushed commits"; return ;; esac
+    if [ "$unpushed" -ne 0 ]; then
+      keep "$unpushed commit(s) only on this branch (repo has no remote), idle ${IDLE}d"
+    else
+      remove_worktree "every commit is on another branch or tag (repo has no remote)" "" none
+    fi
+    return
+  fi
+
+  # Tip already in the remote's default branch: nothing on the branch is
+  # anywhere else, whatever the PR host or gh state.
+  if def=$(default_ref "$REMOTE") &&
+    g -C "$MAIN" merge-base --is-ancestor "$HEAD_OID" "$def" 2>/dev/null; then
+    remove_worktree "tip already in $def" "tip already in $def" default
+    return
+  fi
+
+  unpushed=$(g -C "$MAIN" rev-list --count "$HEAD_OID" --not --remotes 2>/dev/null)
+  case ${unpushed:-x} in *[!0-9]* | x) keep "could not count unpushed commits"; return ;; esac
+
+  url=$(g -C "$MAIN" config --get "remote.$REMOTE.url" 2>/dev/null)
+  if [ -z "$url" ]; then
+    keep "branch remote '$REMOTE' has no URL, so PR state cannot be checked, idle ${IDLE}d"
+    return
+  fi
+  if [ -z "$(github_slug "$url")" ]; then
+    keep "remote '$REMOTE' is not on github.com, so PR state cannot be checked, idle ${IDLE}d"
+    return
+  fi
+  if ! pr_state; then
+    keep "PR state unknown ($(head -n 1 "$TMP/gh.err" 2>/dev/null)), idle ${IDLE}d"
+    return
+  fi
+  if [ -n "$OPEN_PRS" ]; then
+    keep "PR${OPEN_PRS} open, idle ${IDLE}d"
+    return
+  fi
+  if [ -n "$MERGED_PR" ]; then
+    if [ "$MERGED_HOW" = exact ]; then
+      reason="PR $MERGED_PR merged at this exact tip"
+    else
+      reason="PR $MERGED_PR merged, and its head contains this tip"
+    fi
+    remove_worktree "$reason" "PR $MERGED_PR merged" merged
+    return
+  fi
+  if [ "$unpushed" -ne 0 ]; then
+    keep "$unpushed commit(s) not on any remote and no merged PR contains this tip, idle ${IDLE}d"
+    return
+  fi
+  reason="every commit is on a remote"
+  [ -n "$CLOSED_PR" ] && reason="PR $CLOSED_PR closed unmerged; $reason"
+  remove_worktree "$reason" "" none
+}
+
+# ------------------------------------------------------------ clones
+
+# What a clone's refs and HEAD are now, to see whether they moved.
+clone_refs() {
+  g -C "$WT" for-each-ref --format='%(refname) %(objectname)' 2>/dev/null
+  g -C "$WT" symbolic-ref -q HEAD 2>/dev/null
+  g -C "$WT" rev-parse -q --verify HEAD 2>/dev/null
+}
+
+# Commits that removing a clone would lose: those its HEAD, local branches
+# and reflogs name that no remote-tracking branch holds, less what was
+# rewritten (see rewritten_oids) and whatever a merged PR's head in SAFE
+# holds. A branch with a merged PR, listed in $TMP/merged-logs by its
+# reflog, takes its own reflog's commits with it; those are written to
+# $TMP/orphans.dropped for the log. HEAD and the branch tips are also
+# judged on their own, so no rewritten commit can hide them. Tags are left
+# out: with fetch.pruneTags a local-only tag goes on the next fetch. Fails
+# if git cannot tell or a reflog cannot be read.
+clone_orphans() {
+  local f rc o=$TMP/orphans
+  : >"$o.gone" && : >"$o.live" && : >"$o.kept" && : >"$o.hide" && : >"$o.mine" &&
+    : >"$o.out" && : >"$o.dropped" && : >"$o.logs" || return 1
+  printf '%s\n' "$HEAD_OID" >>"$o.live"
+  g -C "$WT" for-each-ref --format='%(objectname)' refs/heads >>"$o.live" 2>/dev/null || return 1
+  printf '%s\n' "$SAFE" | awk 'NF { print "^" $1 }' >>"$o.kept"
+  reflog_missing "$COMMON/logs"
+  rc=$?
+  [ "$rc" = 2 ] && return 1
+  if [ "$rc" = 1 ]; then
+    find "$COMMON/logs" -path "$COMMON/logs/refs/remotes" -prune -o -type f -print \
+      >"$o.logs" 2>/dev/null || return 1
+  fi
+  while IFS= read -r f; do
+    if grep -Fxq -- "$f" "$TMP/merged-logs"; then
+      read_reflog "$f" "$o.mine" "$o.hide" || return 1
+    else
+      read_reflog "$f" "$o.gone" "$o.hide" || return 1
+    fi
+  done <"$o.logs"
+  sed 's/^/^/' "$o.mine" >"$o.drop" || return 1
+  { cat "$o.live" "$o.kept"; } | sort -u |
+    g_stdin -C "$WT" rev-list --ignore-missing --stdin --not --remotes >>"$o.out" || return 1
+  sort -u "$o.live" "$o.gone" "$o.kept" "$o.hide" "$o.drop" |
+    g_stdin -C "$WT" rev-list --ignore-missing --stdin --not --remotes >>"$o.out" || return 1
+  if [ -s "$o.mine" ]; then
+    sort -u "$o.live" "$o.gone" "$o.mine" "$o.kept" "$o.hide" |
+      g_stdin -C "$WT" rev-list --ignore-missing --stdin --not --remotes >"$o.all" || return 1
+    awk 'FILENAME == ARGV[1] { seen[$0] = 1; next } !seen[$0]' "$o.out" "$o.all" >"$o.dropped"
+  fi
+  awk '!seen[$0]++' "$o.out"
+}
+
+# A full clone in the sweep folder, as AGENTS.md has agents make of a laptop
+# repo. It goes on a worktree's terms, but no main checkout keeps its refs
+# and no `git worktree remove` can refuse it, so its .git must hold nothing
+# that is not on GitHub: no stash or other refs, no worktrees of its own,
+# and every local branch in its remote's default branch, pushed with no open
+# PR, or in a merged PR.
+evaluate_clone() {
+  local n gd b oid def url unpushed refs merged="" head_br head_oid reason bnote=""
+  SAFE=""
+  gd=$(g -C "$WT" rev-parse --path-format=absolute --git-dir 2>/dev/null)
+  [ -n "$gd" ] && gd=$(norm_dir "$gd")
+  if [ -z "$gd" ] || [ "$gd" != "$WT/.git" ]; then
+    keep "git cannot read its .git (${gd:-unresolved})"
+    attention "$WT | a folder whose .git git cannot read; the job leaves it alone"
+    return
+  fi
+  MAIN=$WT COMMON=$gd ADMIN=$gd
+  HEAD_OID=$(g -C "$WT" rev-parse -q --verify HEAD 2>/dev/null)
+  BR=$(g -C "$WT" symbolic-ref -q --short HEAD 2>/dev/null)
+  if [ "$(g -C "$WT" config --get extensions.refStorage 2>/dev/null)" = reftable ]; then
+    keep "reftable repository; this job reads files-backend reflogs"
+    attention "$WT | a reftable clone, so it is never cleaned"
+    return
+  fi
+  if n=$(busy_state "$ADMIN" clone); then
+    keep "$n"
+    return
+  fi
+  if [ -n "$(find "$COMMON/worktrees" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
+    keep "it has worktrees of its own, which removal would break"
+    return
+  fi
+  if in_use "$WT"; then
+    keep "in use (a process or Claude Code session has its cwd here)"
+    return
+  fi
+  past_ttl || return
+  HASREM=$(g -C "$WT" remote 2>/dev/null)
+  if [ -z "$HASREM" ]; then
+    keep "no remote, so its commits are nowhere else, idle ${IDLE}d"
+    return
+  fi
+  if [ -z "$HEAD_OID" ]; then
+    keep "HEAD names no commit, idle ${IDLE}d"
+    return
+  fi
+  if n=$(dirty_reason); then
+    keep "$n, idle ${IDLE}d"
+    return
+  fi
+  if ! refs=$(g -C "$WT" for-each-ref --format='%(refname)' 2>/dev/null); then
+    keep "could not list its refs, idle ${IDLE}d"
+    return
+  fi
+  n=$(printf '%s\n' "$refs" | grep -v -E '^refs/(heads|remotes|tags)/' | head -n 1)
+  if [ -n "$n" ]; then
+    keep "has $n, which removal would delete, idle ${IDLE}d"
+    return
+  fi
+  if n=$(nested_repo); then
+    keep "contains another repository or worktree ($n), which removal would delete, idle ${IDLE}d"
+    return
+  fi
+  if [ -z "$BR" ]; then
+    n=$(g -C "$WT" rev-list --count "$HEAD_OID" --not --remotes 2>/dev/null)
+    case ${n:-x} in *[!0-9]* | x) keep "could not count unpushed commits"; return ;; esac
+    if [ "$n" -ne 0 ]; then
+      keep "detached HEAD with $n commit(s) on no remote, idle ${IDLE}d"
+      return
+    fi
+  fi
+  CLONE_REFS=$(clone_refs)
+  if ! g -C "$WT" for-each-ref --format='%(refname:lstrip=2)%09%(objectname)' refs/heads \
+    >"$TMP/cbranches" 2>/dev/null; then
+    keep "could not list its branches, idle ${IDLE}d"
+    return
+  fi
+  head_br=$BR head_oid=$HEAD_OID
+  : >"$TMP/merged-logs"
+  # BR and HEAD_OID name each branch in turn, for pr_state and the log.
+  while IFS="$TAB" read -r -u 4 b oid; do
+    [ -n "$b" ] || continue
+    BR=$b HEAD_OID=$oid
+    REMOTE=$(g -C "$WT" config --get "branch.$b.remote" 2>/dev/null)
+    case $REMOTE in '' | .) REMOTE=origin ;; esac
+    if def=$(default_ref "$REMOTE") &&
+      g -C "$WT" merge-base --is-ancestor "$oid" "$def" 2>/dev/null; then
+      continue
+    fi
+    unpushed=$(g -C "$WT" rev-list --count "$oid" --not --remotes 2>/dev/null)
+    case ${unpushed:-x} in *[!0-9]* | x) keep "could not count unpushed commits on $b"; return ;; esac
+    url=$(g -C "$WT" config --get "remote.$REMOTE.url" 2>/dev/null)
+    if [ -z "$url" ]; then
+      keep "branch $b: remote '$REMOTE' has no URL, so PR state cannot be checked, idle ${IDLE}d"
+      return
+    fi
+    if [ -z "$(github_slug "$url")" ]; then
+      keep "branch $b: remote '$REMOTE' is not on github.com, so PR state cannot be checked, idle ${IDLE}d"
+      return
+    fi
+    if ! pr_state; then
+      keep "PR state unknown ($(head -n 1 "$TMP/gh.err" 2>/dev/null)), idle ${IDLE}d"
+      return
+    fi
+    if [ -n "$OPEN_PRS" ]; then
+      keep "PR${OPEN_PRS} open, idle ${IDLE}d"
+      return
+    fi
+    if [ -n "$MERGED_PR" ]; then
+      merged="${merged:+$merged, }$MERGED_PR"
+      SAFE="$SAFE$oid
+"
+      printf '%s\n' "$COMMON/logs/refs/heads/$b" >>"$TMP/merged-logs"
+      continue
+    fi
+    if [ "$unpushed" -ne 0 ]; then
+      keep "$unpushed commit(s) on branch $b not on any remote and no merged PR contains its tip, idle ${IDLE}d"
+      return
+    fi
+  done 4<"$TMP/cbranches"
+  BR=$head_br HEAD_OID=$head_oid
+  # A merged branch's own reflog-only commits go with it, as they do for a
+  # worktree. Commits that only another reflog holds keep the clone.
+  if ! n=$(clone_orphans); then
+    keep_unread "could not read its reflogs, idle ${IDLE}d"
+    return
+  fi
+  if [ -n "$n" ]; then
+    keep "its reflogs hold $(count_lines "$n") commit(s) on no remote ($(short_oids "$n")), idle ${IDLE}d"
+    return
+  fi
+  n=$(cat "$TMP/orphans.dropped" 2>/dev/null)
+  if [ -n "$n" ]; then
+    bnote=" | reflog-only commits dropped with it: $(count_lines "$n") ($(short_oids "$n"))"
+  fi
+  reason="every local branch is on a remote"
+  [ -n "$merged" ] && reason="PR $merged merged, and every other local branch is on a remote"
+  remove_clone "$reason" "$bnote"
+}
+
+remove_clone() {
+  local reason=$1 bnote=$2 ignored size note out n
+  # Re-check right before acting: the PR lookup can take a while.
+  if [ "$(clone_refs)" != "$CLONE_REFS" ]; then
+    keep "its refs moved during the run"
+    return
+  fi
+  if n=$(dirty_reason); then
+    keep "$n, which appeared during the run"
+    return
+  fi
+  collect_cwds
+  if in_use "$WT"; then
+    keep "a process started using it during the run"
+    return
+  fi
+  ignored=$(g -C "$WT" status --porcelain=v1 --ignored=traditional --untracked-files=normal 2>/dev/null |
+    sed -n 's/^!! //p' | head -n 8 | tr '\n' ' ' | sed 's/ *$//')
+  size=$(du -sh -- "$WT" 2>/dev/null | awk '{ print $1 }')
+  note="idle ${IDLE}d (last use: $LAST_SRC) | size=${size:-?}"
+  [ -n "$FUTURE_NOTE" ] && note="$note | $FUTURE_NOTE"
+  [ -n "$ignored" ] && note="$note | ignored files went with it: $ignored"
+  if [ "$DRY_RUN" = 1 ]; then
+    REMOVED=$((REMOVED + 1))
+    log "WOULD   $WT | $TAG$reason | $note$bnote | would move it to the Trash | branch=${BR:-detached}"
+    return
+  fi
+  if [ ! -x "$TRASH" ]; then
+    fail "no $TRASH to move it to the Trash with"
+    return
+  fi
+  if ! out=$("$TRASH" "$WT" 2>&1) || [ -e "$WT" ]; then
+    fail "could not move it to the Trash: $(printf '%s' "${out:-it is still there}" | tr '\n' ' ')"
+    return
+  fi
+  REMOVED=$((REMOVED + 1))
+  rmdir_empty_parents "$WT"
+  log "REMOVED $WT | $TAG$reason | $note$bnote | moved to the Trash | branch=${BR:-detached}"
+}
+
+# One record of `git worktree list --porcelain -z`. The first record is the
+# main worktree, which is never touched.
+handle_record() {
+  local root tool label rest
+  if [ "$FIRST" = 1 ] || [ "$BARE" = 1 ] || [ -z "$WT" ]; then
+    FIRST=0
+    return
+  fi
+  WT_STORED=$WT
+  WT=$(canon "$WT")
+  printf '%s\n' "$WT" >>"$TMP/registered"
+  root=""
+  while IFS= read -r rest; do
+    [ -n "$rest" ] || continue
+    case $WT in "$rest"/?*) root=$rest; break ;; esac
+  done <"$TMP/roots"
+  if [ -n "$root" ]; then
+    ROOT=$root
+    evaluate
+    return
+  fi
+  while IFS='|' read -r tool label; do
+    [ -n "$tool" ] || continue
+    case $WT in
+      "$tool"/?*)
+        TOOL_LEFT=$((TOOL_LEFT + 1))
+        printf '%s\n' "$tool|$label" >>"$TMP/toolcount"
+        return
+        ;;
+    esac
+  done <"$TMP/toolroots"
+}
+
+reset_record() {
+  WT="" WT_STORED="" HEAD_OID="" BR="" LOCKED=0 PRUNABLE=0 BARE=0 IDLE=""
+  ADMIN="" REMOTE="" FUTURE_NOTE="" LAST_SRC=none KIND=worktree TAG=""
+}
+
+# One main checkout: walk its worktree list and judge each entry.
+process_main() {
+  local line
+  MAIN=$1
+  COMMON=$(g -C "$MAIN" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+    log "SKIP    $MAIN | not a readable git repository"
+    return
+  }
+  COMMON=$(norm_dir "$COMMON")
+  # The reflog checks read files under .git/logs, which reftable lacks.
+  if [ "$(g -C "$MAIN" config --get extensions.refStorage 2>/dev/null)" = reftable ]; then
+    log "SKIP    $MAIN | reftable repository; this job reads files-backend reflogs"
+    attention "$MAIN | reftable repository, so its worktrees are never cleaned"
+    return
+  fi
+  HASREM=$(g -C "$MAIN" remote 2>/dev/null)
+  FIRST=1
+  reset_record
+  while IFS= read -r -d '' -u 3 line; do
+    case $line in
+      "") handle_record; reset_record ;;
+      "worktree "*) WT=${line#worktree } ;;
+      "HEAD "*) HEAD_OID=${line#HEAD } ;;
+      "branch refs/heads/"*) BR=${line#branch refs/heads/} ;;
+      bare) BARE=1 ;;
+      locked | "locked "*) LOCKED=1 ;;
+      prunable | "prunable "*) PRUNABLE=1 ;;
+    esac
+  done 3< <(g -C "$MAIN" worktree list --porcelain -z 2>/dev/null)
+  if [ -n "$WT" ]; then
+    handle_record
+    reset_record
+  fi
+}
+
+# Find worktree folders on disk, so moved, broken or unregistered ones are
+# reported and so main checkouts outside the repos root are still found.
+walk() {
+  local c
+  for c in "$1"/*/; do
+    [ -d "$c" ] || continue
+    c=${c%/}
+    [ -L "$c" ] && continue
+    if [ -f "$c/.git" ]; then
+      printf '%s\n' "$c" >>"$TMP/found"
+    elif [ -e "$c/.git" ]; then
+      printf '%s\n' "$c" >>"$TMP/clones"
+    elif [ "$2" -lt "$MAX_DEPTH" ]; then
+      walk "$c" $(($2 + 1))
+    fi
+  done
+}
+
+# --check PATH: judge one worktree for the WorktreeRemove hook with the
+# checks a sweep makes before it removes one, less the TTL and the PR
+# lookup: a git operation in progress, changes and hidden edits, another
+# repository inside it, and commits that only its HEAD, its HEAD reflog or
+# a local tag holds. Then whether deleting its branch as well would lose
+# commits that only the branch or its reflog holds. Prints what would be
+# lost and what to do. Returns 0 when nothing would be, 3 when only the
+# branch must stay, and 1 when the worktree must stay.
+check_removal() {
+  local n
+  if ! WT=$(norm_dir "$1") || [ ! -f "$WT/.git" ]; then
+    echo "$1 is not a linked worktree"
+    return 1
+  fi
+  if ! COMMON=$(g -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
+    ! COMMON=$(norm_dir "$COMMON") ||
+    ! ADMIN=$(g -C "$WT" rev-parse --path-format=absolute --git-dir 2>/dev/null) ||
+    ! ADMIN=$(norm_dir "$ADMIN"); then
+    echo "git cannot read $WT"
+    return 1
+  fi
+  case $ADMIN in
+    "$COMMON"/worktrees/?*) ;;
+    *) echo "$WT is not a linked worktree"; return 1 ;;
+  esac
+  case $COMMON in */.git) MAIN=${COMMON%/.git} ;; *) MAIN=$COMMON ;; esac
+  if [ "$(g -C "$MAIN" config --get extensions.refStorage 2>/dev/null)" = reftable ]; then
+    echo "it is in a reftable repository, whose reflogs this check cannot read"
+    return 1
+  fi
+  HEAD_OID=$(g -C "$WT" rev-parse -q --verify HEAD 2>/dev/null)
+  BR=$(g -C "$WT" symbolic-ref -q --short HEAD 2>/dev/null)
+  HASREM=$(g -C "$MAIN" remote 2>/dev/null)
+  if n=$(busy_state "$ADMIN"); then
+    case $n in
+      'operation'*) echo "$n; finish or abort it first" ;;
+      'git lock'*) echo "$n; let that git command finish, or delete the lock if none is running" ;;
+      *) echo "$n; move that work out first" ;;
+    esac
+    return 1
+  fi
+  if n=$(dirty_reason); then
+    case $n in
+      'edit hidden'*) echo "$n; clear the flag with git update-index --no-skip-worktree --no-assume-unchanged, then commit or discard the edit" ;;
+      *) echo "$n; commit, copy out or discard them first" ;;
+    esac
+    return 1
+  fi
+  g -C "$MAIN" worktree list --porcelain -z 2>/dev/null | tr '\0' '\n' |
+    sed -n 's/^worktree //p' | while IFS= read -r n; do canon "$n"; done >"$TMP/allwt"
+  if n=$(nested_repo); then
+    echo "it contains another repository or worktree ($n), which removal would delete; push its work or move it out first"
+    return 1
+  fi
+  if ! n=$(orphans "$ADMIN" keep-branch); then
+    echo "git could not read its reflogs, so what removal would lose is unknown"
+    return 1
+  fi
+  if [ -n "$n" ]; then
+    printf '%s' "its HEAD or HEAD reflog holds $(count_lines "$n") commit(s) on no branch or remote ($(short_oids "$n")), which removal would lose; put them on a branch first"
+    if [ -n "$HASREM" ]; then
+      printf '%s\n' " and push it (a local tag will not do, since fetch.pruneTags deletes it on the next fetch)"
+    else
+      printf '\n'
+    fi
+    return 1
+  fi
+  [ -n "$BR" ] || return 0
+  if ! n=$(orphans "$ADMIN" drop-branch); then
+    echo "git could not read the reflog of branch $BR"
+    return 3
+  fi
+  if [ -n "$n" ]; then
+    echo "it or its reflog holds $(count_lines "$n") commit(s) on no other branch or remote ($(short_oids "$n"))"
+    return 3
+  fi
+  return 0
+}
+
+# ------------------------------------------------------------------ main
+
+# A check for the WorktreeRemove hook takes no lock and writes no log.
+if [ -n "$CHECK" ]; then
+  TMP=$(mktemp -d "${TMPDIR:-/tmp}/$PROG.XXXXXX") || exit 1
+  trap 'rm -r -- "$TMP" 2>/dev/null' EXIT
+  NOISE="$TMP/noise-excludes"
+  printf '%s\n' "$NOISE_PATTERNS" >"$NOISE"
+  check_removal "$CHECK"
+  exit
+fi
+
+mkdir -p -- "$STATE_DIR" "$(dirname -- "$LOG_FILE")" "$(dirname -- "$ATTENTION_FILE")" || exit 1
+if [ -f "$LOG_FILE" ] && [ "$(wc -l <"$LOG_FILE")" -gt "$LOG_MAX_LINES" ]; then
+  tail -n $((LOG_MAX_LINES / 2)) "$LOG_FILE" >"$LOG_FILE.tmp" && mv -- "$LOG_FILE.tmp" "$LOG_FILE"
+fi
+
+LOCK_DIR="$STATE_DIR/run.lock"
+if ! mkdir -- "$LOCK_DIR" 2>/dev/null; then
+  old=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+  if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+    log "SKIP    another run (pid $old) is still going"
+    exit 0
+  fi
+  rm -- "$LOCK_DIR/pid" 2>/dev/null
+  rmdir -- "$LOCK_DIR" 2>/dev/null
+  mkdir -- "$LOCK_DIR" || exit 1
+fi
+echo $$ >"$LOCK_DIR/pid"
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/$PROG.XXXXXX") || exit 1
+cleanup() {
+  rm -r -- "$TMP" 2>/dev/null
+  rm -- "$LOCK_DIR/pid" 2>/dev/null
+  rmdir -- "$LOCK_DIR" 2>/dev/null
+}
+trap cleanup EXIT
+for f in roots toolroots registered found clones toolcount mains allwt pointers \
+  parents attention cwds tcwd merged-logs; do
+  : >"$TMP/$f"
+done
+NOISE="$TMP/noise-excludes"
+printf '%s\n' "$NOISE_PATTERNS" >"$NOISE"
+# find's test for CACHE_NAMES, and for nested .git folders, which
+# nested_repo judges.
+PRUNE_NAMES=(-name .git)
+while IFS= read -r n; do
+  [ -n "$n" ] && PRUNE_NAMES+=(-o -name "$n")
+done <<EOF
+$CACHE_NAMES
+EOF
+
+NOW=$(date +%s)
+# Only an ignored file changed since this moment can make a worktree look
+# used inside the TTL.
+CUTOFF="$TMP/ttl-cutoff"
+touch -t "$(date -r $((NOW - TTL_DAYS * 86400)) +%Y%m%d%H%M.%S)" "$CUTOFF" || exit 1
+log "START   ttl=${TTL_DAYS}d dry_run=$DRY_RUN delete_branches=$DELETE_BRANCHES clear_missing=$CLEAR_MISSING git=$("$GIT" --version 2>/dev/null | cut -d' ' -f3)"
+
+while IFS= read -r r; do
+  [ -n "$r" ] || continue
+  if n=$(norm_dir "$r"); then
+    printf '%s\n' "$n" >>"$TMP/roots"
+  else
+    log "SKIP    $r | folder does not exist"
+  fi
+done <<EOF
+$ROOTS
+EOF
+while IFS='|' read -r r label; do
+  [ -n "$r" ] || continue
+  n=$(norm_dir "$r") || continue
+  printf '%s|%s\n' "$n" "$label" >>"$TMP/toolroots"
+done <<EOF
+$TOOL_ROOTS
+EOF
+if [ ! -s "$TMP/roots" ]; then
+  log "DONE    no folder to sweep"
+  exit 0
+fi
+
+# Every worktree's admin dir is under the repos folder, so when macOS denies
+# access to it, each healthy worktree would look broken. Stop before judging
+# any of them, and say why where a person will see it.
+if why=$(unreadable "$REPOS_ROOT"); then
+  printf '%s: cannot read %s: %s; give /bin/bash access to the Dropbox folder in Privacy & Security\n' \
+    "$PROG" "$REPOS_ROOT" "$why" >&2
+  attention "$REPOS_ROOT | cannot read the repositories folder ($why), so no worktree was judged; give /bin/bash access to the Dropbox folder in Privacy & Security"
+  write_attention
+  log "ABORT   cannot read $REPOS_ROOT: $why"
+  logger -t "$PROG" "aborted: cannot read $REPOS_ROOT: $why" 2>/dev/null
+  exit 1
+fi
+
+collect_cwds
+scan_transcripts
+
+while IFS= read -r r; do
+  walk "$r" 1
+done <"$TMP/roots"
+
+# Which admin dir each worktree folder on disk points at. Read before any
+# removal, so a moved or copied folder is known when its entry is judged.
+while IFS= read -r c; do
+  a=$(gitfile_target "$c") || continue
+  printf '%s\t%s\n' "$a" "$(norm_dir "$c")" >>"$TMP/pointers"
+done <"$TMP/found"
+
+# Main checkouts: those under the repos root that have linked worktrees,
+# plus the owners of every worktree found on disk.
+if [ -d "$REPOS_ROOT" ]; then
+  for d in "$REPOS_ROOT"/*/ "$REPOS_ROOT"/*/*/; do
+    [ -d "$d.git/worktrees" ] || continue
+    norm_dir "$d" >>"$TMP/mains"
+  done
+fi
+while IFS= read -r c; do
+  common=$(g -C "$c" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+  if [ -z "$common" ]; then
+    WT=$c BR="" HEAD_OID="" IDLE=""
+    gd=$(sed -n 's/^gitdir: //p' "$c/.git" 2>/dev/null | head -n 1)
+    case $gd in /* | '') ;; *) gd="$c/$gd" ;; esac
+    if [ -n "$gd" ] && why=$(unreadable "$gd"); then
+      keep "cannot read $gd: $why"
+      attention "$c | cannot read $gd: $why; give /bin/bash access to that folder in Privacy & Security"
+    elif [ -n "$gd" ] && [ -e "$gd" ]; then
+      keep "broken: .git points to $gd, which is not a valid repository"
+      attention "$c | broken: its admin dir $gd is there, but git cannot use it; its files are still there"
+    else
+      keep "broken: .git points to $gd, which is not a valid repository"
+      attention "$c | broken: its admin dir is gone, so git cannot use it; its files are still there"
+    fi
+    continue
+  fi
+  case $common in
+    */.git) dirname -- "$common" >>"$TMP/mains" ;;
+    *) printf '%s\n' "$common" >>"$TMP/mains" ;;
+  esac
+done <"$TMP/found"
+sort -u "$TMP/mains" >"$TMP/mains.u"
+
+# Every registered worktree of every main checkout, to spot nested ones.
+while IFS= read -r m; do
+  [ -n "$m" ] || continue
+  g -C "$m" worktree list --porcelain -z 2>/dev/null | tr '\0' '\n' |
+    sed -n 's/^worktree //p' | while IFS= read -r w; do canon "$w"; done >>"$TMP/allwt"
+done <"$TMP/mains.u"
+
+while IFS= read -r m; do
+  [ -n "$m" ] || continue
+  process_main "$m"
+done <"$TMP/mains.u"
+
+while IFS= read -r c; do
+  c=$(norm_dir "$c") || continue
+  grep -Fxq -- "$c" "$TMP/registered" && continue
+  common=$(g -C "$c" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
+  m=${common%/.git}
+  WT=$c BR="" HEAD_OID="" IDLE=""
+  a=$(gitfile_target "$c")
+  gd=$(head -n 1 "$a/gitdir" 2>/dev/null)
+  case $gd in /* | '') ;; *) gd="$a/$gd" ;; esac
+  if [ -n "$gd" ] && [ ! -e "$gd" ]; then
+    keep "moved here from ${gd%/.git}; relink with: git -C '$m' worktree repair '$c'"
+    attention "$c | moved here from ${gd%/.git}; relink with: git -C '$m' worktree repair '$c'"
+  else
+    keep "not in its main checkout's worktree list; it shares the admin dir of ${gd%/.git} (a copy?)"
+    attention "$c | shares the admin dir of ${gd%/.git} (a copy?); the job leaves both alone"
+  fi
+done <"$TMP/found"
+# Full clones the walk found, each under the root it was found in.
+while IFS= read -r c; do
+  reset_record
+  WT=$(norm_dir "$c") || continue
+  KIND=clone TAG="clone, " ROOT="" tool=""
+  while IFS= read -r r; do
+    case $WT in "$r"/?*) ROOT=$r; break ;; esac
+  done <"$TMP/roots"
+  [ -n "$ROOT" ] || continue
+  while IFS='|' read -r r label; do
+    case $WT in "$r"/?*) tool=$r; break ;; esac
+  done <"$TMP/toolroots"
+  if [ -n "$tool" ]; then
+    log "SKIP    $WT | inside $tool, which the job never touches"
+    continue
+  fi
+  evaluate_clone
+done <"$TMP/clones"
+
+if [ -s "$TMP/toolcount" ]; then
+  sort "$TMP/toolcount" | uniq -c | while read -r cnt rest; do
+    log "LEFT    ${rest%%|*} | $cnt worktree(s) left to ${rest#*|}"
+  done
+fi
+
+# gh health across runs: one bad run is noise, several in a row is a token
+# or network problem that keeps every branch worktree forever.
+GH_STATE="$STATE_DIR/gh-failed-runs"
+runs=$(cat "$GH_STATE" 2>/dev/null)
+case $runs in '' | *[!0-9]*) runs=0 ;; esac
+if [ "$GH_FAILS" -gt 0 ] && [ "$GH_OK" -eq 0 ]; then
+  runs=$((runs + 1))
+elif [ "$GH_OK" -gt 0 ]; then
+  runs=0
+fi
+echo "$runs" >"$GH_STATE"
+if [ "$runs" -ge "$GH_FAIL_RUNS_ALERT" ]; then
+  attention "gh | every PR lookup failed on $runs runs in a row; last error: $(head -n 1 "$TMP/gh.err" 2>/dev/null)"
+fi
+
+write_attention
+
+summary="removed=$REMOVED kept=$KEPT failed=$FAILED left_to_tools=$TOOL_LEFT attention=$ATTN dry_run=$DRY_RUN"
+log "DONE    $summary"
+logger -t "$PROG" "$summary" 2>/dev/null
+[ "$FAILED" -eq 0 ]

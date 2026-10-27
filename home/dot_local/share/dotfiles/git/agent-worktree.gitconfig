@@ -1,0 +1,8 @@
+# Included on the mini for the worktrees of its agents' repos, after
+# mini-dropbox.gitconfig. Their admin folders sit in the Dropbox .git, so the
+# blanket include matches them too, but only the mini writes their index, and
+# without the refresh git diff --name-only would list files whose contents
+# never changed.
+
+[diff]
+	autoRefreshIndex = true

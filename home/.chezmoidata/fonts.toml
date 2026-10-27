@@ -1,0 +1,9 @@
+# MonoLisa is licensed (FaceType's EULA forbids sharing it in any way), so it
+# never enters this repo, not even encrypted. Both Macs fetch it from the
+# 1Password document below, which holds the zip. Changing version or family
+# here reinstalls the files and renames the font in every config that uses it.
+[fonts.monolisa]
+  version = "1.303"
+  family = "MonoLisa"
+  item = "MonoLisa fonts"
+  vault = "Private"

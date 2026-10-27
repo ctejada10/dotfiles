@@ -1,0 +1,48 @@
+# dor-lomin: the VPS that runs Húrin. Its address, SSH port and user are in
+# home/.chezmoidata/hosts.yaml.
+
+# Open to the internet besides SSH. The scan after each run fails when what
+# answers differs from this.
+public_ports:
+  - { port: 80, proto: tcp, comment: caddy http }
+  - { port: 443, proto: tcp, comment: caddy https }
+# Open to the home network only. dor-lomin isn't on it.
+lan_ports: []
+# Rules to delete from UFW, matched as they were added.
+ufw_remove: []
+
+docker: true
+# Publish to 127.0.0.1 unless a compose file names an address. Off until
+# Húrin's compose file publishes 80 and 443 as 0.0.0.0:80 and 0.0.0.0:443,
+# or Caddy stops answering.
+docker_loopback_default: false
+tailscale: false
+samba: false
+
+# Unattended upgrades reboot for a new kernel at this time, server time.
+reboot_time: "04:00"
+# Off until Hurin's compose file restarts its containers on its own (restart:
+# unless-stopped): today they have restart: no, so a reboot would leave Hurin
+# down until the next deploy.
+automatic_reboot: false
+# Password login goes off here.
+password_login: false
+# The checkout the deploy gate deploys, and the branch a commit must be on.
+deploy_repo: /home/deploy/hurin
+deploy_branch: main
+# The repo deploy fetches, which the run clones there once GitHub takes the
+# read key it prints, and the folders Hurin's containers write in the
+# checkout: the web and scheduler run as uid 1001, Caddy as uid 1000.
+deploy_github_repo: ctejada10/hurin
+deploy_submodule_repos: []
+deploy_owned_dirs:
+  - { path: logs, owner: 1001, group: 1001 }
+  - { path: docker/services/caddy/data, owner: 1000, group: 1000 }
+# The public half of the key GitHub Actions deploys with, which can only ask
+# the gate for a deploy. Empty until that key is made, in 1Password as
+# "hurin deploy key" (README, "The deploy key").
+deploy_public_key: ""
+# Public halves of keys to take out of deploy's authorized_keys. Once the
+# workflow deploys with the key above, today's unrestricted one
+# (github-actions-deploy) goes here.
+deploy_retired_keys: []

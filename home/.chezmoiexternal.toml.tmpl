@@ -1,0 +1,50 @@
+{{- if .isAgent -}}
+# Development tools for the mini, where all development happens. Every entry
+# is pinned to a commit in .chezmoidata/pins.yaml, so nothing changes until
+# that file does. Repos aren't here: Dropbox carries them in ~/src.
+
+# The openscad-bosl2 skill (swh/openscad-skill). It has no licence, so it is
+# downloaded from its own repo rather than copied into this one, and linked
+# into ~/.claude/skills. Not exact: the helpers built into it stay.
+[".local/share/openscad-skill"]
+  type = "archive"
+  url = "https://github.com/{{ .pins.openscadSkill.repo }}/archive/{{ .pins.openscadSkill.commit }}.tar.gz"
+  stripComponents = 1
+
+# Two of George Wang's skills (georgewangyu/georgeskills). The repo has no
+# licence, so they are downloaded here, never committed, and linked into
+# ~/.claude/skills. Nothing else from the repo is extracted.
+[".local/share/georgeskills"]
+  type = "archive"
+  url = "https://github.com/{{ .pins.georgeskills.repo }}/archive/{{ .pins.georgeskills.commit }}.tar.gz"
+  stripComponents = 1
+  include = [
+    "*/skills",
+    "*/skills/read-only-log-investigation-ops",
+    "*/skills/read-only-log-investigation-ops/**",
+    "*/skills/frontend-e2e-evaluator-ops",
+    "*/skills/frontend-e2e-evaluator-ops/**",
+  ]
+
+# superpowers (obra/superpowers, MIT) as a skill library, at a release tag
+# and checksum. It sits in a local marketplace whose entry in
+# .claude-plugin/marketplace.json replaces the plugin's own SessionStart hook
+# with one that does nothing, so t3-pstack stays the only router; its skills
+# are called by name, and hooks/agent-gate.sh keeps them from waiting on
+# Carlos when Carlos isn't there. Exact: an upgrade leaves no old files behind.
+[".local/share/claude-plugins/sp-gated/superpowers"]
+  type = "archive"
+  url = "https://github.com/obra/superpowers/archive/refs/tags/v{{ .pins.superpowers.version }}.tar.gz"
+  checksum.sha256 = "{{ .pins.superpowers.sha256 }}"
+  exact = true
+  stripComponents = 1
+
+# BOSL2, the OpenSCAD library the skill builds on. Not in ~/Documents, where
+# macOS privacy prompts can hang T3's background server; OPENSCADPATH in
+# ~/.zshenv points OpenSCAD here instead.
+[".local/share/openscad/libraries/BOSL2"]
+  type = "archive"
+  url = "https://github.com/{{ .pins.bosl2.repo }}/archive/{{ .pins.bosl2.commit }}.tar.gz"
+  exact = true
+  stripComponents = 1
+{{- end }}

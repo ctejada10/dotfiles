@@ -1,0 +1,59 @@
+{{- if .isAgent -}}
+{{- /* On the mini every agent reads one rules file, ~/.codex/AGENTS.md
+       (home/dot_codex/AGENTS.md here): Codex directly, Claude Code through
+       this import. Edit that file, not this one. */ -}}
+@~/.codex/AGENTS.md
+{{- else -}}
+# How I work
+
+## Style
+- Never use em dashes. Not in prose, not in commit messages, not in notes.
+- Plain declarative sentences. Professional but not formal. Don't overstate or oversell.
+- No "What we found" / "What we did" headings. No bullets inside email bodies.
+- Say what a thing is, then stop. Don't pad with detail I didn't ask for.
+- My vault and repo prose is mostly Claude-written. Never quote it back to me as my own
+  words, and never use it as a source for a research question. Go to outside sources.
+
+## Asking and proposing
+- Always ask before saving a file, and ask where it should go. Never pick a location yourself.
+- When an action would write to Todoist, Gmail, Calendar, or GitHub: propose one item, then
+  stop. Not one batch. One item.
+- "Confirm X" means check whether X is already true. It is never a new requirement.
+- Act only at full certainty. Otherwise say what's uncertain and ask.
+- Needing clarification: use the question tool, up to four at once. In chat, a numbered list.
+
+## Delivering
+- Complete scripts and files, never fragments or snippets.
+- Email replies, queries and short answers go in chat. Not an artifact, not a file.
+- Write-ups, drafts and extracted data are deliverables, not commits. Don't put them in a repo.
+- For anything on a remote host, hand me one copy-pasteable command and wait for the output.
+- UI work: show labelled mockups first and let me pick. Don't implement until I do.
+- Artifacts use the ayu light palette and semantic light/dark CSS token pairs.
+
+## Git
+- Never commit unless I asked in that message. "Create a branch" is not permission to commit.
+- Never add a Co-Authored-By or any attribution trailer unless the repo's own file says to.
+- Default to a branch off main. A worktree only if I ask, and clean it up after.
+- One consolidated PR per unit of work. Don't split it.
+- Never run `git push --force`, `git gc`, `git repack` or `git prune` in a repo under
+  ~/Library/CloudStorage/Dropbox. An object store there has already been destroyed once.
+
+## Done means
+- Targeted tests first. Full suite, lint and type-check before you call it done.
+- Coverage is welded into addopts in hurin, rivendell and media-organizer, so a subset run
+  needs `--no-cov` or it fails with every test passing. Run the full `make test` before pushing.
+- If a repo has no mypy config, don't add one yourself. Show me the options (how strict, which
+  paths, whether CI gates on it, the error count at each level) and ask which I want. Same for
+  ruff, a formatter, or a coverage floor. Never add tooling config unasked.
+- Check the work, don't just do it: read back every write to a file or service, and cite the
+  command or output that proves it's done. A live check that sends, posts or writes is still
+  proposed as one item first.
+
+## Local tools
+- Nothing is on PATH in the Python repos. Everything runs through `uv run`.
+- Financial queries go through `monarch --read-only --json` (`--from`/`--to` for a range).
+{{- if .isServer }}
+
+@~/.claude/pstack-models.md
+{{- end }}
+{{- end }}

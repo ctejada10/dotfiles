@@ -1,0 +1,76 @@
+{{- if and .isMac (not .ci) -}}
+#!/bin/bash
+# Installs this role's part of the shared Brewfile. Re-runs when it changes:
+#   Brewfile sha256 {{ include (joinPath .chezmoi.workingTree "Brewfile") | sha256sum }}
+# A failed entry (an App Store app before signing in, a network error) is
+# reported and the apply carries on; `brew bundle` by hand picks it up.
+
+set -uo pipefail
+SCRIPT=packages
+{{ template "script-lib.sh" . }}
+
+if ! command -v brew >/dev/null 2>&1; then
+  if ! attended; then
+    warn "Homebrew is missing and nobody is at the terminal to install it; skipping"
+    exit 0
+  fi
+  say "installing Homebrew"
+  # The installer runs non-interactively, so it needs sudo cached first.
+  sudo -v || exit 1
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || exit 1
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+fi
+
+export HOMEBREW_TILDE_ROLE={{ .role | squote }}
+export HOMEBREW_NO_AUTO_UPDATE=1
+brewfile={{ joinPath .chezmoi.workingTree "Brewfile" | squote }}
+
+if brew bundle check --no-upgrade --file="$brewfile" >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Everything but the App Store apps first. Signed out of the App Store, mas
+# opens the sign-in sheet on this Mac's screen and waits on it for good, app
+# after app, so it runs only once the App Store is signed in and someone is
+# at the screen.
+if ! HOMEBREW_TILDE_MAS=0 brew bundle install --no-upgrade --file="$brewfile"; then
+  warn "some entries didn't install. Fix what's above, then run: brew bundle --file=$brewfile"
+fi
+{{- if eq .role "laptop" }}
+
+# Signed in, the App Store's account in the Accounts database is active.
+# Signed out, macOS keeps an inactive placeholder there. Reading the database
+# needs Full Disk Access, which Terminal and Ghostty don't have unless given
+# it, so the answer is yes, no or unknown.
+app_store_state() {
+  local active
+  if ! active=$(sqlite3 -readonly "$HOME/Library/Accounts/Accounts4.sqlite" \
+    "select count(*) from ZACCOUNT a join ZACCOUNTTYPE t on a.ZACCOUNTTYPE = t.Z_PK
+     where t.ZIDENTIFIER = 'com.apple.account.iTunesStore' and a.ZACTIVE = 1;" 2>/dev/null); then
+    echo unknown
+  elif [ "${active:-0}" -gt 0 ] 2>/dev/null; then
+    echo yes
+  else
+    echo no
+  fi
+}
+
+installed=$(mas list 2>/dev/null | awk '{print $1}')
+missing=0
+for id in $(sed -n 's/^ *mas ".*", id: \([0-9][0-9]*\).*/\1/p' "$brewfile"); do
+  grep -qx "$id" <<< "$installed" || missing=$((missing + 1))
+done
+if [ "$missing" -eq 0 ]; then
+  :
+elif ! at_the_mac; then
+  warn "$missing App Store apps install only from this Mac's own screen. There, run: brew bundle --file=$brewfile"
+elif [ "$(app_store_state)" = unknown ]; then
+  warn "this terminal can't tell whether the App Store is signed in (that needs Full Disk Access), so its $missing apps wait. With the App Store signed in, run: brew bundle --file=$brewfile"
+elif [ "$(app_store_state)" = no ]; then
+  warn "the App Store isn't signed in, so its $missing apps wait. Sign in to the App Store, then run: brew bundle --file=$brewfile"
+elif ! brew bundle install --no-upgrade --file="$brewfile"; then
+  warn "some App Store apps didn't install (a paid one has to be bought first). Then run: brew bundle --file=$brewfile"
+fi
+{{- end }}
+exit 0
+{{ end -}}

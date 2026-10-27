@@ -1,0 +1,11 @@
+# The repo the deploy gate fetches, the submodules it brings in, and folders
+# in the checkout its containers need owned by their own users. Set per server
+# in ansible/hosts/<name>.yml.
+deploy_github_repo: ""
+deploy_submodule_repos: []
+deploy_owned_dirs: []
+
+# Where deploy fetches from, and the host keys it trusts there. A rehearsal
+# points these at a stand-in for GitHub.
+deploy_git_host: github.com
+deploy_git_host_keys: "{{ pins.github_ssh_host_keys }}"

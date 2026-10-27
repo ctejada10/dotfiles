@@ -1,0 +1,187 @@
+# sshd through devsec.hardening's SSH role, which writes the whole
+# sshd_config with no Include line, so nothing in sshd_config.d applies after
+# it, cloud-init's drop-in included. It also turns socket activation off: it
+# masks ssh.socket and enables ssh.service.
+#
+# When the port changes, UFW already allows the new one (the firewall role
+# runs first), sshd restarts on it, the run reconnects there, and only then is
+# the old port closed. A run cut off halfway picks up where it stopped.
+
+- name: Stop the old tilde's secure-mode timer
+  ansible.builtin.systemd_service:
+    name: securemode.timer
+    state: stopped
+    enabled: false
+  failed_when: false
+
+# devsec.hardening 11.0.0 masks ssh.socket and starts ssh.service without a
+# daemon-reload, so on Ubuntu 24.04 the start fails with "Unit ssh.socket is
+# masked" and nothing listens (its open issue 941; fix in its PR 986). Doing
+# the switch here first, with the reload, leaves the role nothing to fail on.
+#
+# Enabling ssh.service while the socket's sshd runs sometimes leaves the unit
+# inactive on Ubuntu 24.04, with that sshd still holding the port. The next
+# start can't bind, and its failure removes /run/sshd, so the old sshd takes
+# every connection and drops it: nobody can log in. On a fresh 24.04 it
+# happened in about half the tries. So the switch is one script: when the unit
+# has lost its sshd, it stops only the listener (each session, this run's
+# included, is a process of its own and stays) and starts the unit, and it
+# puts the socket back if that start fails.
+- name: Take sshd off socket activation before the SSH role does
+  when: >-
+    (ansible_distribution == "Ubuntu" and ansible_distribution_version is version("22.04", ">="))
+    or (ansible_distribution == "Debian" and ansible_distribution_major_version | int >= 12)
+  ansible.builtin.shell:
+    cmd: |
+      set -uo pipefail
+      if [ "$(systemctl is-enabled ssh.socket 2>/dev/null)" = masked ] \
+         && [ "$(systemctl is-enabled ssh.service 2>/dev/null)" = enabled ] \
+         && systemctl is-active --quiet ssh.service; then
+        exit 0
+      fi
+      echo changed
+      rm -f /etc/systemd/system/ssh.service.d/00-socket.conf \
+            /etc/systemd/system/ssh.service.requires/ssh.socket \
+            /etc/systemd/system/sockets.target.wants/ssh.socket
+      systemctl daemon-reload
+      systemctl enable ssh.service
+      systemctl mask ssh.socket
+      systemctl stop ssh.socket
+      if ! systemctl is-active --quiet ssh.service; then
+        echo "ssh.service lost its sshd; replacing the listener"
+        pids=""
+        for pid in $(ss -Hltnp | grep -o '"sshd",pid=[0-9]*' | sed 's/.*=//' | sort -u); do
+          grep -q '/ssh\.service$' "/proc/$pid/cgroup" 2>/dev/null && pids="$pids $pid"
+        done
+        [ -z "$pids" ] || kill $pids
+        for _ in $(seq 50); do
+          alive=""
+          for pid in $pids; do kill -0 "$pid" 2>/dev/null && alive=1; done
+          [ -n "$alive" ] || break
+          sleep 0.1
+        done
+        if ! systemctl start ssh.service; then
+          systemctl unmask ssh.socket
+          systemctl start ssh.socket
+          echo "sshd wouldn't start by itself, so socket activation is back on" >&2
+          exit 1
+        fi
+      fi
+      systemctl is-active --quiet ssh.service
+    executable: /bin/bash
+  register: ssh_socket_switch
+  changed_when: "'changed' in ssh_socket_switch.stdout_lines"
+
+- name: Harden sshd
+  ansible.builtin.include_role:
+    name: devsec.hardening.ssh_hardening
+  vars:
+    ssh_server_ports: ["{{ ssh_port | string }}"]
+    # Both families, as sshd listens today. The role's default is 0.0.0.0
+    # alone, which leaves SSH refusing every IPv6 client.
+    ssh_listen_to: ["0.0.0.0", "::"]
+    # Ubuntu's own size. The role's 4096 makes it replace an existing 3072-bit
+    # RSA host key, and a client that pinned that key would then refuse the
+    # server. A key of any other size is still replaced.
+    ssh_host_rsa_key_size: 3072
+    # Files made over SFTP, which scp uses since OpenSSH 9, get Ubuntu's 022
+    # as everywhere else (os_env_umask). The role's 0027 would leave a file
+    # copied over unreadable to containers running as other users.
+    sftp_umask: "0022"
+    ssh_allow_users: "{{ ([admin_user] + (['deploy'] if deploy else [])) | join(' ') }}"
+    ssh_server_password_login: "{{ password_login | bool }}"
+    # The role allows only publickey here, whatever password login says.
+    sshd_authenticationmethods: "{{ 'publickey password' if password_login | bool else 'publickey' }}"
+    ssh_challengeresponseauthentication: false
+    ssh_permit_root_login: "no"
+    # VS Code's Remote-SSH and ProxyJump need TCP forwarding; agent
+    # forwarding stays off, since it lends the far end the laptop's keys.
+    ssh_allow_tcp_forwarding: "yes"
+    ssh_allow_agent_forwarding: false
+    ssh_x11_forwarding: false
+    # Only the server: the playbook leaves each machine's ssh_config alone.
+    ssh_client_hardening: false
+
+# Only now: the new sshd_config has no Include line, so these are already
+# inert. Deleted earlier, a run that failed before the new config was written
+# would leave sshd on whatever port the old drop-in didn't set.
+- name: Remove the old tilde's SSH drop-ins and its secure-mode timer
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/ssh/sshd_config.d/10-safe-initial.conf
+    - /etc/ssh/sshd_config.d/20-secure-mode.conf
+    - /etc/systemd/system/securemode.timer
+    - /etc/systemd/system/securemode.service
+    - /usr/local/sbin/upgrade_ssh_to_secure_mode.sh
+
+- name: Restart sshd now, on its new settings
+  ansible.builtin.meta: flush_handlers
+
+# Every run, not only a port move: the switch off socket activation and the
+# new sshd_config both restart sshd, and this run's own connection would
+# outlive an sshd that never came back.
+- name: Check that sshd listens on its port
+  ansible.builtin.command: ss -Hltn "sport = :{{ ssh_port }}"
+  register: ssh_listening
+  changed_when: false
+  check_mode: false
+
+# A run cut off after the new config was written but before the restart
+# never gets the handler back.
+- name: Restart sshd if it isn't on its port yet
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: restarted
+  when: ssh_listening.stdout | length == 0 and not ansible_check_mode
+
+# ssh would refuse the new port as an unknown host. The key comes over the
+# connection already trusted, so the laptop can trust it on the new port too.
+- name: Read the host key over the connection already trusted
+  ansible.builtin.slurp:
+    src: /etc/ssh/ssh_host_ed25519_key.pub
+  register: ssh_host_key
+  when: port_move and not ansible_check_mode
+
+- name: Trust the same key on the new port, on the laptop
+  ansible.builtin.known_hosts:
+    name: "[{{ ansible_host }}]:{{ ssh_port }}"
+    key: "[{{ ansible_host }}]:{{ ssh_port }} {{ (ssh_host_key.content | b64decode).split()[:2] | join(' ') }}"
+  delegate_to: localhost
+  become: false
+  when: port_move and not ansible_check_mode
+
+- name: Reconnect on the new SSH port
+  ansible.builtin.set_fact:
+    ansible_port: "{{ ssh_port | int }}"
+  when: port_move and not ansible_check_mode
+
+- name: Wait until the new port answers
+  ansible.builtin.wait_for_connection:
+    timeout: 120
+  when: port_move and not ansible_check_mode
+
+# Proof that a new login works, made while this run's session (and the second
+# terminal you keep open) still holds: a fresh connection, with nothing reused.
+- name: Drop this run's connection
+  ansible.builtin.meta: reset_connection
+
+- name: Log in again, as a new connection
+  ansible.builtin.ping:
+
+# Every run, so one cut off before this step is finished by the next.
+- name: Read UFW's rules
+  ansible.builtin.command: ufw status
+  register: ufw_rules
+  changed_when: false
+  check_mode: false
+
+- name: Close the port a port move kept open
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+    delete: true
+  loop: "{{ ufw_rules.stdout_lines | select('search', '# ssh until the port move') | map('regex_replace', '^(\\d+)/tcp.*$', '\\1') | unique | reject('equalto', ssh_port | string) | list }}"
+  when: not port_move or ansible_port | int == ssh_port | int

@@ -1,0 +1,57 @@
+bindkey -R -M viins "^A"-"^C" self-insert
+bindkey -M viins "^D" list-choices
+bindkey -R -M viins "^E"-"^F" self-insert
+bindkey -M viins "^G" list-expand
+bindkey -M viins "^H" vi-backward-delete-char
+bindkey -M viins "^I" fzf-completion
+bindkey -M viins "^J" accept-line
+bindkey -M viins "^K" self-insert
+bindkey -M viins "^L" clear-screen
+bindkey -M viins "^M" accept-line
+bindkey -R -M viins "^N"-"^P" self-insert
+bindkey -M viins "^Q" vi-quoted-insert
+bindkey -M viins "^R" fzf-history-widget
+bindkey -M viins "^S" self-insert
+bindkey -M viins "^T" fzf-file-widget
+bindkey -M viins "^U" vi-kill-line
+bindkey -M viins "^V" vi-quoted-insert
+bindkey -M viins "^W" vi-backward-kill-word
+bindkey -M viins "^X^R" _read_comp
+bindkey -M viins "^X?" _complete_debug
+bindkey -M viins "^XC" _correct_filename
+bindkey -M viins "^Xa" _expand_alias
+bindkey -M viins "^Xc" _correct_word
+bindkey -M viins "^Xd" _list_expansions
+bindkey -M viins "^Xe" _expand_word
+bindkey -M viins "^Xh" _complete_help
+bindkey -M viins "^Xm" _most_recent_file
+bindkey -M viins "^Xn" _next_tags
+bindkey -M viins "^Xt" _complete_tag
+bindkey -M viins "^X~" _bash_list-choices
+bindkey -R -M viins "^Y"-"^Z" self-insert
+bindkey -M viins "^[" vi-cmd-mode
+bindkey -M viins "^[," _history-complete-newer
+bindkey -M viins "^[/" _history-complete-older
+bindkey -M viins "^[OA" up-line-or-beginning-search
+bindkey -M viins "^[OB" down-line-or-beginning-search
+bindkey -M viins "^[OC" vi-forward-char
+bindkey -M viins "^[OD" vi-backward-char
+bindkey -M viins "^[OF" end-of-line
+bindkey -M viins "^[OH" beginning-of-line
+bindkey -M viins "^[[1;5C" forward-word
+bindkey -M viins "^[[1;5D" backward-word
+bindkey -M viins "^[[200~" bracketed-paste
+bindkey -M viins "^[[3;5~" kill-word
+bindkey -M viins "^[[3~" delete-char
+bindkey -M viins "^[[5~" up-line-or-history
+bindkey -M viins "^[[6~" down-line-or-history
+bindkey -M viins "^[[A" up-line-or-beginning-search
+bindkey -M viins "^[[B" down-line-or-beginning-search
+bindkey -M viins "^[[C" vi-forward-char
+bindkey -M viins "^[[D" vi-backward-char
+bindkey -M viins "^[[Z" reverse-menu-complete
+bindkey -M viins "^[c" fzf-cd-widget
+bindkey -M viins "^[~" _bash_complete-word
+bindkey -R -M viins "^\\\\"-"~" self-insert
+bindkey -M viins "^?" backward-delete-char
+bindkey -R -M viins "\M-^@"-"\M-^?" self-insert

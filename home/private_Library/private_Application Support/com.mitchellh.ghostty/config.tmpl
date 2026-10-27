@@ -1,0 +1,28 @@
+# Ghostty. Run `ghostty +show-config --default --docs` for every option.
+
+# ────── Theme & Appearance ──────
+theme = "Ayu Light"
+cursor-style = block
+
+# ────── Text Settings ──────
+# One family. Extra font-family lines would only be fallbacks.
+font-family = "{{ .fonts.monolisa.family }}"
+font-size = 13
+font-style = Light
+
+# ────── Window Layout ──────
+window-padding-x = 15,18
+window-padding-y = 8,7
+window-width = 66
+window-height = 57
+macos-titlebar-proxy-icon = hidden
+title = " "
+window-colorspace = "display-p3"
+
+# ────── Behavior & Clipboard ──────
+copy-on-select = clipboard
+confirm-close-surface = false
+
+# ────── Startup ──────
+# Every window joins the same tmux session, creating it the first time.
+command = /opt/homebrew/bin/tmux new-session -A -s ghostty

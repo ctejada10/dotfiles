@@ -1,0 +1,21 @@
+#cloud-config
+# First boot of a new server: the admin user with the laptop's login key and
+# no password, so the server is key-only before the playbook first runs.
+# Rendered by cloud-init.yml. Holds no secret: the Tailscale key comes from
+# sops when the server joins the tailnet.
+
+# The playbook names the server.
+preserve_hostname: true
+ssh_pwauth: false
+disable_root: true
+
+# Replaces the image's default user, so there is no ubuntu account.
+users:
+  - name: {{ admin_user }}
+    groups: [sudo]
+    shell: /bin/bash
+    lock_passwd: true
+    # Only until the playbook's first run sets a sudo password and removes it.
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - {{ login_key }}

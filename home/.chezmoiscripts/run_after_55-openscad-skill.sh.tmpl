@@ -1,0 +1,28 @@
+{{- if .isAgent -}}
+#!/bin/bash
+# Builds the openscad-bosl2 skill's Go helpers once per pinned commit
+# ({{ .pins.openscadSkill.commit | trunc 7 }}). A marker records the build, so an apply with nothing new
+# never runs the skill's Makefile.
+
+set -uo pipefail
+SCRIPT=openscad-skill
+{{ template "script-lib.sh" . }}
+
+dir="$HOME/.local/share/openscad-skill"
+marker="$dir/.built-{{ .pins.openscadSkill.commit }}"
+[ -d "$dir" ] || exit 0
+[ -f "$marker" ] && exit 0
+
+if ! command -v go >/dev/null 2>&1; then
+  warn "Go isn't installed yet; the skill's helpers wait for the next apply"
+  exit 0
+fi
+if make -C "$dir" >/dev/null; then
+  rm -f "$dir"/.built-*
+  touch "$marker"
+  say "built the skill's helpers"
+else
+  warn "make failed in $dir; the next apply tries again"
+fi
+exit 0
+{{ end -}}
