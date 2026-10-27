@@ -93,23 +93,15 @@ where this repo finishes:
    the cad-accessibility organisation, grant it, or its repos won't clone.
 5. The one-liner above, answering `agent-mini`, `amon-sul` and `Amon Sûl`.
 
-Then check:
+Then open a new terminal window, so `~/.local/bin` is on your PATH, run
+`dotfiles doctor` there, and put right what it reports. Two things it doesn't
+do:
 
-- `op whoami`
-- `chezmoi verify`
-- `gh --version && git lfs version`
-- `~/.ssh/mini_signing.pub` exists (the apply makes it if the guide didn't) and
-  is on GitHub as a signing key. `gh auth login` doesn't grant the scope that
-  takes, so ask for it for this one step and drop it again:
+- `op whoami` answers, for the first apply's MonoLisa.
+- Put `~/.ssh/mini_signing.pub` (the apply makes it if the guide didn't) on
+  GitHub as a signing key. `gh auth login` doesn't grant the scope that takes,
+  so ask for it for this one step and drop it again:
   `gh auth refresh -h github.com -s write:ssh_signing_key && gh ssh-key add ~/.ssh/mini_signing.pub --type signing --title amon-sul; gh auth refresh -h github.com -r write:ssh_signing_key`
-- `gh auth status` and `git ls-remote https://github.com/ctejada10/dotfiles`
-  (this replaces the guide's `ssh -T git@github.com`: the mini's Git doesn't
-  use SSH)
-- `git ls-remote https://github.com/cad-accessibility/cad-a11y`
-- `ls ~/.claude`
-- `ls ~/src`
-- `sudo systemsetup -gettimezone` shows America/New_York
-- `node --version` is v20 or later
 
 Once they pass, turn off 1Password's CLI integration and its SSH agent on the
 mini. 1Password there can open the whole Private vault, and the mini runs
@@ -671,11 +663,20 @@ repo.
 ## Day to day
 
 - Edit this repo on the mini, like every other repo. The laptop only pulls,
-  with `chezmoi update`, and has neither gitleaks nor shellcheck for the hook
-  and the tests.
-- `chezmoi diff` shows what an apply would change. Read it before applying.
-- `chezmoi apply` applies it.
-- `chezmoi verify` exits 0 when the machine matches the repo.
+  and has neither gitleaks nor shellcheck for the hook and the tests.
+- `dotfiles update` pulls the repo, shows what an apply would change (files,
+  macOS settings and packages), and applies on your yes. `chezmoi diff`,
+  `chezmoi apply` and `chezmoi verify` still work on their own.
+- `dotfiles doctor` checks this Mac against the repo and only reads: every
+  file, setting and package, MonoLisa, `gh`, GitHub and Tailscale, and on the
+  mini also Git LFS, its repos in `~/src`, Remote Login with keys only, Screen
+  Sharing without a VNC password, FileVault off and automatic login, the
+  firewall, the worktree cleanup job, T3's two settings, and that no router
+  there answers UPnP. On the laptop, `dotfiles doctor --keys` also logs in to
+  GitHub and signs a commit, which 1Password approves.
+- Every question `dotfiles` asks is read from the terminal itself, so nothing
+  answers for you. The mini's agents may run `dotfiles doctor` and nothing
+  else of it.
 - `brew bundle --file=~/.local/share/chezmoi/Brewfile` installs anything that
   failed, such as an App Store app before signing in. The shell sets
   `HOMEBREW_TILDE_ROLE`, which picks this Mac's part of the shared Brewfile.
@@ -701,30 +702,35 @@ changes.
 ### Adding a phone or tablet
 
 Each phone and tablet logs in to the servers and the mini with a key of its
-own, which Blink Shell makes in the device's Secure Enclave, so the private
-half never leaves the device.
+own: an Ed25519 or ECDSA key, or RSA of 3072 bits or more. In Blink Shell,
+type `config`, then Keys, and make one (+, then Generate SE Key keeps the
+private half in the Secure Enclave) or use one it has. Copy its public half
+to the laptop with Universal Clipboard or AirDrop, then on the laptop run
+`dotfiles device set iphone`, with the device's name (`iphone`, `ipad`, or a
+new one); the key comes from the clipboard, or after the name. It checks the
+key and shows its fingerprint, and on your yes:
 
-1. In Blink, type `config`, then Keys, +, Generate SE Key, named after the
-   device. Copy the key's public half (it starts `ecdsa-sha2-nistp256`) and get
-   it to the laptop with Universal Clipboard or AirDrop.
-2. Put it in `home/.chezmoidata/keys.yaml` under `ssh.devices`, on that
-   device's line (`iphone`, `ipad`, or a new name), and push it like any other
-   change.
-3. On the laptop, `chezmoi update`, then from `ansible/`, one server at a
-   time, `uv run ansible-playbook site.yml -e target=<name> -K`: `-K` asks
-   once and gives every server in the run the same sudo password. On the
-   mini, `chezmoi update` writes its `authorized_keys`.
-4. From the device, log in to each server and to the mini.
+1. pushes it to each server in turn, in a run of only the playbook's checks
+   and its users role, which asks for that server's own sudo password;
+2. writes it into the mini's `authorized_keys`;
+3. sends the change to `home/.chezmoidata/keys.yaml` to the mini, which
+   commits it on a branch of its own and opens a draft PR. Merge it, then run
+   `dotfiles update` on each Mac. Until it merges, an apply on the mini puts
+   its old keys back, and the next device command waits: each starts from
+   GitHub's copy, so it would undo this one.
 
-A device whose line is empty has no key yet, and the playbook won't turn
-password login off on a server that still takes passwords until every device
-has one.
+Then log in from the device to each server and to the mini. `dotfiles device`
+lists the devices with their fingerprints. `dotfiles device push <server>`
+pushes GitHub's copy again to a server that was off, once the change's PR has
+merged; with no name it goes to every server and the mini. A device whose
+line is empty has no key yet, and the playbook won't turn password login off
+on a server that still takes passwords until every device has one.
 
-**A new device in place of an old one.** Make the new key as above and put it
-on that device's line. Move the old public half to `ssh.retiredLogin`: each
-server's next run takes it out of `authorized_keys`, and the mini's next apply
-drops it, since chezmoi writes that whole file. Wipe the old device once the
-new one logs in everywhere.
+**A new device in place of an old one.** `dotfiles device set` with the new
+key: the old one moves to `ssh.retiredLogin`, and every server and the mini
+lose it in the same run. Wipe the old device once the new one logs in
+everywhere. **A device you no longer use:** `dotfiles device remove <name>`
+takes its line out and retires its key the same way.
 
 **A lost device, away from the laptop.** From the other device, take the lost
 key out on each server and on the mini, with the long middle part of the lost
@@ -735,8 +741,9 @@ key in place of `<key>` and each machine's address, port and user from
 ssh -p <port> <user>@<address> "sed -i.bak '\|<key>|d' ~/.ssh/authorized_keys"
 ```
 
-Back at the laptop, move it to `ssh.retiredLogin` as above before anything
-applies on the mini, whose next apply would otherwise put it back.
+Back at the laptop, `dotfiles device remove` it, or `set` its replacement,
+before anything applies on the mini, whose next apply would otherwise put it
+back.
 
 **Everything lost.** The login key lives in 1Password, not on the laptop. On
 any Mac, sign in to 1Password and turn on its SSH agent (Settings, Developer),
@@ -826,9 +833,10 @@ Dropbox.
    quit Ghostty with Cmd-Q and open it again. Every Ghostty window reattaches
    to the running tmux session, so without this the next step checks the old
    shell.
-9. In a new Ghostty window: the prompt looks the same, Ctrl-R opens fzf's
-   history, `ssh -T git@github.com` works, a new commit shows `G` in
-   `git log --format=%G? -1`, and the font is MonoLisa.
+9. In a new Ghostty window: the prompt looks the same and Ctrl-R opens fzf's
+   history. Then `dotfiles doctor --keys` checks the rest: the Mac matches the
+   repo, GitHub takes the login key, a new commit is signed, and MonoLisa is
+   installed. 1Password approves the two keys.
 10. Remove what the laptop no longer gets.
    `brew bundle cleanup --file=~/.local/share/chezmoi/Brewfile` lists
    everything installed that the Brewfile doesn't name, VS Code extensions
@@ -971,6 +979,10 @@ server. It checks:
 - what each role gets and must never get;
 - the Claude Code hooks: the Git and vault guards block what they must, even
   when they crash, and the risky-command hook's warnings reach the model;
+- the `dotfiles` command, rendered per role and run against stand-ins for
+  `ssh`, the playbook and `gh`: what `device` pushes and records, the keys it
+  refuses, `adopt`'s draft PR, and that nothing happens without a yes typed at
+  the terminal;
 - the server playbook parses, and ansible-lint finds nothing at its
   production profile (`ansible/.ansible-lint` skips two style rules and makes
   warnings fail too);

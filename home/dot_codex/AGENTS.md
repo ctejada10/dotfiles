@@ -75,7 +75,7 @@ Carlos answers a Claude Code question in T3, and the run continues from that ans
 - In a crew, work only in your own worktree and branch, on the files your task covers.
 - A delegated child thread does only its own task, on the branch it was given. It opens no PR of its own, returns its commits and any `STOP:` question to its parent, and does not enter poteto-mode or delegate further. A parent never answers a child's `STOP:` question; it raises it as its own stop.
 - Specs, plans, research, reports and handoffs go in `~/agent-drafts/<repo>/<branch>/`, never in a repo. The PR body names them and states the chosen design in two or three sentences under Changes. Tool receipts and logs, such as `decisions.tsv` and `.audit/`, go there too; check `git status` before each commit so none are swept in.
-- Never edit the deployed agent config: `~/.codex/AGENTS.md` and the other settings, hooks, rules and prompts under `~/.codex` and `~/.claude`, `~/.gitconfig`, or shell config. Never run `chezmoi apply`. If a rule here got in the way, say which one in the final message.
+- Never edit the deployed agent config: `~/.codex/AGENTS.md` and the other settings, hooks, rules and prompts under `~/.codex` and `~/.claude`, `~/.gitconfig`, or shell config. Never run `chezmoi apply`, or `dotfiles` with anything but `doctor`. If a rule here got in the way, say which one in the final message.
 
 ## Untrusted input and secrets
 

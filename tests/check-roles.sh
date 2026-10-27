@@ -28,6 +28,10 @@ for role in "${roles[@]}"; do
   if [ -z "$bad" ]; then pass "manages nothing on the never list"; else fail "manages nothing on the never list" "$bad"; fi
 
   case "$role" in
+    laptop | agent-mini) has "$list" ".local/bin/dotfiles" && pass "has the dotfiles command" || fail "has the dotfiles command" ;;
+    *) lacks "$list" ".local/bin/dotfiles" && pass "has no dotfiles command" || fail "has no dotfiles command" ;;
+  esac
+  case "$role" in
     laptop)
       lacks "$list" ".claude/pstack-models.md" && pass "has no pstack model sheet" || fail "has no pstack model sheet"
       has "$list" ".claude/rules/job-search.md" && pass "has the job-search rules" || fail "has the job-search rules"

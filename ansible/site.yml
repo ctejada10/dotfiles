@@ -11,6 +11,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  # Every run needs the inventory, one with --tags as well.
+  tags: [always]
   vars:
     # hosts_file is for tests/server-playbook.sh alone, which hardens the
     # throwaway machine it runs on as ci-runner, a server no list here names.
@@ -46,225 +48,233 @@
   hosts: servers
   become: true
   pre_tasks:
-    - name: Load this server's settings
-      ansible.builtin.include_vars:
-        file: "hosts/{{ inventory_hostname }}.yml"
+    # Every run needs these, one that runs only some roles (--tags users)
+    # as well.
+    - name: Work out the run's facts and check them before any role
+      tags: [always]
+      block:
+        - name: Load this server's settings
+          ansible.builtin.include_vars:
+            file: "hosts/{{ inventory_hostname }}.yml"
 
-    - name: Load the package lists
-      ansible.builtin.include_vars:
-        file: packages.yml
-        name: packages
+        - name: Load the package lists
+          ansible.builtin.include_vars:
+            file: packages.yml
+            name: packages
 
-    - name: Load the pinned downloads
-      ansible.builtin.include_vars:
-        file: pins.yml
+        - name: Load the pinned downloads
+          ansible.builtin.include_vars:
+            file: pins.yml
 
-    - name: Refuse anything but Ubuntu or Debian
-      ansible.builtin.assert:
-        that: ansible_distribution in ["Ubuntu", "Debian"]
-        fail_msg: "{{ inventory_hostname }} runs {{ ansible_distribution }}; the playbook hardens Ubuntu and Debian only."
-        quiet: true
+        - name: Refuse anything but Ubuntu or Debian
+          ansible.builtin.assert:
+            that: ansible_distribution in ["Ubuntu", "Debian"]
+            fail_msg: "{{ inventory_hostname }} runs {{ ansible_distribution }}; the playbook hardens Ubuntu and Debian only."
+            quiet: true
 
-    - name: Work out the run's facts
-      ansible.builtin.set_fact:
-        deb_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"
-        login_key: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/../home/.chezmoidata/keys.yaml') | from_yaml).ssh.login.public }}"
-        device_keys: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/../home/.chezmoidata/keys.yaml') | from_yaml).ssh.devices | default({}) }}"
-        retired_login_keys: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/../home/.chezmoidata/keys.yaml') | from_yaml).ssh.retiredLogin | default([], true) }}"
-        port_move: "{{ ansible_port | int != ssh_port | int }}"
-        # The key types an authorized_keys line logs in with, matched at the
-        # start of a word or a line. A certificate's aren't among them: sshd
-        # matches a key only to a line of the key's own type, so a device whose
-        # line holds its certificate would have no way in.
-        key_type_re: '(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ecdsa-sha2-nistp256|ssh-ed25519)@openssh\.com|webauthn-sk-ecdsa-sha2-nistp256@openssh\.com)(\s|$)'
+        - name: Work out the run's facts
+          ansible.builtin.set_fact:
+            deb_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"
+            login_key: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/../home/.chezmoidata/keys.yaml') | from_yaml).ssh.login.public }}"
+            device_keys: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/../home/.chezmoidata/keys.yaml') | from_yaml).ssh.devices | default({}, true) }}"
+            retired_login_keys: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/../home/.chezmoidata/keys.yaml') | from_yaml).ssh.retiredLogin | default([], true) }}"
+            port_move: "{{ ansible_port | int != ssh_port | int }}"
+            # The key types an authorized_keys line logs in with, matched at the
+            # start of a word or a line. A certificate's aren't among them: sshd
+            # matches a key only to a line of the key's own type, so a device whose
+            # line holds its certificate would have no way in.
+            key_type_re: '(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ecdsa-sha2-nistp256|ssh-ed25519)@openssh\.com|webauthn-sk-ecdsa-sha2-nistp256@openssh\.com)(\s|$)'
 
-    # Each retired key is a string of its own in a list. One key written in
-    # place of the list would be read a character at a time, and a "public:"
-    # field, as under retiredSigning, as Python's text for it: both would be
-    # refused below as keys cut short, which they aren't.
-    - name: Refuse a retiredLogin that isn't a list of keys
-      ansible.builtin.assert:
-        that:
-          - retired_login_keys is sequence
-          - retired_login_keys is not string
-          - retired_login_keys is not mapping
-          - retired_login_keys | reject('string') | list | length == 0
-        fail_msg: >-
-          keys.yaml's ssh.retiredLogin isn't a list of public keys. Give each key a
-          line of its own that starts with "- " and holds the key in quotes, with no
-          "public:" before it as under retiredSigning, then run again. Nothing on the
-          server has changed.
-        quiet: true
+        # Each retired key is a string of its own in a list. One key written in
+        # place of the list would be read a character at a time, and a "public:"
+        # field, as under retiredSigning, as Python's text for it: both would be
+        # refused below as keys cut short, which they aren't.
+        - name: Refuse a retiredLogin that isn't a list of keys
+          ansible.builtin.assert:
+            that:
+              - retired_login_keys is sequence
+              - retired_login_keys is not string
+              - retired_login_keys is not mapping
+              - retired_login_keys | reject('string') | list | length == 0
+            fail_msg: >-
+              keys.yaml's ssh.retiredLogin isn't a list of public keys. Give each key a
+              line of its own that starts with "- " and holds the key in quotes, with no
+              "public:" before it as under retiredSigning, then run again. Nothing on the
+              server has changed.
+            quiet: true
 
-    # The users role authorizes the login and device keys and then takes the
-    # retired ones out, so a key on both lists would end the run unauthorized.
-    - name: Refuse a retired login key that is still the login key or a device's
-      ansible.builtin.assert:
-        that: clashes | length == 0
-        fail_msg: >-
-          keys.yaml lists {{ clashes | join(', ') }} under ssh.retiredLogin and also
-          as the laptop's login key or a device's key. The run would authorize it and
-          then take it out again. Keep each key in one place, then run again. Nothing
-          on the server has changed.
-        quiet: true
-      vars:
-        # Keys compared by their base64 body, the word after the key's type,
-        # as sshd and the authorized_key module compare them: options before
-        # the type and comments after the body don't count.
-        clashes: >-
-          {%- macro body(k) -%}
-          {%- set t = k.split() -%}
-          {%- set ty = t | select('match', key_type_re) | first | default('') -%}
-          {%- if ty and t.index(ty) + 1 < t | length -%}{{ t[t.index(ty) + 1] }}{%- endif -%}
-          {%- endmacro -%}
-          {%- set current = [] -%}
-          {%- for k in [login_key] + (device_keys | dict2items | map(attribute='value') | list) if k and body(k) -%}
-          {%- set _ = current.append(body(k)) -%}
-          {%- endfor -%}
-          {%- set out = [] -%}
-          {%- for k in retired_login_keys if k and body(k) in current -%}
-          {%- set _ = out.append(k.split() | last) -%}
-          {%- endfor -%}
-          {{- out -}}
+        # The users role authorizes the login and device keys and then takes the
+        # retired ones out, so a key on both lists would end the run unauthorized.
+        - name: Refuse a retired login key that is still the login key or a device's
+          ansible.builtin.assert:
+            that: clashes | length == 0
+            fail_msg: >-
+              keys.yaml lists {{ clashes | join(', ') }} under ssh.retiredLogin and also
+              as the laptop's login key or a device's key. The run would authorize it and
+              then take it out again. Keep each key in one place, then run again. Nothing
+              on the server has changed.
+            quiet: true
+          vars:
+            # Keys compared by their base64 body, the word after the key's type,
+            # as sshd and the authorized_key module compare them: options before
+            # the type and comments after the body don't count.
+            clashes: >-
+              {%- macro body(k) -%}
+              {%- set t = k.split() -%}
+              {%- set ty = t | select('match', key_type_re) | first | default('') -%}
+              {%- if ty and t.index(ty) + 1 < t | length -%}{{ t[t.index(ty) + 1] }}{%- endif -%}
+              {%- endmacro -%}
+              {%- set current = [] -%}
+              {%- for k in [login_key] + (device_keys | dict2items | map(attribute='value') | list) if k and body(k) -%}
+              {%- set _ = current.append(body(k)) -%}
+              {%- endfor -%}
+              {%- set out = [] -%}
+              {%- for k in retired_login_keys if k and body(k) in current -%}
+              {%- set _ = out.append(k.split() | last) -%}
+              {%- endfor -%}
+              {{- out -}}
 
-    # A device line that holds only part of a key, from a copy cut short, still
-    # counts as a key to the guard below, and the users role writes it as it
-    # is. sshd then ignores it, and once password login is off that device has
-    # no way in. Read on the laptop, where keys.yaml is. ssh-keygen also takes
-    # a word before the key, as in known_hosts, which sshd reads as an option
-    # it doesn't know and so ignores the line; a device's line starts with
-    # its key's type, as Blink copies it.
-    - name: Read each device key keys.yaml holds
-      ansible.builtin.command: ssh-keygen -l -f -
-      args:
-        stdin: "{{ item.value }}"
-      delegate_to: localhost
-      become: false
-      register: device_key_reads
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      loop: "{{ device_keys | dict2items | selectattr('value') | list }}"
-      loop_control:
-        label: "{{ item.key }}"
+        # A device line that holds only part of a key, from a copy cut short, still
+        # counts as a key to the guard below, and the users role writes it as it
+        # is. sshd then ignores it, and once password login is off that device has
+        # no way in. Read on the laptop, where keys.yaml is. ssh-keygen also takes
+        # a word before the key, as in known_hosts, which sshd reads as an option
+        # it doesn't know and so ignores the line; a device's line starts with
+        # its key's type, as Blink copies it.
+        - name: Read each device key keys.yaml holds
+          ansible.builtin.command: ssh-keygen -l -f -
+          args:
+            stdin: "{{ item.value }}"
+          delegate_to: localhost
+          become: false
+          register: device_key_reads
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          loop: "{{ device_keys | dict2items | selectattr('value') | list }}"
+          loop_control:
+            label: "{{ item.key }}"
 
-    - name: Refuse a device key that isn't a whole public key
-      ansible.builtin.assert:
-        that: unreadable | length == 0
-        fail_msg: >-
-          keys.yaml's key for {{ unreadable | join(', ') }} isn't a whole public key
-          that starts with its type: sshd wouldn't take it. Copy the public half
-          from Blink again, then run again. Nothing on the server has changed.
-        quiet: true
-      vars:
-        unreadable: >-
-          {{ ((device_key_reads.results | default([]) | rejectattr('rc', 'equalto', 0) | map(attribute='item.key') | list)
-              + (device_keys | dict2items | selectattr('value') | rejectattr('value', 'match', key_type_re) | map(attribute='key') | list))
-             | unique }}
+        - name: Refuse a device key that isn't a whole public key
+          ansible.builtin.assert:
+            that: unreadable | length == 0
+            fail_msg: >-
+              keys.yaml's key for {{ unreadable | join(', ') }} isn't a whole public key
+              that starts with its type: sshd wouldn't take it. Copy the public half
+              from Blink again, then run again. Nothing on the server has changed.
+            quiet: true
+          vars:
+            unreadable: >-
+              {{ ((device_key_reads.results | default([]) | rejectattr('rc', 'equalto', 0) | map(attribute='item.key') | list)
+                  + (device_keys | dict2items | selectattr('value') | rejectattr('value', 'match', key_type_re) | map(attribute='key') | list))
+                 | unique }}
 
-    # A retired key cut short matches nothing in authorized_keys, so the users
-    # role would leave the old key there and say nothing, and a line that
-    # isn't a key at all fails that role after the run has changed things.
-    - name: Read each retired login key keys.yaml holds
-      ansible.builtin.command: ssh-keygen -l -f -
-      args:
-        stdin: "{{ item }}"
-      delegate_to: localhost
-      become: false
-      register: retired_key_reads
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      loop: "{{ retired_login_keys | map('trim') | select | list }}"
-      loop_control:
-        label: "{{ item.split() | last }}"
+        # A retired key cut short matches nothing in authorized_keys, so the users
+        # role would leave the old key there and say nothing, and a line that
+        # isn't a key at all fails that role after the run has changed things.
+        - name: Read each retired login key keys.yaml holds
+          ansible.builtin.command: ssh-keygen -l -f -
+          args:
+            stdin: "{{ item }}"
+          delegate_to: localhost
+          become: false
+          register: retired_key_reads
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          loop: "{{ retired_login_keys | map('trim') | select | list }}"
+          loop_control:
+            label: "{{ item.split() | last }}"
 
-    - name: Refuse a retired login key that isn't a whole public key
-      ansible.builtin.assert:
-        that: unreadable | length == 0
-        fail_msg: >-
-          keys.yaml's ssh.retiredLogin has {{ 'an entry' if unreadable | length == 1 else 'entries' }}
-          that {{ "isn't a whole public key" if unreadable | length == 1 else "aren't whole public keys" }},
-          ending {{ unreadable | join(', ') }}, so the run couldn't take
-          {{ 'it' if unreadable | length == 1 else 'them' }} out of authorized_keys. Put
-          {{ 'the whole public half' if unreadable | length == 1 else "each key's whole public half" }}
-          there, then run again. Nothing on the server has changed.
-        quiet: true
-      vars:
-        unreadable: "{{ retired_key_reads.results | default([]) | rejectattr('rc', 'equalto', 0) | map(attribute='item') | map('split') | map('last') | list }}"
+        - name: Refuse a retired login key that isn't a whole public key
+          ansible.builtin.assert:
+            that: unreadable | length == 0
+            fail_msg: >-
+              keys.yaml's ssh.retiredLogin has {{ 'an entry' if unreadable | length == 1 else 'entries' }}
+              that {{ "isn't a whole public key" if unreadable | length == 1 else "aren't whole public keys" }},
+              ending {{ unreadable | join(', ') }}, so the run couldn't take
+              {{ 'it' if unreadable | length == 1 else 'them' }} out of authorized_keys. Put
+              {{ 'the whole public half' if unreadable | length == 1 else "each key's whole public half" }}
+              there, then run again. Nothing on the server has changed.
+            quiet: true
+          vars:
+            unreadable: "{{ retired_key_reads.results | default([]) | rejectattr('rc', 'equalto', 0) | map(attribute='item') | map('split') | map('last') | list }}"
 
-    # A server that still takes passwords loses them in this run's ssh role.
-    # Stop here, before any role changes anything, while a device keys.yaml
-    # lists has no key yet: that device would have no way back in. -e
-    # password_login=false arrives as a string, hence bool, as devsec reads it.
-    #
-    # sshd -T as root stops with "Missing privilege separation directory:
-    # /run/sshd" until that folder exists, and on Ubuntu 24.04 only ssh.service
-    # makes it, at the first login over SSH. A run over SSH always finds it;
-    # CI's runner, which nobody has logged in to, doesn't. devsec's SSH role
-    # makes it later in the run anyway, and leaves it, as this does.
-    - name: Read whether sshd takes passwords now
-      ansible.builtin.shell: |
-        set -euo pipefail
-        [ -d /run/sshd ] || install -d -m 0755 /run/sshd
-        sshd -T
-      args:
-        executable: /bin/bash
-      register: sshd_before_run
-      changed_when: false
-      check_mode: false
-      when: not (password_login | bool)
+        # A server that still takes passwords loses them in this run's ssh role.
+        # Stop here, before any role changes anything, while a device keys.yaml
+        # lists has no key yet: that device would have no way back in. -e
+        # password_login=false arrives as a string, hence bool, as devsec reads it.
+        #
+        # sshd -T as root stops with "Missing privilege separation directory:
+        # /run/sshd" until that folder exists, and on Ubuntu 24.04 only ssh.service
+        # makes it, at the first login over SSH. A run over SSH always finds it;
+        # CI's runner, which nobody has logged in to, doesn't. devsec's SSH role
+        # makes it later in the run anyway, and leaves it, as this does.
+        - name: Read whether sshd takes passwords now
+          ansible.builtin.shell: |
+            set -euo pipefail
+            [ -d /run/sshd ] || install -d -m 0755 /run/sshd
+            sshd -T
+          args:
+            executable: /bin/bash
+          register: sshd_before_run
+          changed_when: false
+          check_mode: false
+          when: not (password_login | bool)
 
-    # sshd -T shows only what applies outside Match blocks, and the ssh role's
-    # sshd_config has one only for sftponly, which follows password_login, so
-    # passwords a Match block allows go too. sshd also reads "Include=" and
-    # drops a line's trailing carriage return, so this does too.
-    - name: Read whether a Match block in sshd's config takes passwords
-      ansible.builtin.shell: |
-        set -uo pipefail
-        shopt -s nullglob
-        files=(/etc/ssh/sshd_config)
-        if grep -qiE '^[[:space:]]*include([[:space:]]|=)' /etc/ssh/sshd_config; then
-          files+=(/etc/ssh/sshd_config.d/*.conf)
-        fi
-        awk '
-          FNR == 1 { m = 0 }
-          { line = tolower($0); sub(/^[ \t]+/, "", line); n = split(line, f, /[ \t\r=]+/) }
-          f[1] == "match" { m = 1; next }
-          m && f[2] == "yes" && (f[1] == "passwordauthentication" || f[1] == "kbdinteractiveauthentication" || f[1] == "challengeresponseauthentication") { print FILENAME ": " $0 }
-        ' "${files[@]}"
-      args:
-        executable: /bin/bash
-      register: sshd_match_passwords
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      when: not (password_login | bool)
+        # sshd -T shows only what applies outside Match blocks, and the ssh role's
+        # sshd_config has one only for sftponly, which follows password_login, so
+        # passwords a Match block allows go too. sshd also reads "Include=" and
+        # drops a line's trailing carriage return, so this does too.
+        - name: Read whether a Match block in sshd's config takes passwords
+          ansible.builtin.shell: |
+            set -uo pipefail
+            shopt -s nullglob
+            files=(/etc/ssh/sshd_config)
+            if grep -qiE '^[[:space:]]*include([[:space:]]|=)' /etc/ssh/sshd_config; then
+              files+=(/etc/ssh/sshd_config.d/*.conf)
+            fi
+            awk '
+              FNR == 1 { m = 0 }
+              { line = tolower($0); sub(/^[ \t]+/, "", line); n = split(line, f, /[ \t\r=]+/) }
+              f[1] == "match" { m = 1; next }
+              m && f[2] == "yes" && (f[1] == "passwordauthentication" || f[1] == "kbdinteractiveauthentication" || f[1] == "challengeresponseauthentication") { print FILENAME ": " $0 }
+            ' "${files[@]}"
+          args:
+            executable: /bin/bash
+          register: sshd_match_passwords
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          when: not (password_login | bool)
 
-    # Keyboard-interactive with PAM on takes a password too, and Blink, among
-    # other clients, sends one that way.
-    - name: Refuse to turn password login off while a device has no key
-      ansible.builtin.assert:
-        that: missing | length == 0
-        fail_msg: >-
-          {{ inventory_hostname }} still takes passwords, and this run would turn
-          that off, but keys.yaml has no key yet for {{ missing | join(', ') }}.
-          Add each one first (README, "Adding a phone or tablet") so it can still
-          log in, then run again. Nothing on the server has changed.
-        quiet: true
-      vars:
-        missing: "{{ device_keys | dict2items | rejectattr('value') | map(attribute='key') | list }}"
-        sshd_now: "{{ sshd_before_run.stdout_lines }}"
-      when:
-        - not (password_login | bool)
-        - >-
-          'passwordauthentication yes' in sshd_now
-          or ('kbdinteractiveauthentication yes' in sshd_now and 'usepam yes' in sshd_now)
-          or sshd_match_passwords.stdout | length > 0
+        # Keyboard-interactive with PAM on takes a password too, and Blink, among
+        # other clients, sends one that way.
+        - name: Refuse to turn password login off while a device has no key
+          ansible.builtin.assert:
+            that: missing | length == 0
+            fail_msg: >-
+              {{ inventory_hostname }} still takes passwords, and this run would turn
+              that off, but keys.yaml has no key yet for {{ missing | join(', ') }}.
+              Add each one first (README, "Adding a phone or tablet") so it can still
+              log in, then run again. Nothing on the server has changed.
+            quiet: true
+          vars:
+            missing: "{{ device_keys | dict2items | rejectattr('value') | map(attribute='key') | list }}"
+            sshd_now: "{{ sshd_before_run.stdout_lines }}"
+          when:
+            - not (password_login | bool)
+            # Only a run with the untagged ssh role turns passwords off: a run of
+            # the users role alone (dotfiles device) has nothing to refuse.
+            - "'all' in ansible_run_tags or 'untagged' in ansible_run_tags"
+            - >-
+              'passwordauthentication yes' in sshd_now
+              or ('kbdinteractiveauthentication yes' in sshd_now and 'usepam yes' in sshd_now)
+              or sshd_match_passwords.stdout | length > 0
 
   roles:
     - base
-    - users
+    - { role: users, tags: [users] }
     - { role: docker, when: docker }
     - { role: tailscale, when: tailscale }
     - { role: deploy, when: deploy }

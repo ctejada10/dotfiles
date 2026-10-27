@@ -140,6 +140,7 @@
         "Bash(chezmoi apply:*)" "Bash(chezmoi update:*)" "Bash(chezmoi init:*)"
         "Bash(chezmoi destroy:*)" "Bash(chezmoi purge:*)"
         "Bash(op:*)"
+        "Bash(dotfiles update:*)" "Bash(dotfiles adopt:*)"
         "Bash(env)" "Bash(printenv)") -}}
 {{- /* The deployed agent and shell config, which the rules say never to
        edit. An Edit rule covers Edit, Write and NotebookEdit. The dotfiles

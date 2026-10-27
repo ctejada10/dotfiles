@@ -26,6 +26,7 @@ run tests/agent-gate.sh
 run tests/worktree.sh
 run tests/worktree-ttl.sh
 run tests/ansible.sh
+run tests/dotfiles.sh
 run tests/apply-twice.sh
 run tests/zsh-baseline.sh
 

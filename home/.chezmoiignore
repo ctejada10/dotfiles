@@ -62,6 +62,7 @@ agent-drafts/*
 {{- /* Per role. */}}
 
 {{ if or (not .isMac) .ci -}}
+.local/bin/dotfiles
 .local/share/dotfiles
 {{- end }}
 

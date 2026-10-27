@@ -1,0 +1,787 @@
+{{- if and .isMac (not .ci) -}}
+{{- $mini := "" -}}
+{{- range $name, $_ := .macs }}{{ $mini = $name }}{{ end -}}
+#!/bin/bash
+#
+# dotfiles: this Mac's way into the dotfiles repo. With no argument it lists
+# the commands this Mac has.
+#
+# Every question is asked on the terminal itself (/dev/tty), so nothing can
+# answer for you. Started without a terminal, as the mini's agents start
+# commands, a command that changes anything stops before it does.
+
+set -uo pipefail
+SCRIPT=dotfiles
+{{ template "script-lib.sh" . }}
+
+ROLE={{ .role | squote }}
+REPO=${DOTFILES_REPO:-{{ .chezmoi.workingTree | squote }}}
+{{- if eq .role "laptop" }}
+MINI={{ $mini | squote }}
+{{- end }}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  dotfiles update          pull the repo, show what an apply would change, then apply
+  dotfiles doctor          check this Mac against the repo; only reads
+{{- if eq .role "laptop" }}
+  dotfiles doctor --keys   the same, plus SSH to GitHub and a signed commit,
+                           which 1Password approves
+  dotfiles device          list the phones' and tablets' keys
+  dotfiles device set <name> [<public key>]
+                           add a device's key, or replace it; the key comes
+                           from the clipboard when it isn't given
+  dotfiles device remove <name>
+                           take a device and its key away
+  dotfiles device push [<server or mini>...]
+                           push GitHub's copy of the device keys again, to
+                           every server and the mini or to those named
+{{- end }}
+{{- if .isAgent }}
+  dotfiles adopt <patch>   turn a change the laptop sent into a draft PR
+{{- end }}
+EOF
+}
+
+# Whether there's a terminal to ask on. Opening /dev/tty fails without one.
+have_terminal() { { exec 3</dev/tty; } 2>/dev/null && exec 3<&-; }
+
+# ask <question>: y on the terminal is yes; anything else, or no terminal, no.
+ask() {
+  local reply=
+  if ! { exec 3</dev/tty; } 2>/dev/null; then
+    warn "$1: there's no terminal to answer on, so no"
+    return 1
+  fi
+  printf '%s [y/N] ' "$1" >/dev/tty
+  IFS= read -r reply <&3 || reply=
+  exec 3<&-
+  case "$reply" in y | Y | yes) return 0 ;; *) return 1 ;; esac
+}
+
+# The temporary folder is the only thing this makes, and mktemp -d makes it
+# 0700; everything else runs under the caller's umask, as a plain apply does.
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/dotfiles.XXXXXX") || exit 1
+trap 'rm -rf "$tmp"' EXIT
+# Ctrl-C stops here too. ansible-playbook and uv catch it and exit normally,
+# which bash would otherwise take as a reason to go on to the next step.
+trap 'exit 130' INT
+
+settings_template="$REPO/home/.chezmoiscripts/run_after_30-macos-settings.sh.tmpl"
+
+# The macOS settings script in its dry-run mode, which only reads.
+settings_dry_run() {
+  chezmoi execute-template < "$settings_template" > "$tmp/settings.sh" 2>"$tmp/settings.err" \
+    || { cat "$tmp/settings.err"; return 1; }
+  DOTFILES_CHECK=1 bash "$tmp/settings.sh"
+}
+
+# The dry run's verdict, in SETTINGS_STATE: ok when nothing would change, skip
+# or fail; changes when something would; unknown when the script didn't render
+# or stopped before its summary. SETTINGS_OUT holds what it printed.
+SETTINGS_STATE=unknown SETTINGS_OUT=
+settings_verdict() {
+  local summary would skipped failed
+  SETTINGS_STATE=unknown
+  SETTINGS_OUT=$(settings_dry_run 2>&1) || return 0
+  summary=$(grep 'dry run: [0-9][0-9]* would change' <<< "$SETTINGS_OUT" | tail -1)
+  [ -n "$summary" ] || return 0
+  would=$(sed -n 's/.*dry run: \([0-9][0-9]*\) would change.*/\1/p' <<< "$summary")
+  skipped=$(sed -n 's/.* \([0-9][0-9]*\) skipped.*/\1/p' <<< "$summary")
+  failed=$(sed -n 's/.* \([0-9][0-9]*\) failed.*/\1/p' <<< "$summary")
+  if [ "$would" = 0 ] && [ "${skipped:-0}" = 0 ] && [ "${failed:-0}" = 0 ]; then
+    SETTINGS_STATE=ok
+  else
+    SETTINGS_STATE=changes
+  fi
+}
+# What the dry run said besides its summary: each would-be change and warning.
+settings_lines() { grep -v 'dry run: [0-9]' <<< "$SETTINGS_OUT"; }
+
+brewfile_check() {
+  HOMEBREW_TILDE_ROLE=$ROLE HOMEBREW_NO_AUTO_UPDATE=1 \
+    brew bundle check --no-upgrade --verbose --file="$REPO/Brewfile"
+}
+
+###############################################################################
+# update                                                                      #
+###############################################################################
+
+cmd_update() {
+  if ! have_terminal; then
+    warn "update needs a terminal to answer on; nothing was pulled or applied"
+    return 1
+  fi
+  say "pulling the repo"
+  # Fast-forward only: a checkout with edits or commits of its own is left as
+  # it is, rather than stashed, rebased or merged into something with conflict
+  # markers that an apply would then write out.
+  if ! git -C "$REPO" pull --quiet --ff-only --no-rebase --no-autostash; then
+    warn "the pull didn't fast-forward: put the checkout's own changes in $REPO aside, then run this again. Nothing was applied"
+    return 1
+  fi
+  if [ -n "$(git -C "$REPO" ls-files -u)" ]; then
+    warn "$REPO has unresolved conflicts; nothing was applied"
+    return 1
+  fi
+  local files packages
+  files=$(chezmoi diff --no-pager 2>&1)
+  settings_verdict
+  if packages=$(brewfile_check 2>&1); then
+    packages=
+  else
+    [ -n "$packages" ] || packages="brew bundle check found something missing"
+  fi
+
+  if [ -z "$files" ] && [ "$SETTINGS_STATE" = ok ] && [ -z "$packages" ]; then
+    say "files, settings and packages already match the repo"
+  else
+    [ -n "$files" ] && printf '\nFiles:\n%s\n' "$files"
+    case "$SETTINGS_STATE" in
+      changes) printf '\nSettings:\n%s\n' "$(settings_lines)" ;;
+      unknown) printf "\nSettings: the dry run didn't finish, so what an apply would change there is unknown:\n%s\n" "$SETTINGS_OUT" ;;
+    esac
+    [ -n "$packages" ] && printf '\nPackages:\n%s\n' "$packages"
+    printf '\n'
+  fi
+  # The setup scripts run on every apply too, so there may be work even when
+  # nothing above changes.
+  if ask "Apply now?"; then
+    chezmoi apply
+  else
+    say "nothing applied"
+  fi
+}
+
+###############################################################################
+# doctor                                                                      #
+###############################################################################
+
+PASSED=0 FAILED=0 SKIPPED=0
+ok()   { printf '  ok    %s\n' "$1"; PASSED=$((PASSED + 1)); }
+bad()  { printf '  FAIL  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; FAILED=$((FAILED + 1)); }
+skip() { printf '  skip  %s: %s\n' "$1" "$2"; SKIPPED=$((SKIPPED + 1)); }
+check() { local name=$1; shift; if "$@" >/dev/null 2>&1; then ok "$name"; else bad "$name"; fi; }
+
+listening() { nc -z -G 2 127.0.0.1 "$1" >/dev/null 2>&1; }
+
+# The repo's GitHub address over HTTPS, whatever the checkout's remote says.
+github_https() {
+  local url
+  url=$(git -C "$REPO" remote get-url origin 2>/dev/null) || return 1
+  url=${url%.git}
+  url=${url#git@github.com:}
+  url=${url#https://github.com/}
+  printf 'https://github.com/%s\n' "$url"
+}
+
+doctor_common() {
+  local out version marker
+  printf 'This Mac against the repo\n'
+  check "chezmoi verify: every file matches" chezmoi verify
+  settings_verdict
+  case "$SETTINGS_STATE" in
+    ok) ok "every macOS setting matches" ;;
+    changes) bad "every macOS setting matches" "$(settings_lines | head -5)" ;;
+    *) bad "every macOS setting matches" "the dry run didn't finish: $(tail -1 <<< "$SETTINGS_OUT")" ;;
+  esac
+  if out=$(brewfile_check 2>&1); then ok "every package in the Brewfile is installed"
+  else bad "every package in the Brewfile is installed" "$(head -3 <<< "$out")"; fi
+  version={{ .fonts.monolisa.version | squote }}
+  marker=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/fonts/monolisa.version" 2>/dev/null)
+  if [ "$marker" = "$version" ] && ls "$HOME/Library/Fonts"/MonoLisa* >/dev/null 2>&1; then
+    ok "MonoLisa $version is installed"
+  else
+    bad "MonoLisa $version is installed" "the next apply at the Mac's own screen fetches it from 1Password"
+  fi
+
+  printf '\nAccounts and network\n'
+  # The login this Mac uses, not every account gh holds.
+  check "gh is signed in" timeout_run 20 gh auth status --active --hostname github.com
+  check "GitHub answers for the dotfiles repo" timeout_run 20 env GIT_TERMINAL_PROMPT=0 git ls-remote "$(github_https)" HEAD
+  check "Tailscale is connected" timeout_run 10 /Applications/Tailscale.app/Contents/MacOS/Tailscale status
+}
+
+{{- if .isAgent }}
+
+# RFB's security types from the Screen Sharing server: 2 is VNC Authentication,
+# the password-only one (RFC 6143, 7.1.2).
+vnc_types() {
+  perl -MIO::Socket::INET -e '
+    my $s = IO::Socket::INET->new(PeerAddr => "127.0.0.1", PeerPort => 5900, Timeout => 3) or exit 2;
+    $s->sysread(my $v, 12) == 12 or exit 3;
+    $s->syswrite("RFB 003.008\n");
+    $s->sysread(my $n, 1) == 1 or exit 4;
+    $n = ord $n; $n or exit 5;
+    $s->sysread(my $t, $n) == $n or exit 6;
+    print join(" ", unpack("C*", $t)), "\n";
+  '
+}
+
+# Any answer to an SSDP search for an Internet gateway, the request UPnP's port
+# forwarding starts with: exits 0 with the answer, 1 on silence, 2 when the
+# search couldn't be sent. The socket isn't connected: a router answers from
+# its own address, which a socket connected to the multicast group would drop.
+upnp_answer() {
+  perl -MIO::Socket::INET -MSocket -e '
+    my $s = IO::Socket::INET->new(Proto => "udp", LocalPort => 0) or exit 2;
+    my $to = sockaddr_in(1900, inet_aton("239.255.255.250"));
+    $s->send(join("\r\n", "M-SEARCH * HTTP/1.1", "HOST: 239.255.255.250:1900",
+      "MAN: \"ssdp:discover\"", "MX: 2",
+      "ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1", "", ""), 0, $to) or exit 2;
+    my $rin = ""; vec($rin, fileno($s), 1) = 1;
+    exit 1 unless select(my $rout = $rin, undef, undef, 3);
+    $s->recv(my $buf, 1500); print "$buf\n";
+  '
+}
+
+# T3 Code's two settings the mini needs, answered yes or no only: the file
+# also holds the instances' environment, so nothing else from it is printed.
+t3_setting() {
+  /usr/bin/python3 -I - "$HOME/.t3/userdata/settings.json" "$1" <<'PY'
+import json, sys
+path, which = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(path))
+except Exception:
+    print("unreadable"); sys.exit(0)
+def walk(node, keys=()):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from walk(v, keys + (str(k),))
+    elif isinstance(node, list):
+        for v in node:
+            yield from walk(v, keys)
+    else:
+        yield keys, node
+found = False
+for keys, value in walk(data):
+    path_text = " ".join(keys).lower()
+    if which == "attended" and value == "Claude (attended)":
+        found = True
+    if which == "cleanup" and value is True and "worktree" in path_text and ("cleanup" in path_text or "merge" in path_text):
+        found = True
+print("yes" if found else "no")
+PY
+}
+
+doctor_mini() {
+  local out node want signing offers rc fw=/usr/libexec/ApplicationFirewall/socketfilterfw
+  printf '\nThe mini\n'
+  check "GitHub answers for cad-a11y through gh" timeout_run 20 env GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/cad-accessibility/cad-a11y HEAD
+  [ "$(readlink /etc/localtime)" = /var/db/timezone/zoneinfo/America/New_York ] \
+    && ok "the time zone is America/New_York" || bad "the time zone is America/New_York" "$(readlink /etc/localtime)"
+  node=$(node --version 2>/dev/null | sed 's/^v\([0-9]*\).*/\1/')
+  [ "${node:-0}" -ge 20 ] 2>/dev/null && ok "node is v20 or later" || bad "node is v20 or later" "${node:-not found}"
+  check "Claude Code is installed" claude --version
+  check "Git LFS is installed" git lfs version
+  local missing="" repo
+  for repo in {{ index .repos "agent-mini" | keys | sortAlpha | join " " }}; do
+    [ -d "$HOME/src/$repo/.git" ] || missing="$missing $repo"
+  done
+  [ -z "$missing" ] && ok "every repo the agents work in is in ~/src" \
+    || bad "every repo the agents work in is in ~/src" "missing:$missing (the next apply clones them once Dropbox has synced)"
+  # Off now and not set to turn on at the next restart, which would stop the
+  # automatic login.
+  out=$(fdesetup status 2>&1)
+  if [ "$(head -1 <<< "$out")" = 'FileVault is Off.' ] && ! grep -qi 'deferred' <<< "$out"; then
+    ok "FileVault is off, so a restart logs in by itself"
+  else
+    bad "FileVault is off, so a restart logs in by itself" "$out"
+  fi
+  [ "$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null)" = "$USER" ] \
+    && ok "automatic login is on for $USER" || bad "automatic login is on for $USER" "General > Users & Groups"
+  if listening 22; then
+    ok "Remote Login answers"
+    # The sshd that answers, not the file: a client with no key must be offered
+    # publickey and nothing else. It needs no root.
+    offers=$(SSH_AUTH_SOCK='' ssh -F /dev/null -o BatchMode=yes -o PubkeyAuthentication=no \
+               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+               -o ConnectTimeout=5 "$USER@127.0.0.1" true 2>&1 \
+             | sed -n 's/.*Permission denied (\(.*\))\..*/\1/p')
+    [ "$offers" = publickey ] && ok "SSH takes keys only" \
+      || bad "SSH takes keys only" "it offers ${offers:-something unexpected} to a client with no key"
+  else
+    bad "Remote Login answers" "General > Sharing"
+  fi
+  if listening 5900; then
+    ok "Screen Sharing answers"
+    if out=$(vnc_types); then
+      case " $out " in
+        *" 2 "*) bad "Screen Sharing offers no password-only (VNC) login" "turn off \"VNC viewers may control screen with password\"" ;;
+        *) ok "Screen Sharing offers no password-only (VNC) login" ;;
+      esac
+    else
+      skip "Screen Sharing offers no password-only (VNC) login" "couldn't read its security types"
+    fi
+  else
+    bad "Screen Sharing answers" "General > Sharing"
+  fi
+  # As the settings script counts them: on is state 1 or 2, and block-all,
+  # which shuts out SSH and Screen Sharing, is a check of its own.
+  "$fw" --getglobalstate 2>/dev/null | grep -q 'State = [12]' && ok "the firewall is on" || bad "the firewall is on"
+  "$fw" --getblockall 2>/dev/null | grep -q 'disabled' && ok "the firewall's block-all is off" \
+    || bad "the firewall's block-all is off" "it shuts out SSH and Screen Sharing; the next apply turns it off"
+  "$fw" --getstealthmode 2>/dev/null | grep -qi 'on' && ok "stealth mode is on" || bad "stealth mode is on"
+  check "the worktree cleanup job is loaded" launchctl print "gui/$(id -u)/com.carlosetejada.worktree-ttl"
+  if [ -f "$HOME/.t3/userdata/settings.json" ]; then
+    [ "$(t3_setting attended)" = yes ] && ok "T3 has the \"Claude (attended)\" instance" \
+      || bad "T3 has the \"Claude (attended)\" instance" "Settings > Providers (README, The mini)"
+    [ "$(t3_setting cleanup)" = yes ] && ok "T3 removes a worktree once its PR merges" \
+      || bad "T3 removes a worktree once its PR merges" "Settings: Automatic worktree cleanup on merge"
+  else
+    skip "T3's settings" "T3 hasn't run on this Mac yet"
+  fi
+  out=$(upnp_answer); rc=$?
+  case "$rc" in
+    0) bad "no router here answers UPnP" "$(head -1 <<< "$out")" ;;
+    1) ok "no router here answers UPnP" ;;
+    *) skip "no router here answers UPnP" "couldn't send the search" ;;
+  esac
+  if timeout_run 20 gh auth status --active --hostname github.com 2>&1 | grep -q 'ssh_signing_key'; then
+    want=$(awk '{print $2}' "$HOME/.ssh/mini_signing.pub" 2>/dev/null)
+    signing=$(timeout_run 20 gh api user/ssh_signing_keys --jq '.[].key' 2>/dev/null)
+    [ -n "$want" ] && grep -qF "$want" <<< "$signing" && ok "GitHub has the mini's signing key" \
+      || bad "GitHub has the mini's signing key" "README, The mini: gh ssh-key add --type signing"
+  else
+    skip "GitHub has the mini's signing key" "gh's login lacks the read:ssh_signing_key scope"
+  fi
+}
+{{- end }}
+
+{{- if eq .role "laptop" }}
+
+# The two checks that use the login and signing keys, which 1Password approves.
+doctor_keys() {
+  local out t
+  printf '\nThe keys in 1Password\n'
+  out=$(timeout_run 60 ssh -T git@github.com 2>&1)
+  grep -q 'successfully authenticated' <<< "$out" && ok "GitHub takes the login key" || bad "GitHub takes the login key" "$out"
+  t="$tmp/signed"
+  if git init -q "$t" && git -C "$t" commit -q --allow-empty -S -m signed 2>/dev/null \
+    && [ "$(git -C "$t" log -1 --format=%G?)" = G ]; then
+    ok "a commit is signed with the signing key"
+  else
+    bad "a commit is signed with the signing key" "$(git -C "$t" log -1 --format='%G? %GS' 2>&1)"
+  fi
+}
+{{- end }}
+
+cmd_doctor() {
+  doctor_common
+{{- if .isAgent }}
+  doctor_mini
+{{- end }}
+{{- if eq .role "laptop" }}
+  [ "${1:-}" = --keys ] && doctor_keys
+{{- end }}
+  printf '\n%s ok, %s failed, %s skipped\n' "$PASSED" "$FAILED" "$SKIPPED"
+  [ "$FAILED" = 0 ]
+}
+
+{{- if eq .role "laptop" }}
+
+###############################################################################
+# device                                                                      #
+###############################################################################
+
+# Python with PyYAML: the playbook's own environment.
+py() {
+  local python=${DOTFILES_PYTHON:-$REPO/ansible/.venv/bin/python}
+  if [ ! -x "$python" ]; then
+    (cd "$REPO/ansible" && uv sync --locked --quiet) || { warn "couldn't set up the playbook's Python (cd $REPO/ansible && uv sync)"; return 1; }
+  fi
+  "$python" -I "$@"
+}
+
+# A device change that hasn't merged yet. Every device command starts from
+# GitHub's copy of keys.yaml, so one run before the last one's PR merges would
+# put back the keys that change took away.
+pending_change() {
+  local open
+  if ! open=$(cd "$REPO" && timeout_run 30 gh pr list --state open --json headRefName,url \
+      --jq '.[] | select(.headRefName | startswith("device-")) | .url' 2>/dev/null); then
+    warn "couldn't ask GitHub for open device PRs, so nothing changed"
+    return 0
+  fi
+  if [ -n "$open" ]; then
+    warn "a device change hasn't merged yet: $open. Merge it, or close it to drop it, then run this again. Nothing changed"
+    return 0
+  fi
+  return 1
+}
+
+# The keys.yaml everything starts from: GitHub's, so a change builds on the
+# latest record, not on whatever this checkout last pulled.
+fetch_keys() {
+  git -C "$REPO" fetch --quiet origin || { warn "couldn't fetch the repo from GitHub"; return 1; }
+  git -C "$REPO" show "$(git -C "$REPO" rev-parse --abbrev-ref origin/HEAD):home/.chezmoidata/keys.yaml" > "$tmp/keys.yaml"
+}
+
+# keys_py <keys.yaml> <show|set|remove> [name] [key]. show prints the devices
+# and retired keys as JSON. set and remove write the new keys.yaml to keys.new
+# and the device keys and retired keys after the change to keys.json. Edits
+# the text line by line, so comments stay, then checks the result parses to
+# exactly the intended data. Writes nothing else, so it runs before any yes.
+keys_py() {
+  py - "$@" <<'PY'
+import json, re, sys, yaml
+path, action = sys.argv[1], sys.argv[2]
+name = sys.argv[3] if len(sys.argv) > 3 else ""
+key = sys.argv[4] if len(sys.argv) > 4 else ""
+FORM = ("keys.yaml's devices or retiredLogin isn't in the form this edits, each entry "
+        "on a line of its own and indented four spaces; put it so, then run this again")
+text = open(path).read()
+try:
+    data = yaml.safe_load(text)["ssh"]
+except (yaml.YAMLError, KeyError, TypeError):
+    sys.exit("keys.yaml doesn't read as YAML with an ssh section")
+devices = dict(data.get("devices") or {})
+retired = list(data.get("retiredLogin") or [])
+if action == "show":
+    print(json.dumps({"devices": devices, "retired": retired}))
+    sys.exit(0)
+if name and yaml.safe_load(f"{name}: x") != {name: "x"}:
+    sys.exit(f"{name} reads as something other than a name in YAML; pick another")
+lines = text.split("\n")
+
+def find(prefix):
+    for i, line in enumerate(lines):
+        if line == prefix or line.startswith(prefix + " "):
+            return i
+    sys.exit(f"keys.yaml has no line '{prefix}'")
+
+def block_end(start):
+    # The first line after start that isn't one of its entries or a comment inside it.
+    j = start + 1
+    while j < len(lines) and (lines[j].startswith("    ") or lines[j].strip() == ""):
+        j += 1
+    while j > start + 1 and lines[j - 1].strip() == "":
+        j -= 1
+    return j
+
+def open_block(i, field, empty):
+    # "  devices: {}" and "  retiredLogin: []" become a block entries can go under.
+    rest = lines[i].split(":", 1)[1].strip()
+    if rest == empty:
+        lines[i] = f"  {field}:"
+    elif rest:
+        sys.exit(FORM)
+
+old = devices.get(name, "") or ""
+d = find("  devices:")
+if action == "set":
+    open_block(d, "devices", "{}")
+    entry = f'    {name}: "{key}"'
+    for i in range(d + 1, block_end(d)):
+        if re.match(rf"    {re.escape(name)}:", lines[i]):
+            lines[i] = entry
+            break
+    else:
+        lines.insert(block_end(d), entry)
+    devices[name] = key
+elif action == "remove":
+    if name not in devices:
+        sys.exit(f"keys.yaml lists no device called {name}")
+    for i in range(d + 1, block_end(d)):
+        if re.match(rf"    {re.escape(name)}:", lines[i]):
+            del lines[i]
+            break
+    else:
+        sys.exit(FORM)
+    del devices[name]
+    # A block with nothing under it would read as null.
+    if not devices and block_end(d) == d + 1:
+        lines[d] = "  devices: {}"
+
+if old:
+    r = find("  retiredLogin:")
+    open_block(r, "retiredLogin", "[]")
+    lines.insert(block_end(r), f'    - "{old}"')
+    retired.append(old)
+
+new = "\n".join(lines)
+try:
+    check = yaml.safe_load(new)["ssh"]
+except (yaml.YAMLError, KeyError, TypeError):
+    sys.exit(FORM)
+if dict(check.get("devices") or {}) != devices or list(check.get("retiredLogin") or []) != retired:
+    sys.exit(FORM)
+open(path.replace("keys.yaml", "keys.new"), "w").write(new)
+json.dump({"device_keys": devices, "retired_login_keys": retired}, open(path.replace("keys.yaml", "keys.json"), "w"))
+PY
+}
+
+fingerprint() { ssh-keygen -l -f - <<< "$1" 2>/dev/null | awk '{print $2, $NF}'; }
+body_of() { awk '{for (i = 1; i <= NF; i++) if ($i ~ /^AAAA/) { print $i; exit }}' <<< "$1"; }
+
+# The key a device logs in with: its public half, one line, a type sshd takes
+# from a user's authorized_keys, and never a certificate.
+check_key() {
+  local key=$1 bits type
+  [ "$(wc -l <<< "$key" | tr -d ' ')" = 1 ] || { warn "that's more than one line; paste one public key"; return 1; }
+  type=${key%% *}
+  case "$type" in
+    ssh-ed25519 | ssh-rsa | ecdsa-sha2-nistp256 | ecdsa-sha2-nistp384 | ecdsa-sha2-nistp521 \
+      | sk-ssh-ed25519@openssh.com | sk-ecdsa-sha2-nistp256@openssh.com) ;;
+    *-cert-v01@openssh.com) warn "that's a certificate, not a public key; copy the key itself"; return 1 ;;
+    *) warn "\"$type\" isn't a public key type a device logs in with; copy the whole public key"; return 1 ;;
+  esac
+  bits=$(ssh-keygen -l -f - <<< "$key" 2>/dev/null | awk '{print $1}')
+  [ -n "$bits" ] || { warn "that isn't a whole public key (cut short?); copy it again"; return 1; }
+  if [ "$type" = ssh-rsa ] && [ "$bits" -lt 3072 ]; then
+    warn "an RSA key of $bits bits is too weak; make one of 3072 bits or more, or an Ed25519 or ECDSA key"
+    return 1
+  fi
+}
+
+device_list() {
+  fetch_keys || return 1
+  keys_py "$tmp/keys.yaml" show > "$tmp/show.json" || return 1
+  py - "$tmp/show.json" <<'PY'
+import json, subprocess, sys
+d = json.load(open(sys.argv[1]))
+def fp(k):
+    out = subprocess.run(["ssh-keygen", "-l", "-f", "-"], input=k, capture_output=True, text=True).stdout.split()
+    return f"{out[1]} {out[-1]}" if out else "(not a whole key)"
+print("Devices, as GitHub's copy of keys.yaml has them:")
+for name, key in sorted(d["devices"].items()):
+    print(f"  {name:<10} {fp(key) if key else '(no key yet)'}  {key.split()[-1] if key else ''}")
+print(f"Retired login keys: {len(d['retired'])}")
+for key in d["retired"]:
+    print(f"  {fp(key)}")
+PY
+}
+
+# The servers, by name, from the hosts.yaml the playbook reads.
+server_names() {
+  py - "$REPO/home/.chezmoidata/hosts.yaml" <<'PY'
+import sys, yaml
+print(" ".join(yaml.safe_load(open(sys.argv[1]))["hosts"]))
+PY
+}
+
+# One server: only the playbook's checks and its users role, with that
+# server's own sudo password.
+push_server() {
+  say "$1: its sudo password, then the playbook's checks and users role"
+  (cd "$REPO/ansible" && uv run --quiet ansible-playbook site.yml -e target="$1" --tags users -e "@$2" -K)
+}
+
+# The mini: its authorized_keys from the login key and these device keys. A
+# list, since chezmoi merges a map into the mini's own and replaces a list, so
+# a device just taken away can't stay.
+push_mini() {
+  py - "$1" > "$tmp/mini.json" <<'PY' || return 1
+import json, sys
+d = json.load(open(sys.argv[1]))["device_keys"]
+print(json.dumps({"ssh": {"authorizedDevices": [k for _, k in sorted(d.items()) if k]}}))
+PY
+  say "$MINI: its authorized_keys"
+  # --force: that file is the repo's whole, so a hand edit there doesn't count.
+  ssh "$MINI" 'f=$(mktemp -d)/devices.json && cat > "$f" && /opt/homebrew/bin/chezmoi apply --force --override-data-file "$f" ~/.ssh/authorized_keys; rc=$?; rm -rf "$(dirname "$f")"; exit $rc' < "$tmp/mini.json"
+}
+
+# push_keys <json> [name...]: the device keys and retired keys in json to each
+# named server and the mini, or to all of them. Says which didn't take them.
+push_keys() {
+  local json=$1 name failed="" targets
+  shift
+  if [ ! -d "$REPO/ansible/collections/ansible_collections/devsec" ]; then
+    warn "the playbook's collections aren't installed (cd $REPO/ansible && uv run --locked ansible-galaxy collection install -r requirements.yml)"
+    return 1
+  fi
+  # Never an empty array: bash 3.2 under set -u calls that unbound.
+  if [ $# -eq 0 ]; then
+    read -ra targets <<< "$(server_names) $MINI"
+  else
+    targets=("$@")
+  fi
+  for name in "${targets[@]}"; do
+    if [ "$name" = "$MINI" ]; then
+      push_mini "$json" || failed="$failed $name"
+    else
+      push_server "$name" "$json" || failed="$failed $name"
+    fi
+  done
+  if [ -n "$failed" ]; then
+    warn "these didn't take the keys:$failed. Once each answers and any draft PR has merged: dotfiles device push$failed"
+    return 1
+  fi
+  say "${targets[*]} have the keys"
+}
+
+# Records the change in the repo: a patch of keys.yaml, sent to the mini, where
+# dotfiles adopt makes it a commit on its own branch and a draft PR.
+record_change() {
+  local subject=$1 body=$2 branch=$3 r="$tmp/record"
+  git init -q "$r" && mkdir -p "$r/home/.chezmoidata" || return 1
+  cp "$tmp/keys.yaml" "$r/home/.chezmoidata/keys.yaml"
+  git -C "$r" add -A && git -C "$r" -c commit.gpgsign=false commit -q -m base || return 1
+  cp "$tmp/keys.new" "$r/home/.chezmoidata/keys.yaml"
+  git -C "$r" -c commit.gpgsign=false commit -q -a -m "$subject" -m "$body" || return 1
+  git -C "$r" format-patch -q -1 --stdout > "$tmp/$branch.patch" || return 1
+  say "recording it: a draft PR from the mini"
+  # ssh starts each command in the mini's home folder, so the paths are from there.
+  ssh "$MINI" 'mkdir -p agent-drafts/dotfiles' \
+    && scp -q "$tmp/$branch.patch" "$MINI:agent-drafts/dotfiles/$branch.patch" \
+    && ssh -t "$MINI" ".local/bin/dotfiles adopt agent-drafts/dotfiles/$branch.patch"
+}
+
+device_change() {
+  local action=$1 name=$2 key=${3:-} old subject body branch
+  pending_change && return 1
+  fetch_keys || return 1
+  keys_py "$tmp/keys.yaml" show > "$tmp/show.json" || return 1
+  old=$(py -c 'import json, sys; print(json.load(open(sys.argv[1]))["devices"].get(sys.argv[2]) or "")' "$tmp/show.json" "$name")
+
+  if [ "$action" = set ]; then
+    check_key "$key" || return 1
+    if [ -n "$old" ] && [ "$(body_of "$old")" = "$(body_of "$key")" ]; then
+      say "$name already has that key; nothing to do"
+      return 0
+    fi
+    local login others
+    login=$(sed -n '/^  login:/,/^  [a-z]/s/^    public: "\(.*\)"$/\1/p' "$tmp/keys.yaml")
+    others=$(py -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+print("\n".join([k for n, k in d["devices"].items() if n != sys.argv[2] and k] + d["retired"]))' "$tmp/show.json" "$name")
+    if [ "$(body_of "$key")" = "$(body_of "$login")" ] || grep -qF "$(body_of "$key")" <<< "$others"; then
+      warn "that key is already the login key, another device's, or retired; each device has its own"
+      return 1
+    fi
+  fi
+  # Every refusal comes before the question: the edit writes only to $tmp.
+  keys_py "$tmp/keys.yaml" "$action" "$name" "$key" || return 1
+
+  if [ "$action" = set ]; then
+    printf '\n%s gets the key %s\n' "$name" "$(fingerprint "$key")"
+    [ -n "$old" ] && printf 'Its old key, %s, is retired: taken out everywhere\n' "$(fingerprint "$old")"
+    subject="Give the $name a new key"
+    [ -z "$old" ] && subject="Add the $name's key"
+  else
+    printf '\n%s goes' "$name"
+    [ -n "$old" ] && printf ', and its key, %s, is taken out everywhere' "$(fingerprint "$old")"
+    printf '\n'
+    subject="Take the $name and its key away"
+  fi
+  printf 'This pushes the change to every server, each with its own sudo password,\nand the mini now, then opens a draft PR on the mini that records it. Merge\nthat PR before the next device change.\n\n'
+  ask "Go ahead?" || { say "nothing changed"; return 1; }
+
+  body="dotfiles device $action on $(hostname -s), $(date '+%Y-%m-%d %H:%M')."
+  branch="device-$name-$(date +%Y%m%d-%H%M%S)"
+  local rc=0
+  push_keys "$tmp/keys.json" || rc=1
+  record_change "$subject" "$body" "$branch" || { warn "the PR wasn't opened, so GitHub's keys.yaml doesn't have this change yet"; rc=1; }
+  [ "$rc" = 0 ] && say "done. Merge the PR, then run dotfiles update"
+  # Until that PR merges, an apply on the mini would put back its last keys.
+  return "$rc"
+}
+
+cmd_device() {
+  local sub=${1:-list}
+  [ $# -gt 0 ] && shift
+  case "$sub" in set | remove)
+    case "${1:-}" in
+      [a-z]*) ;;
+      *) warn "a device's name starts with a letter"; return 2 ;;
+    esac
+    case "$1" in
+      *[!a-z0-9-]*) warn "a device's name is lowercase letters, digits and hyphens, as iphone or ipad"; return 2 ;;
+    esac ;;
+  esac
+  case "$sub" in
+    list) device_list ;;
+    set)
+      [ $# -ge 1 ] || { usage; return 2; }
+      # The key may come in words, unquoted, after the name.
+      local name=$1 key
+      shift
+      key="$*"
+      if [ -z "$key" ]; then
+        key=$(pbpaste 2>/dev/null)
+        say "the key from the clipboard"
+      fi
+      key=$(printf '%s' "$key" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+      device_change set "$name" "$key"
+      ;;
+    remove)
+      [ $# -eq 1 ] || { usage; return 2; }
+      device_change remove "$1"
+      ;;
+    push)
+      local known name
+      known=" $(server_names) $MINI "
+      for name in "$@"; do
+        case "$known" in *" $name "*) ;; *) warn "$name is neither a server in hosts.yaml nor the mini"; return 2 ;; esac
+      done
+      pending_change && return 1
+      fetch_keys || return 1
+      keys_py "$tmp/keys.yaml" show > "$tmp/show.json" || return 1
+      py - "$tmp/show.json" > "$tmp/keys.json" <<'PY' || return 1
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(json.dumps({"device_keys": d["devices"], "retired_login_keys": d["retired"]}))
+PY
+      ask "Push GitHub's device keys to ${*:-every server and the mini}?" || return 1
+      push_keys "$tmp/keys.json" "$@"
+      ;;
+    *) usage; return 2 ;;
+  esac
+}
+{{- end }}
+
+{{- if .isAgent }}
+
+###############################################################################
+# adopt                                                                       #
+###############################################################################
+
+# Turns a patch the laptop sent into a commit on its own branch, in a worktree
+# outside Dropbox as every change to this repo is made here, and a draft PR.
+cmd_adopt() {
+  local patch=${1:-} branch wt url
+  [ -f "$patch" ] || { usage; return 2; }
+  branch=$(basename "$patch" .patch)
+  case "$branch" in *[!A-Za-z0-9._-]*) warn "\"$branch\" can't be a branch name"; return 1 ;; esac
+  printf '\n%s\n' "$(sed -n 's/^Subject: \(\[PATCH\] \)\{0,1\}//p' "$patch" | head -1)"
+  git apply --stat "$patch" 2>/dev/null || { warn "$patch isn't a patch git can read"; return 1; }
+  printf '\n'
+  ask "Commit this on a branch $branch and open a draft PR?" || { say "nothing changed"; return 1; }
+  git -C "$REPO" fetch --quiet origin || { warn "couldn't fetch the repo"; return 1; }
+  wt="$HOME/worktrees/dotfiles/$branch"
+  [ -e "$wt" ] && { warn "$wt exists already"; return 1; }
+  git -C "$REPO" worktree add --quiet --no-track -b "$branch" "$wt" origin/HEAD || return 1
+  if ! git -C "$wt" am --quiet --3way "$patch"; then
+    git -C "$wt" am --abort 2>/dev/null
+    warn "the change doesn't apply to the repo as it is now; the worktree $wt is left for a look"
+    return 1
+  fi
+  git -C "$wt" push --quiet -u origin "$branch" || { warn "the push failed; the commit is in $wt"; return 1; }
+  if url=$(cd "$wt" && gh pr create --draft --fill 2>&1); then
+    say "draft PR: $url"
+    rm -f "$patch"
+  else
+    warn "the branch is pushed, but no PR: $url"
+    return 1
+  fi
+}
+{{- end }}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  update) cmd_update "$@" ;;
+  doctor) cmd_doctor "$@" ;;
+{{- if eq .role "laptop" }}
+  device) cmd_device "$@" ;;
+{{- end }}
+{{- if .isAgent }}
+  adopt) cmd_adopt "$@" ;;
+{{- end }}
+  "" | help | -h | --help) usage ;;
+  *) usage; exit 2 ;;
+esac
+{{ end -}}

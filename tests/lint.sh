@@ -17,7 +17,7 @@ roles=(ci laptop agent-mini)
 section "setup scripts and hook templates, rendered per role"
 for role in "${roles[@]}"; do
   sandbox "$role" >/dev/null 2>&1 || { fail "init as $role"; continue; }
-  for script in "$REPO"/home/.chezmoiscripts/*.tmpl "$REPO"/home/dot_claude/hooks/*.sh.tmpl; do
+  for script in "$REPO"/home/.chezmoiscripts/*.tmpl "$REPO"/home/dot_claude/hooks/*.sh.tmpl "$REPO"/home/dot_local/bin/*.tmpl; do
     name="$(basename "$script" .tmpl) as $role"
     rendered="$SANDBOX/rendered.sh"
     if ! cz execute-template < "$script" > "$rendered" 2>"$SANDBOX/err"; then

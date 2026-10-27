@@ -26,6 +26,28 @@ for book in site.yml cloud-init.yml; do
   if out=$(ap --syntax-check "$book" -e target=all 2>&1); then pass "$book"; else fail "$book" "$out"; fi
 done
 
+# dotfiles device runs only the checks and the users role on every server, so
+# a new phone's key lands in a minute and nothing else changes.
+section "a run with --tags users"
+if out=$(ap site.yml -e target=all --tags users --list-tasks 2>&1); then
+  inventory=$(awk '/^  play #1 /{f=1; next} /^  play #/{f=0} f && /TAGS:/' <<< "$out" | sed 's/^ *//')
+  grep -q '^Add each server.*TAGS: \[always\]$' <<< "$inventory" \
+    && pass "builds the inventory first" || fail "builds the inventory first" "$out"
+  tasks=$(awk '/^  play #2 /{f=1; next} /^  play #/{f=0} f && /TAGS:/' <<< "$out" | sed 's/^ *//')
+  # A check has no role in front of its name and is tagged always; a role's
+  # task must be the users role's, tagged users. A role task tagged always
+  # would run on every server in each device push.
+  others=$( { grep -vE '^[A-Za-z0-9_.-]+ : ' <<< "$tasks" | grep -v 'TAGS: \[always\]$'
+              grep -E '^[A-Za-z0-9_.-]+ : ' <<< "$tasks" | grep -v '^users : .*TAGS: \[users\]$'; } || true)
+  [ -z "$others" ] && pass "runs the checks and the users role only" || fail "runs the checks and the users role only" "$others"
+  grep -q '^users : Authorize each phone' <<< "$tasks" && pass "includes the device keys" || fail "includes the device keys" "$tasks"
+  grep -q '^Refuse a device key that' <<< "$tasks" && pass "still checks each key first" || fail "still checks each key first" "$tasks"
+  later=$(awk '/^  play #[345] /{f=1; next} f && /TAGS:/' <<< "$out" | grep -c . || true)
+  [ "$later" = 0 ] && pass "runs no later play" || fail "runs no later play" "$out"
+else
+  fail "lists the tasks of a run with --tags users" "$out"
+fi
+
 # ansible/.ansible-lint sets the profile, the two skipped rules and strict, so
 # a warning fails here too.
 section "ansible-lint at the production profile"

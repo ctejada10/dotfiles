@@ -1,10 +1,20 @@
 {{- /* The mini runs Remote Login, so the laptop, the phone and the iPad can log
        in to it. Public keys only: the laptop's login key and each device key
-       keys.yaml holds. A device's key leaves with its line there. */ -}}
+       keys.yaml holds. A device's key leaves with its line there.
+       dotfiles device on the laptop sends authorizedDevices for one apply: a
+       list, which chezmoi puts in place of the checkout's, where a map would
+       only be merged into it and a device just taken away would stay. */ -}}
+{{- $devices := list -}}
+{{- if hasKey .ssh "authorizedDevices" -}}
+{{-   $devices = .ssh.authorizedDevices -}}
+{{- else -}}
+{{-   range $name, $key := .ssh.devices -}}
+{{-     if $key }}{{ $devices = append $devices $key }}{{ end -}}
+{{-   end -}}
+{{- end -}}
 {{- if .ssh.login.public -}}
 {{ .ssh.login.public }}
 {{ end -}}
-{{ range $name, $key := .ssh.devices -}}
-{{ if $key }}{{ $key }}
-{{ end -}}
+{{ range $devices -}}
+{{ . }}
 {{ end -}}

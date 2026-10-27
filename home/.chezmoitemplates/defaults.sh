@@ -211,7 +211,11 @@ defaults_summary() {
   local absent=""
   [ "$ABSENT" -eq 0 ] || absent=", $ABSENT not on this Mac"
   if [ "$CHECK" = 1 ]; then
-    say "dry run: $CHANGED would change, $UNCHANGED already right$absent"
+    # Skipped and failed only when there are any, so a clean dry run reads the
+    # same as ever; dotfiles update and doctor count them as not matching.
+    local trouble=""
+    [ $((SKIPPED + FAILED)) -eq 0 ] || trouble=", $SKIPPED skipped, $FAILED failed"
+    say "dry run: $CHANGED would change, $UNCHANGED already right$trouble$absent"
   elif [ $((CHANGED + SKIPPED + FAILED)) -gt 0 ]; then
     say "$CHANGED changed, $UNCHANGED already right, $SKIPPED skipped, $FAILED failed"
   fi
