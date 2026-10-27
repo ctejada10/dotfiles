@@ -141,7 +141,6 @@ have one:
 - On the router: nothing forwarded to the mini, UPnP off, and unsolicited
   inbound IPv6 blocked. In August 2026 attackers got into Macs whose port
   5900 was open to the internet (CVE-2026-65400) without valid credentials.
-- Time Machine.
 - If Software Update's "install macOS updates" turns itself back on, set it in
   System Settings: without MDM the key may not stick.
 
@@ -701,8 +700,9 @@ changes.
 ### Adding a phone or tablet
 
 Each phone and tablet logs in to the servers and the mini with a key of its
-own, which Blink Shell makes in the device's Secure Enclave, so the private
-half never leaves the device.
+own, held by Blink Shell. The iPhone's and the iPad's are RSA keys, not Secure
+Enclave ones. For a new device, make the key in the Secure Enclave, so its
+private half never leaves the device.
 
 1. In Blink, type `config`, then Keys, +, Generate SE Key, named after the
    device. Copy the key's public half (it starts `ecdsa-sha2-nistp256`) and get

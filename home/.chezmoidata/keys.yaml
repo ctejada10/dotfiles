@@ -23,10 +23,10 @@ ssh:
     - public: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDBVuQhsH411/O/wIZ8ARUHtYaRB3mZbrwQUKSbmq7WR"
       validBefore: ""
   # Phones and tablets that log in to the servers and the mini, each with a key
-  # its SSH app (Blink Shell) made in its Secure Enclave, so the private half
-  # never leaves the device. Empty until the key is pasted in; the playbook won't
-  # turn a server's password login off while one is empty (README, "Adding a
-  # phone or tablet").
+  # of its own held by its SSH app, Blink Shell. The iPhone's and the iPad's are
+  # RSA keys, not Secure Enclave ones; a new device's key is made in the Secure
+  # Enclave (README, "Adding a phone or tablet"). The playbook won't turn a
+  # server's password login off while a device's line is empty.
   devices:
     iphone: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDT1g3U1wSCWQum9AUEeWecYKUyfrqNWRVxL4NGypdRZqzuuPMSbmesE4+YfGgYE/N2A0s5CDM8BwRYJZNlSLmMYhED2PGaU0gYUf4WblSpGIaE+NWHLAYpU8OUNdBhqs/uJB8KF2KC5+Z5WaBfQZwdiKJoDOVS9WrbZ67xK5/1zG0dKiwYxs0zNutqLHmaqcUI3Uy5lcsinjVj3LFaaNHU8Ic8fWBf0O56cgvih1bY3qv3pyVCD6Xq76vvcA8rHqFgkRPD7CAVCSmApb74C0+BCHdzCg8+jHEp2nZtFjt6XBPFxGXdexklajBE+jQo3WZvL0BU9j8HzvqiNAG7HCOwi38Hco7bWkzEFLepuzJ7ec90oGKX2xQdrYMQxlhOBrUs6eEKmTajeVdJ0Jz7Ix4Y7dYFvgC5ZS8vYX2yjSAzRVnAysGPmDJSyDXtKtAomu5GMfSnsYA3k6xEFBM4KGJoL6C4cB68faIs/XCjJCZiiFNAPXxqSVvc92itWzSlcBe99wsE2XaBtwyJGzEYY9+sO6BJXmhQSUj7hzXPidrmUd7xEyVIzMXc/tM+DeU4UpVnpcKmh0coB6qot9KTunnaql3qVI53dADWBz9VNO59ZeyJUDt2hqpeotzttJnwV7fuXHEA80AS6BZlznOPk/CrSYOd5dQ7KRy6a/PGkjgAFw== ctejada@gondolin"
     ipad: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC25yw+91pqfB8y+x5xDDACcQ5Wmkanqv+PANUxxFz5LUIN6VnXsTbWztoyUR1NPKbNY+6hjEJc9NAKnhHgjtKziMjK9wTWePO4wOgeAUYiemj9ac79pNnD5Q9P4K3UhPoaeUGJ2ywWgX8aTrzPD3R2iMTFGhJIuTrxzrz7D32SMBte9yUvL9HKz57SB/UBt702hTvbkuMToEzEJzjKewdsXxURB4lCh6HgvXMjBdS1ZV/H7z0YtzMeTbYGgYweRdnHFPDGTsgHRvulU6O802P+x8JBqP6jK+liaKoB+ZreuytVOFFFfUxP23mD7eX6cFk7FnLwd7aNr9W715sjN57HmC/nYSMuaMgTJWYoGs3111UnLD72GzvmWw8n3FLiA4+7ff/R2mQBSHBWNowGKSLEGau2QbgORgqQKuxJVPkt9CNrxM/s+70Zevxhhb2TUfXirVCyqGZpS4cEcQ9ofUe33Y0fbioVDs+IPHp7rhQMHBPVjAHpoyPuKeV4tAg1SFcEmgzNHec02P+UwEzVYsDxjgrgtOVW2GeKp0RmdIDqlXIKw/PNgMzhaeTc89VEbKlWBmp1KumprRy2QuoWp2WGA/l9pEPP9Anmnz7KJCQetxRRkgjtGz6+Z/TXPyoVCyFOfjdgtq1qhk0PDkazsULzq9AuFFI1M9nnAxVE/HDybw== ctejada@lothlorien"
