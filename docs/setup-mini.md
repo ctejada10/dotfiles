@@ -14,7 +14,8 @@ role. It runs the agents with nobody watching:
   Codex and Hermes on ChatGPT. There is no Anthropic API key on the mini.
 
 Once set up, it has no screen or keyboard. You reach it from the laptop over
-SSH and Screen Sharing, from every device through T3, and through Telegram.
+SSH and Screen Sharing, from Blink on the iPhone and iPad over Tailscale, from
+every device through T3, and through Telegram.
 
 This guide merges the October 2026 *Mac mini Setup Guide* with what this repo
 does, corrected for everything that didn't match when amon-sul was set up on
@@ -26,7 +27,8 @@ Back to the [README](../README.md).
 **Have on hand:** the mini's keyboard, mouse and a screen for the first day;
 1Password unlocked on your phone; logins for your Claude account, ChatGPT,
 GitHub, Dropbox, Tailscale, Telegram, Google Workspace, Todoist, Monarch and
-Obsidian Sync; T3 Code and Telegram on the iPhone and T3 Code on the iPad.
+Obsidian Sync; T3 Code, Telegram, Tailscale and Blink on the iPhone, and T3
+Code, Tailscale and Blink on the iPad.
 Optional: a dummy HDMI plug for Screen Sharing without a display, and an
 Ethernet cable, steadier than Wi-Fi for a machine that's always on.
 
@@ -157,9 +159,10 @@ the same pane and run the apply again.
 4. `/Applications/Tailscale.app/Contents/MacOS/Tailscale status` lists the
    mini and the laptop.
 
-Tailscale is for the laptop reaching the mini and the servers. Nothing on the
-iPhone or iPad needs it: they reach T3 through T3 Connect and Hermes through
-Telegram.
+Tailscale carries SSH and Screen Sharing from the laptop, and SSH from Blink on
+the iPhone and iPad ([SSH from the iPhone and iPad](#ssh-from-the-iphone-and-ipad)).
+T3 and Hermes don't need it: the devices reach T3 through T3 Connect and Hermes
+through Telegram.
 
 ### Key-only SSH: the next apply
 
@@ -184,14 +187,40 @@ ctejada`. Test 3 shows SSH still works at home if Tailscale is down. Once the
 laptop runs this repo, plain `ssh amon-sul` uses the agent by itself.
 
 Then `open vnc://amon-sul`, and sign in with the mini's macOS account name and
-password: it opens onto the mini's desktop. From Blink at home,
-`ssh ctejada@amon-sul.local` logs straight in.
+password: it opens onto the mini's desktop.
 
 **Prove it restarts on its own.** Choose Apple menu → Restart on the mini,
 close the window, and wait about three minutes. Then run test 2 again and
 `open vnc://amon-sul`. Test 2 needs Tailscale, which only starts once the mini
 has logged itself in, so if both work, the mini came back with nobody touching
 it.
+
+### SSH from the iPhone and iPad
+
+Blink Shell on each device holds a key of its own, and the mini's
+`authorized_keys` already has both (see
+[Phones and tablets](setup-servers.md#phones-and-tablets)). With Tailscale on
+the devices, `ssh amon-sul` works from anywhere.
+
+1. **The mini's name on the tailnet.** On the mini:
+
+   ```sh
+   ts=/Applications/Tailscale.app/Contents/MacOS/Tailscale; $ts status --json | plutil -extract Self.DNSName raw -o - - | sed 's/\.$//'; $ts ip -4
+   ```
+
+   The first line is its full name, `amon-sul.<tailnet>.ts.net`, and the
+   second its tailnet address. The tailnet's name stays out of this public
+   repo.
+2. **Tailscale on each device.** Install Tailscale from the App Store, sign in
+   with the same account as the Macs, and allow its VPN configuration. Turn on
+   VPN On Demand in its settings, so it reconnects on its own.
+3. **The host in Blink.** Type `config`, then Hosts, then +: **Host**
+   `amon-sul`, **HostName** the full name from step 1, **User** `ctejada`,
+   **Port** 22, and **Key** the device's own key. Save.
+4. With Wi-Fi off, over cellular, `ssh amon-sul` logs straight in.
+
+If Tailscale is ever down at home, a second Blink host with **HostName**
+`amon-sul.local` and the same key still gets in over the home network.
 
 ### The router
 
@@ -238,21 +267,26 @@ without valid credentials.
    {
      "hosts": {
        "arnor": "100.x.x.x",
+       "iphone": "100.x.x.x",
+       "ipad": "100.x.x.x",
        "amon-sul": "100.x.x.x",
        "esgaroth": "100.x.x.x",
        "rivendell": "100.x.x.x"
      },
      "grants": [
        {"src": ["arnor"], "dst": ["amon-sul"], "ip": ["tcp:22", "tcp:5900", "udp:5900-5902"]},
-       {"src": ["arnor"], "dst": ["esgaroth"], "ip": ["tcp:22"]},
+       {"src": ["iphone", "ipad"], "dst": ["amon-sul"], "ip": ["tcp:22"]},
+       {"src": ["arnor", "iphone", "ipad"], "dst": ["esgaroth"], "ip": ["tcp:22"]},
        {"src": ["arnor"], "dst": ["rivendell"], "ip": ["tcp:445"]}
      ]
    }
    ```
 
    Take each address from the Machines page. Drop the Rivendell grant if you
-   don't mount its Samba share from the laptop. Nothing lists amon-sul as a
-   source. After saving, test each connection from the laptop again; from the
+   don't mount its Samba share from the laptop, and the devices' esgaroth
+   grant if you never log in there from Blink. Nothing lists amon-sul as a
+   source. The iPhone and iPad keep their key expiry on: they ask you to sign
+   in again now and then. After saving, test each connection from the laptop again; from the
    mini, `nc -z -G 3 esgaroth 22` should now fail.
 
 ## 3. Dropbox and the repos
@@ -988,6 +1022,8 @@ then the laptop.
    change that delegates the implementation to Codex ends in a pull request.
 9. **The repo.** `chezmoi verify` exits 0, and t3-pstack's doctor shows only
    the auto-update FAIL.
+10. **SSH from the devices.** Over cellular, `ssh amon-sul` in Blink logs in
+    on the iPhone and on the iPad.
 
 You're ready when they pass, the mini is unplugged from its keyboard and
 screen and in its spot, and you've started a real task from the iPhone

@@ -322,7 +322,10 @@ private half never leaves the device.
    time, `uv run ansible-playbook site.yml -e target=<name> -K`: `-K` asks
    once and gives every server in the run the same sudo password. On the
    mini, `chezmoi update` writes its `authorized_keys`.
-4. From the device, log in to each server and to the mini.
+4. From the device, log in to each server and to the mini. For the mini, and
+   for esgaroth, the device needs Tailscale and a host in Blink, as
+   [SSH from the iPhone and iPad](setup-mini.md#ssh-from-the-iphone-and-ipad)
+   describes.
 
 A device whose line is empty has no key yet, and the playbook won't turn
 password login off on a server that still takes passwords until every device
