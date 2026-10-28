@@ -5,8 +5,9 @@
 # command has run: in time for an explanation like the pytest one, too late
 # for advice. Those commands are gated elsewhere: on the laptop each has an ask
 # or deny rule (when one matches, Claude Code builds the prompt from the rule
-# and drops a hook's reason), and the mini denies gc, repack, prune and
-# force-pushes and has no vault.
+# and drops a hook's reason). On the mini force-pushes are denied, guard-git.py
+# refuses every git command in Dropbox's repositories folder, and there is no
+# vault.
 
 payload=$(cat)
 cmd=$(printf '%s' "$payload" | /usr/bin/python3 -I -c \
@@ -23,7 +24,7 @@ warn() { warnings="${warnings:+$warnings
 
 case "$cmd" in
   *"git gc"*|*"git repack"*|*"git prune"*)
-    warn "git gc/repack/prune rewrites the object store. Every repo here is under Dropbox CloudStorage and one object store has already been destroyed. Confirm com.dropbox.ignored is set on .git before running this." ;;
+    warn "git gc/repack/prune rewrites the object store. Never in a repo under ~/Library/CloudStorage/Dropbox, where one object store has already been destroyed; the clones in ~/src aren't there." ;;
 esac
 case "$cmd" in
   *"push --force"*|*"push -f "*)

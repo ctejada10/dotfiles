@@ -148,8 +148,8 @@ end
 # The agent mini ###############################################################
 #
 # Where all development happens. No Docker Desktop and no Claude desktop app:
-# it holds as little as the agents need. Its Dropbox syncs only the
-# repositories folder (Selective Sync, set by hand).
+# it holds as little as the agents need. Its Dropbox syncs only the backups
+# folder, for the repos' snapshots (Selective Sync, set by hand).
 
 if role == "agent-mini"
   tap "hudochenkov/sshpass"

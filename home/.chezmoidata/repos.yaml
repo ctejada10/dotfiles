@@ -1,20 +1,25 @@
-# Repos in ~/src. On both Macs ~/src and ~/Repositories link to the Dropbox
-# repositories folder, and Dropbox carries the repos between them.
+# Repos each Mac clones from GitHub into a real ~/src, once, when they're
+# missing. Work moves between the Macs through GitHub, not Dropbox, and
+# nothing here pulls them.
 #
-# laptop: tools chezmoi clones once, when they're missing and Dropbox has
-#   finished bringing the folder down. Never pulled: they update themselves.
+# laptop: personal work and job hunting. The job-search tools update
+#   themselves, and cv's applications live in git-ignored folders of its
+#   checkout. Of the mini's repos only scripts is cloned here, because Raycast
+#   and Hazel run it; it's pulled by hand and still developed on the mini.
+#   Read the others on GitHub.
 # agent-mini: the development repos. All development happens on the mini,
-#   where agents work in them on their own branches and worktrees. The mini clones them once over HTTPS through gh if they aren't
-#   in Dropbox yet. On the laptop they are read-only: Git refuses any change to
-#   their refs there, and Claude Code can't edit them. Read them on the laptop;
-#   change them on the mini.
+#   where agents work in them on their own branches and worktrees. The mini
+#   clones them over HTTPS through gh.
 #
-# The lists are revisited in *Do a fresh-start pass on every repo: structure
-# and CI/CD*.
+# A repo no role lists stays where it is in Dropbox's repositories folder, the
+# repos' old home. The lists are revisited in *Do a fresh-start pass on every
+# repo: structure and CI/CD*.
 repos:
   laptop:
     career-ops: career-ops-hq/career-ops
     ai-job-search: ai-job-search-dev/ai-job-search
+    cv: ctejada10/cv
+    scripts: ctejada10/scripts
   agent-mini:
     hurin: ctejada10/hurin
     rivendell: ctejada10/rivendell
@@ -23,6 +28,3 @@ repos:
     readme: ctejada10/ctejada10
     arwen: ctejada10/arwen
     faramir: ctejada10/faramir
-# Any other repo in the Dropbox folder is the laptop's: writable there, and
-# changed on the mini only through a clone in ~/worktrees. cv is one on
-# purpose: its applications live in git-ignored folders of its checkout.

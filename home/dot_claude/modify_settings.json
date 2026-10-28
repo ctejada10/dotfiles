@@ -120,12 +120,13 @@
 {{- /* The mini runs agents nobody is watching. An ask rule still prompts in
        T3's full-access mode, and T3 holds the prompt with no time limit, so
        the mini has none: what its rules forbid is denied instead, and the
-       rest runs. hooks/guard-git.py blocks the Git forms a prefix misses. */ -}}
+       rest runs. hooks/guard-git.py blocks the Git forms a prefix misses.
+       gc, repack, prune and maintenance aren't here: they are fine in the
+       clones in ~/src, and guard-git.py refuses them in Dropbox. */ -}}
 {{- if .isAgent -}}
 {{-   $ask = list -}}
 {{-   $deny = concat $deny (list
-        "Bash(git gc:*)" "Bash(git repack:*)" "Bash(git prune:*)" "Bash(git maintenance:*)"
-        "Bash(git worktree prune:*)" "Bash(git filter-branch:*)" "Bash(git stash:*)"
+        "Bash(git filter-branch:*)" "Bash(git stash:*)"
         "Bash(git commit --no-verify:*)" "Bash(git push --no-verify:*)"
         "Bash(gh auth token:*)" "Bash(gh auth login:*)" "Bash(gh auth logout:*)"
         "Bash(gh auth refresh:*)" "Bash(gh auth setup-git:*)" "Bash(gh auth switch:*)"
@@ -156,12 +157,6 @@
         "Bash(gh pr merge:*)" "Bash(gh pr ready:*)") -}}
 {{- end -}}
 
-{{- /* A fetch on the laptop writes objects into a mini repo's .git, which
-       Dropbox shares; the read-only guard stops it, but nothing should start one. */ -}}
-{{- if $laptop -}}
-{{-   $allow = without $allow "Bash(git fetch:*)" -}}
-{{- end -}}
-
 {{- $s = setValueAtPath (list "permissions" "allow") $allow $s -}}
 {{- $s = setValueAtPath (list "permissions" "deny") $deny $s -}}
 {{- $s = setValueAtPath (list "permissions" "ask") $ask $s -}}
@@ -190,8 +185,8 @@
         (dict "type" "command" "command" (printf "%s/guard-paths.sh" $hookDir) "timeout" 10)))
       (dict "matcher" "Bash" "hooks" $bashHooks)) -}}
 {{- if .isAgent -}}
-{{- /* The mini's own Claude Code worktrees go in ~/worktrees, outside Dropbox,
-       instead of inside the repo. */ -}}
+{{- /* The mini's own Claude Code worktrees go in ~/worktrees, not inside the
+       repo's main checkout, which nothing edits. */ -}}
 {{-   $_ := set $ours "WorktreeCreate" (list (dict "hooks" (list
         (dict "type" "command" "command" (printf "%s/worktree.sh create" $hookDir) "timeout" 120)))) -}}
 {{-   $_ := set $ours "WorktreeRemove" (list (dict "hooks" (list

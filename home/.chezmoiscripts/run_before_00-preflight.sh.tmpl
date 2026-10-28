@@ -4,9 +4,10 @@
 # links point into the Dropbox checkout, and the cutover is the one moment
 # they should be replaced. Run the cutover apply with DOTFILES_CUTOVER=1.
 # ~/.ssh must be a real folder first, so nothing is written through the old
-# link into Dropbox. ~/src and ~/Repositories, and on the laptop ~/.config,
-# become links into Dropbox; chezmoi would delete a real folder in their place
-# without asking, so a real one with anything in it stops the apply.
+# link into Dropbox, and so must ~/src, where the repos are cloned. On the
+# laptop ~/.config becomes a link into Dropbox; chezmoi would delete a real
+# folder in its place without asking, so a real one with anything in it stops
+# the apply.
 
 set -uo pipefail
 SCRIPT=preflight
@@ -35,37 +36,39 @@ if [ ${#old[@]} -gt 0 ] && [ "${DOTFILES_CUTOVER:-}" != 1 ]; then
   status=1
 fi
 
-# A real folder where a link into Dropbox goes.
-replaced=(src Repositories)
+# ~/src used to link into Dropbox's repositories folder. Now the repos are
+# cloned into a real ~/src, and a clone made through the old link would land in
+# Dropbox and reach the other Mac.
+if [ -L "$HOME/src" ]; then
+  warn "the src folder in your home is still a link to $(readlink "$HOME/src"), and the repos are now cloned into a real ~/src."
+  warn "remove just the link, never what it points to, then apply again: unlink ~/src && chezmoi apply"
+  status=1
+fi
+
 {{- if eq .role "laptop" }}
-# ~/.config only once config-files exists: until then the link is held back.
-[ -e {{ .dropboxConfig | squote }} ] && replaced+=(.config)
-{{- end }}
-for name in "${replaced[@]}"; do
-  folder="$HOME/$name"
-  if [ -d "$folder" ] && [ ! -L "$folder" ] && [ -n "$(ls -A "$folder" 2>/dev/null)" ]; then
-    warn "$folder is a real folder with files in it, and this apply would replace it with a link into Dropbox."
-    if [ "$name" = .config ]; then
-      warn "move $folder/chezmoi into {{ .dropboxConfig }}, replacing any chezmoi folder already there, then link the folder yourself and apply:"
-      # 1Password's CLI makes its folder the first time it runs, so on a
-      # wiped laptop the apply's own 1Password check leaves one here holding
-      # only op's socket. The real one is in config-files.
-      only_socket=1
-      for entry in "$folder/op"/* "$folder/op"/.[!.]*; do
-        [ -e "$entry" ] || continue
-        [ "${entry##*/}" = op-daemon.sock ] || only_socket=0
-      done
-      if [ -d "$folder/op" ] && [ "$only_socket" = 1 ]; then
-        warn "  rm -r $folder/op    (it holds only the socket op made during this setup)"
-      fi
-      warn "  rmdir $folder && ln -s {{ .dropboxConfig }} $folder && chezmoi apply"
-      warn "rmdir refuses if anything else is still in $folder; move that into {{ .dropboxConfig }} first."
-    else
-      warn "move what you want to keep out of it, remove it, then run chezmoi apply again."
-    fi
-    status=1
+
+# A real ~/.config where the link into Dropbox's config-files goes, but only
+# once config-files exists: until then the link is held back.
+folder="$HOME/.config"
+if [ -e {{ .dropboxConfig | squote }} ] && [ -d "$folder" ] && [ ! -L "$folder" ] && [ -n "$(ls -A "$folder" 2>/dev/null)" ]; then
+  warn "$folder is a real folder with files in it, and this apply would replace it with a link into Dropbox."
+  warn "move $folder/chezmoi into {{ .dropboxConfig }}, replacing any chezmoi folder already there, then link the folder yourself and apply:"
+  # 1Password's CLI makes its folder the first time it runs, so on a wiped
+  # laptop the apply's own 1Password check leaves one here holding only op's
+  # socket. The real one is in config-files.
+  only_socket=1
+  for entry in "$folder/op"/* "$folder/op"/.[!.]*; do
+    [ -e "$entry" ] || continue
+    [ "${entry##*/}" = op-daemon.sock ] || only_socket=0
+  done
+  if [ -d "$folder/op" ] && [ "$only_socket" = 1 ]; then
+    warn "  rm -r $folder/op    (it holds only the socket op made during this setup)"
   fi
-done
+  warn "  rmdir $folder && ln -s {{ .dropboxConfig }} $folder && chezmoi apply"
+  warn "rmdir refuses if anything else is still in $folder; move that into {{ .dropboxConfig }} first."
+  status=1
+fi
+{{- end }}
 
 exit "$status"
 {{ end -}}

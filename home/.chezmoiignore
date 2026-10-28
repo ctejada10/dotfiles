@@ -68,8 +68,6 @@ agent-drafts/*
 {{ if not .isMac -}}
 Documents
 Library
-Repositories
-src
 {{- end }}
 
 {{- /* The laptop: personal work and job hunting. */}}
@@ -80,9 +78,6 @@ src
 .claude/hooks/guard-vault.py
 .claude/skills/draft-email-reply
 .claude/skills/todoist-triage
-.local/share/dotfiles/git/agent-owned.gitconfig
-.local/share/dotfiles/git/read-only-hooks
-.local/bin/git
 Library/CloudStorage/Dropbox
 {{- end }}
 
@@ -93,10 +88,10 @@ Library/CloudStorage/Dropbox
 .claude/hooks/guard-git.py
 .claude/hooks/worktree.sh
 .claude/hooks/agent-gate.sh
-.local/share/dotfiles/git/mini-dropbox.gitconfig
-.local/share/dotfiles/git/agent-worktree.gitconfig
 .local/bin/worktree-ttl
+.local/bin/repo-snapshots
 Library/LaunchAgents/com.carlosetejada.worktree-ttl.plist
+Library/LaunchAgents/com.carlosetejada.repo-snapshots.plist
 .claude/attended.md
 .local/share/claude-plugins
 .claude/skills/codebase-design

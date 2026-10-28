@@ -1,13 +1,15 @@
 #!/bin/bash
 # WorktreeCreate and WorktreeRemove, on the mini only. Claude Code would put
-# its worktrees inside the repo, under .claude/worktrees, which is inside
-# Dropbox. This puts them in ~/worktrees/<repo>/<name> instead, and the
-# dotfiles' in ~/worktrees/dotfiles/<name>. They are still worktrees of the
-# repo, so every commit made in one lands in that repo's .git.
+# its worktrees inside the repo, under .claude/worktrees, which for the agents'
+# repos is inside their main checkouts in ~/src, and nothing edits those. This
+# puts them in ~/worktrees/<repo>/<name> instead, and the dotfiles' in
+# ~/worktrees/dotfiles/<name>. They are still worktrees of the repo, so every
+# commit made in one lands in that repo's .git.
 #
-# A laptop repo (one in Dropbox that isn't linked in FirstMate's projects) gets
-# none, attended or not: its .git is the laptop's, and a worktree writes it.
-# Clone it from GitHub into ~/worktrees/<repo>/<branch> instead.
+# A repo in Dropbox's repositories folder, the repos' old home, gets none,
+# attended or not: nothing on this Mac reads or writes that folder, so no
+# worktree of it is made or removed here. Clone it from GitHub into
+# ~/worktrees/<repo>/<branch> and work there.
 #
 #   worktree.sh create   prints the new worktree's path on its last line; the
 #                        same name again reopens that worktree. A new one gets
@@ -38,22 +40,16 @@ main_repo() {
   dirname "$common"
 }
 
-# Whose repo the main checkout at $1 is, by guard-git.py's rule: agent for one
-# linked in FirstMate's projects (or a submodule of one), laptop for any other
-# repo in Dropbox, dotfiles for this repo's source, and nothing for the rest.
+# Whose repo the main checkout at $1 is, by guard-git.py's rule: dotfiles for
+# this repo's source, dropbox for any repo in Dropbox's repositories folder (or
+# a submodule of one), and nothing for the rest, the agents' clones in ~/src
+# among them.
 owner() {
-  local top box link agent
+  local top box
   top=$(physical "$1") || return 0
   [ "$top" = "$(physical "$HOME/.local/share/chezmoi")" ] && { echo dotfiles; return 0; }
   box=$(physical "$HOME/Library/CloudStorage/Dropbox/repositories") || return 0
-  case "$top/" in "$box"/*) ;; *) return 0 ;; esac
-  # Before the first apply has linked the projects, this stands aside.
-  [ -d "$HOME/.local/share/firstmate/projects" ] || return 0
-  for link in "$HOME/.local/share/firstmate/projects"/*; do
-    agent=$(physical "$link") || continue
-    case "$top/" in "$agent"/*) echo agent; return 0 ;; esac
-  done
-  echo laptop
+  case "$top/" in "$box"/*) echo dropbox ;; esac
 }
 
 # Whether $2 is one of the worktrees git lists for the repo at $1.
@@ -69,8 +65,8 @@ listed() {
   return 1
 }
 
-laptop_repo() {
-  die "$(basename "$1") is a laptop repo, and its .git in Dropbox is the laptop's, so no worktree of it is made or removed here. Clone it from GitHub into ~/worktrees/$(basename "$1")/<branch> and work there."
+dropbox_repo() {
+  die "$(basename "$1") is in Dropbox's repositories folder, the repos' old home, and nothing on this Mac reads or writes that folder, so no worktree of it is made or removed here. Clone it from GitHub into ~/worktrees/$(basename "$1")/<branch> and work there."
 }
 
 # A repo's agent files are untracked (the global excludes hide them), so
@@ -130,7 +126,7 @@ case "${1:-}" in
     [ -n "$name" ] || die "no worktree name in the payload"
     repo=$(main_repo "${cwd:-$PWD}") || die "${cwd:-$PWD} is not in a Git repo"
     case "$(owner "$repo")" in
-      laptop) laptop_repo "$repo" ;;
+      dropbox) dropbox_repo "$repo" ;;
       dotfiles) folder=dotfiles ;;
       *) folder=$(basename "$repo") ;;
     esac
@@ -165,7 +161,7 @@ case "${1:-}" in
     [ -n "$path" ] || die "no worktree path in the payload"
     [ -d "$path" ] || exit 0
     repo=$(main_repo "$path") || die "$path is not a Git worktree"
-    [ "$(owner "$repo")" = laptop ] && laptop_repo "$repo"
+    [ "$(owner "$repo")" = dropbox ] && dropbox_repo "$repo"
     branch=$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null)
     # git ignores these files, so git worktree remove would delete an edited
     # one without a word. Only an unchanged copy may go with the worktree.

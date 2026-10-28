@@ -176,6 +176,10 @@ for role in "${roles[@]}"; do
       grep -q 'claude-plugins\|agent-gate\|attended.md' <<< "$list" && fail "laptop has no superpowers" || pass "laptop has no superpowers"
       grep -qE '^\.local/bin/worktree-ttl$|LaunchAgents/com\.carlosetejada\.worktree-ttl' <<< "$list" \
         && fail "laptop has no worktree cleanup job" || pass "laptop has no worktree cleanup job"
+      grep -qE '^\.local/bin/repo-snapshots$|LaunchAgents/com\.carlosetejada\.repo-snapshots' <<< "$list" \
+        && fail "laptop has no snapshot job" || pass "laptop has no snapshot job"
+      grep -qE '^\.local/bin/git$|read-only-hooks|agent-owned' <<< "$list" \
+        && fail "laptop has no read-only guard left" || pass "laptop has no read-only guard left"
       [ "$plugins" = "freehire@freehire humanizer@humanizer obsidian@obsidian-skills" ] \
         && pass "laptop enables only job-hunting and personal plugins" || fail "laptop enables only job-hunting and personal plugins" "$plugins"
       ;;
@@ -234,23 +238,25 @@ for role in "${roles[@]}"; do
       gp() { printf '{"tool_input":{"file_path":"%s"}}' "$1" | AGENT_ATTENDED="$2" bash "$SANDBOX/guard-paths.sh" >/dev/null 2>&1; }
       gp "$HOME/.local/share/chezmoi/home/dot_zshrc" 0 && fail "the mini never edits the dotfiles checkout" || pass "the mini never edits the dotfiles checkout"
       gp "$HOME/worktrees/dotfiles/fix/home/dot_zshrc" 0 && pass "it edits a dotfiles worktree" || fail "it edits a dotfiles worktree"
-      # As chezmoi spells it, without the double slash a TMPDIR ending in / leaves.
-      dbx="$(cd "$SANDBOX/home/Library/CloudStorage/Dropbox" && pwd)/repositories"
-      gp "$dbx/hurin/x.py" 0 && fail "the mini never edits its own repos' main checkouts" || pass "the mini never edits its own repos' main checkouts"
+      gp "$HOME/src/hurin/x.py" 0 && fail "the mini never edits its own repos' main checkouts" || pass "the mini never edits its own repos' main checkouts"
+      gp "$HOME/src/hurin/x.py" 1 && fail "not even when Carlos is there" || pass "not even when Carlos is there"
+      gp "$HOME/SRC/Hurin/x.py" 0 && fail "nor through a differently cased path" || pass "nor through a differently cased path"
       gp "$HOME/worktrees/hurin/fix/x.py" 0 && pass "it edits them in a worktree" || fail "it edits them in a worktree"
       has "$list" ".local/bin/worktree-ttl" && has "$list" "Library/LaunchAgents/com.carlosetejada.worktree-ttl.plist" \
         && pass "the mini has the worktree cleanup job" || fail "the mini has the worktree cleanup job"
-      gp "$dbx/career-ops/x.md" 0 && fail "the mini never edits a laptop repo in place" || pass "the mini never edits a laptop repo in place"
-      gp "$dbx/career-ops/x.md" 1 && fail "not even when Carlos is there" || pass "not even when Carlos is there"
-      gp "${dbx/CloudStorage/cloudstorage}/career-ops/x.md" 0 && fail "nor through a differently cased path" || pass "nor through a differently cased path"
-      gp "$HOME/worktrees/career-ops/fix/x.md" 0 && pass "a clone of it in ~/worktrees is fine" || fail "a clone of it in ~/worktrees is fine"
+      has "$list" ".local/bin/repo-snapshots" && has "$list" "Library/LaunchAgents/com.carlosetejada.repo-snapshots.plist" \
+        && pass "the mini has the snapshot job" || fail "the mini has the snapshot job"
+      dbx="$HOME/Library/CloudStorage/Dropbox/repositories"
+      gp "$dbx/career-ops/x.md" 0 && fail "the mini never edits a repo in Dropbox's old repositories folder" || pass "the mini never edits a repo in Dropbox's old repositories folder"
+      gp "${dbx/CloudStorage/cloudstorage}/career-ops/x.md" 0 && fail "nor through a differently cased path there" || pass "nor through a differently cased path there"
+      gp "$HOME/worktrees/career-ops/fix/x.md" 0 && pass "a clone of another repo in ~/worktrees is fine" || fail "a clone of another repo in ~/worktrees is fine"
       [ "$mini_claude" = "@~/.codex/AGENTS.md"$'\n'"." ] && pass "the mini's CLAUDE.md is the one line that imports the shared rules" \
         || fail "the mini's CLAUDE.md is the one line that imports the shared rules" "${mini_claude%.}"
       cleanup_sandbox
       [ "$(grep -v '^#' <<< "$sshcfg" | grep -v '^$' | head -n 1)" = "Include ~/.colima/ssh_config" ] \
         && pass "the mini's SSH config starts with Colima's Include" || fail "the mini's SSH config starts with Colima's Include" "$sshcfg"
       jq -e '.hooks.WorktreeCreate[0].hooks[0].command | endswith("/.claude/hooks/worktree.sh create")' <<< "$settings" >/dev/null \
-        && pass "the mini's Claude Code worktrees go outside Dropbox" || fail "the mini's Claude Code worktrees go outside Dropbox" "$(jq -c .hooks <<< "$settings")"
+        && pass "the mini's Claude Code worktrees go through the worktree hook" || fail "the mini's Claude Code worktrees go through the worktree hook" "$(jq -c .hooks <<< "$settings")"
       ask=$(jq -r '.permissions.ask | join(" ")' <<< "$settings")
       grep -q 'git commit\|git push\|gh pr create' <<< "$ask" \
         && fail "the mini's own-branch git work never waits on a prompt" "$ask" || pass "the mini's own-branch git work never waits on a prompt"
@@ -286,8 +292,6 @@ jq -e '.hooks.Stop' <<< "$settings" >/dev/null && pass "keeps another tool's Sto
   && pass "a second apply leaves the hooks as they are" || fail "a second apply leaves the hooks as they are"
 [ "$(jq '[.hooks.PreToolUse[] | select(.matcher == "Bash")] | length' <<< "$again")" = 1 ] \
   && pass "a second apply adds no duplicate hook" || fail "a second apply adds no duplicate hook"
-jq -e '.permissions.allow | index("Bash(git fetch:*)") | not' <<< "$settings" >/dev/null \
-  && pass "the laptop never starts a fetch without asking" || fail "the laptop never starts a fetch without asking"
 fi
 
 section "the mini keeps what t3-pstack's installer writes"
@@ -333,89 +337,45 @@ if [ "$(uname)" = Darwin ]; then
     && pass "keeps gh's empty helper lines exactly" || fail "keeps gh's empty helper lines exactly"
   grep -qx $'\thelper = !/opt/homebrew/bin/gh auth git-credential' <<< "$gitconfig" \
     && pass "uses gh as the credential helper" || fail "uses gh as the credential helper"
-  grep -A1 -F '[includeIf "gitdir/i:' <<< "$gitconfig" | grep -qx $'\tpath = ~/.local/share/dotfiles/git/mini-dropbox.gitconfig' \
-    && pass "git diff leaves Dropbox checkouts' index alone" || fail "git diff leaves Dropbox checkouts' index alone"
+  grep -c -F '[includeIf "gitdir/i:' <<< "$gitconfig" | grep -qx 1 \
+    && pass "has one includeIf, for Dropbox's old repositories folder" || fail "has one includeIf, for Dropbox's old repositories folder" "$(grep -A1 -F '[includeIf' <<< "$gitconfig")"
   grep -qx $'\tinsteadOf = git@github.com:' <<< "$gitconfig" \
     && pass "rewrites SSH GitHub URLs to HTTPS" || fail "rewrites SSH GitHub URLs to HTTPS"
   grep -qx $'\tprogram = ssh-keygen' <<< "$gitconfig" \
     && pass "signs with ssh-keygen, not 1Password" || fail "signs with ssh-keygen, not 1Password"
 
-  # With real Git: a stand-in Dropbox folder with one agent repo, a worktree
-  # of it outside Dropbox, and one laptop repo.
-  box="$(cd "$(mktemp -d)" && pwd -P)"
-  for r in agentrepo laptoprepo; do git -C "$box" init -q "$r"; done
-  GIT_CONFIG_GLOBAL=/dev/null git -C "$box/agentrepo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
-  wt="$box-wt"
-  GIT_CONFIG_GLOBAL=/dev/null git -C "$box/agentrepo" worktree add -q -b fix "$wt"
-  override="{\"dropboxRepositories\": \"$box\", \"repos\": {\"laptop\": {}, \"agent-mini\": {\"agentrepo\": \"x/agentrepo\"}}}"
+  # With real Git: a repo still in a stand-in Dropbox repositories folder, and
+  # a clone in ~/src. Physical paths, because Git matches includeIf against
+  # the resolved .git path and expands ~ from HOME.
   sandbox agent-mini >/dev/null 2>&1
-  cz --override-data "$override" apply --exclude=scripts,externals >/dev/null 2>&1
-  refresh() { HOME="$SANDBOX/home" GIT_CONFIG_NOSYSTEM=1 git -C "$1" config --get diff.autoRefreshIndex; }
-  [ "$(refresh "$box/laptoprepo")" = false ] && pass "git diff never rewrites a laptop repo's index" || fail "git diff never rewrites a laptop repo's index" "$(refresh "$box/laptoprepo")"
-  [ "$(refresh "$box/agentrepo")" = false ] && pass "nor an agent repo's main checkout's" || fail "nor an agent repo's main checkout's"
-  [ "$(refresh "$wt")" = true ] && pass "but refreshes as usual in an agent's worktree" || fail "but refreshes as usual in an agent's worktree" "$(refresh "$wt")"
-  cleanup_sandbox
-  rm -rf "$box" "$wt"
-fi
-
-section "the laptop treats the mini's repos as read-only"
-if [ "$(uname)" = Darwin ]; then
-  # A stand-in Dropbox folder with one repo the mini owns and one it doesn't.
-  # Real paths, because Git matches includeIf against the resolved .git path.
-  box="$(cd "$(mktemp -d)" && pwd -P)"
-  for r in agentrepo laptoprepo; do git -C "$box" init -q "$r"; done
-  GIT_CONFIG_GLOBAL=/dev/null git -C "$box/agentrepo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
-  GIT_CONFIG_GLOBAL=/dev/null git -C "$box/agentrepo" branch other
-  override="{\"dropboxRepositories\": \"$box\", \"repos\": {\"laptop\": {}, \"agent-mini\": {\"agentrepo\": \"x/agentrepo\"}}}"
-  sandbox laptop arnor arnor >/dev/null 2>&1
-  cz --override-data "$override" apply --exclude=scripts,externals >/dev/null 2>&1
-  g() { HOME="$SANDBOX/home" GIT_CONFIG_NOSYSTEM=1 git -C "$box/$1" -c commit.gpgsign=false commit -q --allow-empty -m test 2>&1; }
-  out=$(g agentrepo); [ $? -ne 0 ] && grep -q "read-only on this Mac" <<< "$out" \
-    && pass "Git refuses a commit in the mini's repo" || fail "Git refuses a commit in the mini's repo" "$out"
-  out=$(g laptoprepo) && pass "Git allows a commit in the laptop's own repo" || fail "Git allows a commit in the laptop's own repo" "$out"
-  gc() { HOME="$SANDBOX/home" GIT_CONFIG_NOSYSTEM=1 git -C "$box/$1" config --get "$2"; }
-  [ "$(gc agentrepo core.fsmonitor)" = false ] && pass "no fsmonitor daemon in the mini's repo" || fail "no fsmonitor daemon in the mini's repo" "$(gc agentrepo core.fsmonitor)"
-  [ "$(gc agentrepo core.untrackedcache)" = false ] && pass "no untracked cache in the mini's repo" || fail "no untracked cache in the mini's repo"
-  [ "$(gc agentrepo gc.auto)" = 0 ] && pass "no automatic gc in the mini's repo" || fail "no automatic gc in the mini's repo"
-  [ "$(gc laptoprepo gc.auto)" = 0 ] && pass "no automatic gc in any Dropbox repo" || fail "no automatic gc in any Dropbox repo"
-  git -C "$box/agentrepo" remote add origin https://github.com/x/agentrepo.git
-  out=$(HOME="$SANDBOX/home" GIT_CONFIG_NOSYSTEM=1 git -C "$box/agentrepo" fetch origin 2>&1)
-  [ $? -ne 0 ] && grep -q "transport 'https' not allowed" <<< "$out" \
-    && pass "fetch and push from the mini's repo go nowhere" || fail "fetch and push from the mini's repo go nowhere" "$out"
-  wrapper="$SANDBOX/home/.local/bin/git"
-  w() { HOME="$SANDBOX/home" GIT_CONFIG_NOSYSTEM=1 "$wrapper" -C "$box/$1" "${@:2}" 2>&1; }
-  before=$(GIT_CONFIG_GLOBAL=/dev/null git -C "$box/agentrepo" symbolic-ref --short HEAD)
-  out=$(w agentrepo switch -q other); rc=$?
-  after=$(GIT_CONFIG_GLOBAL=/dev/null git -C "$box/agentrepo" symbolic-ref --short HEAD)
-  [ $rc -ne 0 ] && [ "$before" = "$after" ] && grep -q "belongs to the mini's agents" <<< "$out" \
-    && pass "git refuses a switch in the mini's repo before it starts" || fail "git refuses a switch in the mini's repo before it starts" "$out"
-  for cmd in "reset --hard" "rebase other" "stash" "fetch" "checkout -b x" "branch -D other" "add ." "restore ."; do
-    # shellcheck disable=SC2086
-    w agentrepo $cmd >/dev/null && fail "git refuses '$cmd' in the mini's repo" || pass "git refuses '$cmd' in the mini's repo"
-  done
-  for cmd in "status --short" "log --oneline -1" "branch" "branch -a" "diff" "config --get core.fsmonitor" "stash list"; do
-    # shellcheck disable=SC2086
-    w agentrepo $cmd >/dev/null && pass "git allows '$cmd' in the mini's repo" || fail "git allows '$cmd' in the mini's repo" "$(w agentrepo $cmd)"
-  done
-  out=$(HOME="$SANDBOX/home" GIT_CONFIG_NOSYSTEM=1 "$wrapper" -C "$box/laptoprepo" -c commit.gpgsign=false commit -q --allow-empty -m test 2>&1) \
-    && pass "git commits as usual in the laptop's own repo" || fail "git commits as usual in the laptop's own repo" "$out"
-  [ -x "$SANDBOX/home/.local/share/dotfiles/git/read-only-hooks/pre-rebase" ] \
-    && pass "the read-only hooks refuse a rebase before it starts" || fail "the read-only hooks refuse a rebase before it starts"
-  hook="$SANDBOX/home/.claude/hooks/guard-paths.sh"
-  printf '{"tool_input":{"file_path":"%s/agentrepo/x.py"}}' "$box" | "$hook" >/dev/null 2>&1
-  [ $? -eq 2 ] && pass "Claude Code can't edit the mini's repo" || fail "Claude Code can't edit the mini's repo"
-  printf '{"tool_input":{"file_path":"%s/laptoprepo/x.py"}}' "$box" | "$hook" >/dev/null 2>&1 \
-    && pass "Claude Code can edit the laptop's own repo" || fail "Claude Code can edit the laptop's own repo"
-  [ "$(readlink "$SANDBOX/home/src")" = "$box" ] && pass "src links to the Dropbox folder" || fail "src links to the Dropbox folder"
-  cleanup_sandbox
-  rm -rf "$box"
-
-  sandbox agent-mini >/dev/null 2>&1
+  cz apply --exclude=scripts,externals >/dev/null 2>&1
+  home="$(cd "$SANDBOX/home" && pwd -P)"
+  old="$home/Library/CloudStorage/Dropbox/repositories"
+  mkdir -p "$old" "$home/src"
+  GIT_CONFIG_GLOBAL=/dev/null git -C "$old" init -q oldrepo
+  GIT_CONFIG_GLOBAL=/dev/null git -C "$home/src" init -q clone
+  gcv() { HOME="$home" GIT_CONFIG_NOSYSTEM=1 git -C "$1" config --get "$2"; }
+  [ "$(gcv "$old/oldrepo" gc.auto)" = 0 ] && pass "no automatic gc in a repo still in Dropbox" || fail "no automatic gc in a repo still in Dropbox" "$(gcv "$old/oldrepo" gc.auto)"
+  [ "$(gcv "$old/oldrepo" core.fsmonitor)" = false ] && pass "nor an fsmonitor daemon there" || fail "nor an fsmonitor daemon there"
+  [ -z "$(gcv "$home/src/clone" gc.auto)" ] && pass "gc runs as usual in a clone in ~/src" || fail "gc runs as usual in a clone in ~/src" "$(gcv "$home/src/clone" gc.auto)"
   list=$(cz managed --include=all --path-style=relative 2>/dev/null)
   cleanup_sandbox
-  has "$list" "src" && pass "the mini's ~/src links to Dropbox too" || fail "the mini's ~/src links to Dropbox too"
-  lacks "$list" ".local/share/dotfiles/git/read-only-hooks/reference-transaction" \
-    && pass "the mini has no read-only guard on its own repos" || fail "the mini has no read-only guard on its own repos"
+  lacks "$list" "src" && lacks "$list" "Repositories" \
+    && pass "the mini's ~/src and ~/Repositories aren't links chezmoi makes" || fail "the mini's ~/src and ~/Repositories aren't links chezmoi makes"
+fi
+
+section "the laptop's repos"
+if [ "$(uname)" = Darwin ]; then
+  sandbox laptop arnor arnor >/dev/null 2>&1
+  list=$(cz managed --include=all --path-style=relative 2>/dev/null)
+  settings=$(cz cat "$SANDBOX/home/.claude/settings.json" 2>/dev/null)
+  clone=$(cz execute-template < "$REPO/home/.chezmoiscripts/run_after_50-clone-repos.sh.tmpl" 2>/dev/null)
+  cleanup_sandbox
+  lacks "$list" "src" && pass "chezmoi no longer links ~/src into Dropbox" || fail "chezmoi no longer links ~/src into Dropbox"
+  grep -q "ctejada10/cv" <<< "$clone" && grep -q "ctejada10/scripts" <<< "$clone" && ! grep -q "ctejada10/hurin" <<< "$clone" \
+    && pass "it clones cv and scripts, and none of the mini's other repos" || fail "it clones cv and scripts, and none of the mini's other repos"
+  jq -e '.permissions.allow | index("Bash(git fetch:*)")' <<< "$settings" >/dev/null \
+    && pass "Claude Code may fetch, with no .git shared through Dropbox" || fail "Claude Code may fetch, with no .git shared through Dropbox"
 fi
 
 section "a wiped laptop, before Dropbox has synced"
@@ -434,10 +394,16 @@ if [ "$(uname)" = Darwin ]; then
     && fail "the preflight stops before a real ~/.config is replaced" || pass "the preflight stops before a real ~/.config is replaced"
   [ -f "$SANDBOX/home/.config/chezmoi/chezmoi.toml" ] && pass "and leaves it as it was" || fail "and leaves it as it was"
   rm -rf "$SANDBOX/home/.config"
-  mkdir -p "$SANDBOX/home/src/hurin"
+  mkdir -p "$SANDBOX/home/src/cv"
   HOME="$SANDBOX/home" bash "$SANDBOX/preflight.sh" >/dev/null 2>&1 \
-    && fail "the preflight stops before a real ~/src is replaced" || pass "the preflight stops before a real ~/src is replaced"
+    && pass "the preflight passes a real ~/src with repos in it" || fail "the preflight passes a real ~/src with repos in it"
   rm -rf "$SANDBOX/home/src"
+  ln -s "$SANDBOX/home/Library/CloudStorage/Dropbox" "$SANDBOX/home/src"
+  HOME="$SANDBOX/home" bash "$SANDBOX/preflight.sh" >/dev/null 2>&1 \
+    && fail "the preflight stops while ~/src is still a link" || pass "the preflight stops while ~/src is still a link"
+  [ -L "$SANDBOX/home/src" ] && [ -d "$SANDBOX/home/Library/CloudStorage/Dropbox/config-files" ] \
+    && pass "and touches neither the link nor what it points to" || fail "and touches neither the link nor what it points to"
+  rm "$SANDBOX/home/src"
   HOME="$SANDBOX/home" bash "$SANDBOX/preflight.sh" >/dev/null 2>&1 \
     && pass "the preflight passes once nothing would be replaced" || fail "the preflight passes once nothing would be replaced"
 

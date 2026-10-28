@@ -1,0 +1,59 @@
+{{- if .isAgent -}}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.carlosetejada.repo-snapshots</string>
+
+	<!-- Writes a git bundle of each repo in ~/src whose refs changed since
+	     its last snapshot into Dropbox's backups folder, and keeps the
+	     newest four of each. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>{{ .chezmoi.homeDir }}/.local/bin/repo-snapshots</string>
+		<string>--keep</string>
+		<string>4</string>
+	</array>
+
+	<!-- Sundays at 03:47, a different minute from the cleanup job's 04:17.
+	     A run missed during sleep starts on wake; one missed while the Mac
+	     was off waits for the next Sunday. -->
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>0</integer>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>47</integer>
+	</dict>
+
+	<!-- The script also sets its own PATH, system tools first, and finds
+	     git in /opt/homebrew/bin by absolute path. -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>{{ .chezmoi.homeDir }}</string>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin</string>
+	</dict>
+
+	<key>WorkingDirectory</key>
+	<string>{{ .chezmoi.homeDir }}</string>
+
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityIO</key>
+	<true/>
+
+	<!-- The script writes its own log and attention file under
+	     ~/Library/Logs/repo-snapshots/. -->
+	<key>StandardOutPath</key>
+	<string>/dev/null</string>
+	<key>StandardErrorPath</key>
+	<string>{{ .chezmoi.homeDir }}/Library/Logs/repo-snapshots.stderr.log</string>
+</dict>
+</plist>
+{{ end -}}

@@ -1,0 +1,57 @@
+{{- if .isAgent -}}
+#!/bin/bash
+# Keeps the mini's LaunchAgents loaded: the worktree cleanup job and the
+# repos' snapshot job. Each is reloaded when its own plist changes, judged
+# against its own marker, so a change to one never reloads the other. Over
+# SSH, with no one logged in at the mini, launchd has no GUI session to load
+# them into; the next apply from the Mac's own session does.
+
+set -uo pipefail
+SCRIPT=launch-agents
+{{ template "script-lib.sh" . }}
+
+domain="gui/$(id -u)"
+
+# load NAME WHAT WHEN STOPS: loads com.carlosetejada.NAME from its plist, or
+# reloads it when the plist is newer than the job's own marker,
+# ~/Library/Logs/NAME/.loaded. STOPS says what doesn't happen while it is
+# not loaded.
+load() {
+  local name=$1 what=$2 when=$3 stops=$4 label plist marker tries
+  label="com.carlosetejada.$name"
+  plist="$HOME/Library/LaunchAgents/$label.plist"
+  marker="$HOME/Library/Logs/$name/.loaded"
+  [ -f "$plist" ] || return 0
+  if launchctl print "$domain/$label" >/dev/null 2>&1; then
+    [ -e "$marker" ] && [ ! "$plist" -nt "$marker" ] && return 0
+    launchctl bootout "$domain/$label" 2>/dev/null || true
+    # Bootout returns before launchd has let go of a job that is running, and
+    # bootstrap fails while the label is still loaded. launchd kills the job
+    # 20 seconds after asking it to stop, so 30 seconds is enough.
+    tries=0
+    while launchctl print "$domain/$label" >/dev/null 2>&1 && [ "$tries" -lt 30 ]; do
+      sleep 1
+      tries=$((tries + 1))
+    done
+  fi
+  if launchctl bootstrap "$domain" "$plist"; then
+    mkdir -p "$(dirname "$marker")" && touch "$marker"
+    say "loaded the $what ($when)"
+  else
+    warn "couldn't load $plist, so the $what is not loaded and $stops until the next apply, which tries again"
+  fi
+}
+
+plists=0
+for name in worktree-ttl repo-snapshots; do
+  [ -f "$HOME/Library/LaunchAgents/com.carlosetejada.$name.plist" ] && plists=$((plists + 1))
+done
+[ "$plists" -gt 0 ] || exit 0
+if ! launchctl print "$domain" >/dev/null 2>&1; then
+  warn "no login session to load the cleanup and snapshot jobs into; the next apply at the mini's own session loads them"
+  exit 0
+fi
+load worktree-ttl "worktree cleanup job" "daily at 04:17" "nothing is cleaned"
+load repo-snapshots "snapshot job" "Sundays at 03:47" "no snapshot is taken"
+exit 0
+{{ end -}}
