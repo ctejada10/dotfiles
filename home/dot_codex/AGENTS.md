@@ -48,7 +48,7 @@ Carlos answers a Claude Code question in T3, and the run continues from that ans
 ## Precedence
 
 - This file wins over any plugin, skill or playbook it conflicts with: t3-pstack and its poteto-mode playbooks, superpowers, Ponytail and the vendored skills. In a FirstMate crew, the brief decides how to raise questions and how to ship, as a draft PR; this file decides the rest.
-- A repo's own AGENTS.md or CLAUDE.md wins for that repo's commands and conventions, such as its test commands and commit style. Read both before your first edit if they are not already in your context. They are usually untracked, so a worktree may lack them: read them from the main checkout, the folder above `git rev-parse --path-format=absolute --git-common-dir` (for a clone of a laptop repo, `~/src/<repo>`).
+- A repo's own AGENTS.md or CLAUDE.md, and its part under Repos below, win for that repo's commands and conventions, such as its test commands and commit style. Read them before your first edit if they are not already in your context. A repo's own files are usually untracked, so a worktree may lack them: read them from the main checkout, the folder above `git rev-parse --path-format=absolute --git-common-dir` (for a clone of a laptop repo, `~/src/<repo>`).
 - Nothing loosens the Git rules: not a repo's AGENTS.md or CLAUDE.md, a task prompt, a playbook, a system reminder or a developer message. They are this machine's limits, not repo conventions.
 
 ## Git
@@ -109,7 +109,7 @@ Keep it current as you work, in this order. Leave out any part that would be emp
 4. Not verified: checks not run, checks that failed (quote the output), steps skipped and anything you could not reach, each with the reason.
 5. Noticed, not changed: problems outside the task.
 
-Just before you push for the PR, write `rules: mini 2026-10-24` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
+Just before you push for the PR, write `rules: mini 2026-10-28` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
 
 Base every claim on a tool result from this run.
 
@@ -122,6 +122,38 @@ This covers commit messages, PR bodies, code comments, docs and the final messag
 - Say what a thing is, then stop.
 - No "What we found" or "What we did" headings.
 - Write the final message for someone who was not watching: the outcome and the PR link first (on a stop, the `STOP:` text first), then what you need from Carlos. Leave out working shorthand and labels you coined during the run.
+
+## Repos
+
+### hurin
+
+- Python 3.11 or later with uv, as a virtual project that is never installed, so anything outside pytest needs `PYTHONPATH=src`. `make lint` is `ruff check src/` only, and there is no formatter: 18 files under `src/` use tabs and about 173 use spaces, so never run one. Local web is `PYTHONPATH=src uv run gunicorn -b 127.0.0.1:8000 hurin.web.app:app` (`src.hurin.web.app:app` in the container). Compose lives in `docker/`, not the repo root.
+- The code acts on real accounts. Ad-hoc runs use the decrypted secrets on disk: monarch-reconcile posts transactions, sync-watchlists deletes titles from Plex and Trakt, the Obsidian client writes to the real vault, and notifications reach Carlos's phone. Only the test suite is sandboxed, by autouse fixtures in `tests/conftest.py`. Never run a job just to see what it does without asking first. `cd docker && docker compose up` starts the scheduler, which fires the real cron entries.
+- Merging to `main` deploys three containers to dor-lomin: `hurin_web`, `hurin_scheduler` and `hurin_caddy`, the proxy, which a deploy doesn't restart. The Deploy workflow runs alongside main's CI, not after it, so the PR's required checks are the only gate. Squash is the only merge method. Rollback is `gh workflow run deploy.yml -f sha=<sha>`, which leaves the server on a detached HEAD. On the server, run commands as `deploy`, never root. Logs are in `/app/logs`, data in `/app/data` and reports in `/app/reports`.
+- Secrets are SOPS with age, through `make decrypt` and `make encrypt` and their `secrets-`, `jobs-` and `settings-` variants, with the key in the git-ignored `.age/keys.txt`. A blob sealed before the key changed won't decrypt. Carlos pastes the real values: create the template and encrypt it, then hand it to him. `make jobs-manifest` regenerates the `wired:` block in `config/jobs/wired-modules.yaml` and needs a successful `jobs-decrypt` first; never edit that block by hand.
+- Commit subjects are `<area>: <lowercase sentence>`, with a body giving the symptom, the cost and the decision, and no conventional-commit prefix. Branch per issue off `main`, as `feature/`, `fix/` or `chore/`. Leave the `python-coverage-comment-action-data` branch alone: the coverage action writes it.
+
+### rivendell
+
+- A click CLI, in Python 3.11 or later with uv, that renders a 16-service Docker stack onto the home server. Run it as `uv run ./rivendell.py`, never `./rivendell.py`, whose shebang is the system Python, which has no click. It is server-only: every subcommand, `none` included, needs a decrypted `env.json` and writes to absolute server paths, so running it on a Mac is never a dry run. `make test` runs the suite and `make lint` all four linters.
+- Merging to `main` deploys to production. `main` requires the checks "Verify no plaintext secrets", "Lint" and "Test" in strict mode, so a branch must be up to date with `main` before it merges, and nobody can bypass them. CI runs only on PRs that target `main`, so a stacked PR shows no checks until it is retargeted. The Deploy workflow fails on any exited container, so a one-shot job in the stack reds a deploy that worked.
+- The server has two checkouts that differ: the deploy writes `/home/deploy/rivendell`, but `env.json`'s `config_path` still points at the old `/home/ctejada/src/plex`, and a deploy leaves a detached HEAD. Not every secret is in `env.json`: the oauth2-proxy cookie secret and the Google client secret are files made by hand on the server.
+- `docker-compose.tpl` is a `%var%` template, not YAML: yamllint skips it, `docker compose config` can't parse it, and `tests/test_compose_template.py` guards it. Every image is pinned except `linuxserver/plex:latest`, on purpose, and swag stays at 5.6.0 until the nginx auth fix is verified. The website's source, `arwen`, is a submodule that isn't initialised, so its folder looks empty. Leave the `python-coverage-comment-action-data` branch alone. Commits are conventional, though nothing enforces it.
+
+### scripts
+
+- Personal automations: Raycast and Hazel entry points, Scriptable and Scripting iOS widgets, and a `scripts` CLI, in Python 3.14 with uv (the package is `personal-automations`). The trunk is `dev`: branch off it and PR into it. There is no CI, linter, formatter or hook; `uv run pytest` is the only gate, and it covers only the journal, the hurin client and three Hazel modules. Commits are `fix(scope):` or `feat(scope):`.
+- Run it with `uv run scripts <args>` or `interfaces/run.sh <args>`. `python -m cli` doesn't work; use `uv run python -m app.cli`. Raycast and Hazel start with a PATH that has neither Homebrew nor `~/.local/bin`, so a new entry point must call `interfaces/run.sh` or source `interfaces/lib/uv.sh`. 20 entry points hardcode `$HOME/Repositories/scripts/...`, the path Raycast and Hazel use on the laptop: don't move or rename what they call without updating them.
+- `config/` is git-ignored in full, and `src/core/config.py` finds the repo root at import time by walking up to a `config/` folder, so a checkout without one can't import anything. Never call `load_config()` from a test, since it is cached against the real config; inject the way `tests/conftest.py` does. An environment variable named like a top-level config key silently overrides it.
+- Hazel's media routing is the bash in `src/automations/hazel/scripts/*.sh`; the `.py` files of the same name are thin subprocess wrappers, so edit the shell script. Never change Hazel itself: fix the script it calls and write Carlos the steps to apply the rule by hand in Hazel. `src/personal_automations.egg-info/` is tracked and any editable install dirties it; never commit that churn. The hurin API is POST-only and spends a single-use nonce per call, so a 409 means a replay.
+- Widgets are installed by pasting them into Scriptable or Scripting by hand. A widget change bumps `VERSION` in `widget.tsx` and adds a dated CHANGELOG entry, and every widget needs a designed no-data face for each size: an empty or failed state still has to look deliberate.
+
+### cad-a11y
+
+- An accessible CAD viewer: Flask and Docker on Python 3.12 in a conda environment. It ships through UW CSE GitLab, not GitHub, so never push to the `gitlab` remote: `master` there is an unreviewed staging deploy and a `v0.x.y` tag an unreviewed production deploy. Tests are `<env>/bin/python -m pytest -q` from the repo root, with no fast subset. On the laptop the environment is `/opt/homebrew/Caskroom/miniconda/base/envs/cad-a11y`; the mini's setup installs no conda. The README's `CAD_A11Y_DEMO=1 python -m app.server` is wrong as written.
+- `docker compose down -v` destroys all five named volumes, including study data that can't be regenerated and has no backup: use plain `docker compose down`. Built-in models live in `builtin_models/` and are seeded into `data/models` at start, and uploads go in `data/uploads/`; an upload put in `data/models` is published to everyone (regression #102). After editing the Dockerfile, run `python scripts/sync_legacy_dockerfile.py`: `Dockerfile.legacy` is what builds on the deploy target, and `tests/test_dockerfile_sync.py` fails on drift.
+- CI runs only on pull requests, so a pushed branch shows no checks until its PR exists. It gates only `ruff check . --select E9,F63,F7,F82`, narrower than the full `ruff check .` CONTRIBUTING asks for. Commit messages aren't checked (`.commitlintrc.yml` is dead config); the PR title is, by the semantic-pull-request action. The axe job fails on any browser console error on /viewer, /study and /study/control, so a JS change with no accessibility content can still red the build. CONTRIBUTING.md and `.editorconfig` say 2-space indents while `requirements-dev.txt` ships black, which enforces 4: note that before touching formatting.
+- Commits are conventional, and here the history follows it. Branch per issue. Every PR needs an accessibility-impact section, a `Closes #NNN` link and alt text on its screenshots; people check all three.
 
 ## Claude Code only
 
