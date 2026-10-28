@@ -118,35 +118,13 @@
 	grog = log --graph --abbrev-commit --decorate --all --format=format:\"%C(bold blue)%h%C(reset) - %C(bold cyan)%aD%C(dim white) - %an%C(reset) %C(bold green)(%ar)%C(reset)%C(bold yellow)%d%C(reset)%n %C(white)%s%C(reset)\"
 	cleanup = !git fetch && git branch -vv | grep ': gone]' | awk '{print $1}' | xargs git branch -d 2>/dev/null; true
 
-{{- /* Last, because Git keeps the last value it reads: these must win over
-       [core] and everything above for the repos they match. */}}
+{{- /* Last, because Git keeps the last value it reads: this must win over
+       [core] and everything above for the repos it matches. */}}
 {{- if and .isMac (not .ci) }}
 
-# No automatic gc or maintenance in any repo Dropbox syncs, on either Mac.
-[includeIf "gitdir/i:{{ .dropboxRepositories }}/"]
+# No automatic gc or maintenance in a repo still in Dropbox's repositories
+# folder, the repos' old home: Dropbox would sync the repack, and an object
+# store there has been destroyed once. The clones in ~/src are ordinary repos.
+[includeIf "gitdir/i:~/Library/CloudStorage/Dropbox/repositories/"]
 	path = ~/.local/share/dotfiles/git/dropbox.gitconfig
-{{- end }}
-
-{{- if .isAgent }}
-
-# On the mini, git diff leaves a Dropbox checkout's index alone too.
-[includeIf "gitdir/i:{{ .dropboxRepositories }}/"]
-	path = ~/.local/share/dotfiles/git/mini-dropbox.gitconfig
-{{-   range $dir, $_ := index .repos "agent-mini" }}
-
-# Except in the worktrees of {{ $dir }}, whose index only the mini writes.
-[includeIf "gitdir/i:{{ joinPath $.dropboxRepositories $dir }}/.git/worktrees/"]
-	path = ~/.local/share/dotfiles/git/agent-worktree.gitconfig
-{{-   end }}
-{{- end }}
-
-{{- if eq .role "laptop" }}
-{{-   range $dir, $_ := index .repos "agent-mini" }}
-
-# {{ $dir }} belongs to the mini's agents: read-only on this Mac. Git resolves
-# ~/src to the Dropbox folder before matching, so the real path is used, and
-# matches it whatever its case, as macOS does.
-[includeIf "gitdir/i:{{ joinPath $.dropboxRepositories $dir }}/"]
-	path = ~/.local/share/dotfiles/git/agent-owned.gitconfig
-{{-   end }}
 {{- end }}

@@ -5,9 +5,10 @@
 #
 # Covers Claude Code's hook-made worktrees (~/worktrees/<repo>/<name>),
 # agents' hand-made ones (~/worktrees/<repo>/<branch>), and the full clones
-# of laptop repos that agents make there from GitHub. It only counts the
-# worktrees under ~/.t3/worktrees and ~/.treehouse, which T3 Code and
-# treehouse/FirstMate manage themselves.
+# of other repos that agents make there from GitHub: any repo that isn't one
+# of the mini's own in ~/src. It only counts the worktrees under
+# ~/.t3/worktrees and ~/.treehouse, which T3 Code and treehouse/FirstMate
+# manage themselves.
 #
 # It never runs git gc, repack, prune, worktree prune or maintenance, never
 # fetches, and never passes --force or -f to git. A worktree's removal is a
@@ -31,7 +32,7 @@ DELETE_BRANCHES=1
 CLEAR_MISSING=1
 ROOTS=""
 CHECK=""
-REPOS_ROOT="$HOME/Library/CloudStorage/Dropbox/repositories"
+REPOS_ROOT="$HOME/src"
 TOOL_ROOTS="$HOME/.t3/worktrees|T3 Code storage cleanup (Settings > Storage)
 $HOME/.treehouse|treehouse prune and FirstMate teardown"
 CLAUDE_DIR=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
@@ -134,8 +135,7 @@ Usage: worktree-ttl [options]
   --keep-missing        Never clear the entry of a worktree whose folder is gone.
                         Use this on any machine other than the one that made them.
   --root DIR            Folder to sweep. Repeatable. Default: ~/worktrees.
-  --repos-root DIR      Where the main checkouts live.
-                        Default: ~/Library/CloudStorage/Dropbox/repositories.
+  --repos-root DIR      Where the main checkouts live. Default: ~/src.
   --log FILE            Log file. Default: ~/Library/Logs/worktree-ttl/worktree-ttl.log.
   --attention-file FILE What needs a person, rewritten every run.
                         Default: ~/Library/Logs/worktree-ttl/attention.txt.
@@ -198,7 +198,7 @@ log() {
 
 # git with the guards this job relies on. -c settings reach the child
 # `git status` that `git worktree remove` runs, so untracked files are
-# always seen and no fsmonitor daemon is started in the Dropbox .git.
+# always seen and no fsmonitor daemon is started in a main checkout's .git.
 g() {
   "$GIT" -c maintenance.auto=false -c gc.auto=0 -c core.fsmonitor=false \
     -c core.hooksPath=/dev/null -c status.showUntrackedFiles=normal \
@@ -286,7 +286,7 @@ keep_noted() {
 # Kept because git could not read a reflog, or could not say what it holds,
 # so the job cannot tell what removal would lose.
 keep_unread() {
-  keep_noted "$*" "check that git can read the files under its logs folders (a Dropbox file that will not download, or their permissions)"
+  keep_noted "$*" "check that git can read the files under its logs folders (their permissions)"
 }
 
 fail() {
@@ -295,9 +295,8 @@ fail() {
   attention "$WT | removal failed: ${TAG:-}$*"
 }
 
-# Why a folder cannot be listed, unless it is simply not there. macOS keeps
-# /bin/bash out of the Dropbox folder until it is given access in Privacy &
-# Security, and every git call and glob there then fails without a word.
+# Why a folder cannot be listed, unless it is simply not there. In a folder
+# the job may not read, every git call and glob fails without a word.
 unreadable() {
   local err
   /bin/ls -- "$1" >/dev/null 2>"$TMP/ls.err" && return 1
@@ -512,9 +511,8 @@ reflog_missing() {
 }
 
 # Every commit a reflog file names. A reflog that is there but cannot be
-# read, such as a Dropbox placeholder that will not download or a file with
-# no read permission, fails, and so does one the job cannot look for, so
-# the caller keeps the worktree.
+# read, such as a file with no read permission, fails, and so does one the
+# job cannot look for, so the caller keeps the worktree.
 reflog_oids() {
   local rc
   reflog_missing "$1"
@@ -1447,12 +1445,12 @@ clone_orphans() {
   awk '!seen[$0]++' "$o.out"
 }
 
-# A full clone in the sweep folder, as AGENTS.md has agents make of a laptop
-# repo. It goes on a worktree's terms, but no main checkout keeps its refs
-# and no `git worktree remove` can refuse it, so its .git must hold nothing
-# that is not on GitHub: no stash or other refs, no worktrees of its own,
-# and every local branch in its remote's default branch, pushed with no open
-# PR, or in a merged PR.
+# A full clone in the sweep folder, as AGENTS.md has agents make of another
+# repo, one that isn't the mini's own in ~/src. It goes on a worktree's
+# terms, but no main checkout keeps its refs and no `git worktree remove`
+# can refuse it, so its .git must hold nothing that is not on GitHub: no
+# stash or other refs, no worktrees of its own, and every local branch in
+# its remote's default branch, pushed with no open PR, or in a merged PR.
 evaluate_clone() {
   local n gd b oid def url unpushed refs merged="" head_br head_oid reason bnote=""
   SAFE=""
@@ -1877,13 +1875,12 @@ if [ ! -s "$TMP/roots" ]; then
   exit 0
 fi
 
-# Every worktree's admin dir is under the repos folder, so when macOS denies
-# access to it, each healthy worktree would look broken. Stop before judging
+# Every worktree's admin dir is under the repos folder, so when the job may
+# not read it, each healthy worktree would look broken. Stop before judging
 # any of them, and say why where a person will see it.
 if why=$(unreadable "$REPOS_ROOT"); then
-  printf '%s: cannot read %s: %s; give /bin/bash access to the Dropbox folder in Privacy & Security\n' \
-    "$PROG" "$REPOS_ROOT" "$why" >&2
-  attention "$REPOS_ROOT | cannot read the repositories folder ($why), so no worktree was judged; give /bin/bash access to the Dropbox folder in Privacy & Security"
+  printf '%s: cannot read %s: %s; check its permissions\n' "$PROG" "$REPOS_ROOT" "$why" >&2
+  attention "$REPOS_ROOT | cannot read the repositories folder ($why), so no worktree was judged; check its permissions"
   write_attention
   log "ABORT   cannot read $REPOS_ROOT: $why"
   logger -t "$PROG" "aborted: cannot read $REPOS_ROOT: $why" 2>/dev/null
@@ -1920,7 +1917,7 @@ while IFS= read -r c; do
     case $gd in /* | '') ;; *) gd="$c/$gd" ;; esac
     if [ -n "$gd" ] && why=$(unreadable "$gd"); then
       keep "cannot read $gd: $why"
-      attention "$c | cannot read $gd: $why; give /bin/bash access to that folder in Privacy & Security"
+      attention "$c | cannot read $gd: $why; check its permissions"
     elif [ -n "$gd" ] && [ -e "$gd" ]; then
       keep "broken: .git points to $gd, which is not a valid repository"
       attention "$c | broken: its admin dir $gd is there, but git cannot use it; its files are still there"

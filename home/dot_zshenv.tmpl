@@ -8,13 +8,6 @@ export HOMEBREW_NO_AUTO_UPDATE=1
 # The shared Brewfile picks its blocks from this, so `brew bundle` works by hand.
 export HOMEBREW_TILDE_ROLE={{ .role }}
 {{- end }}
-{{- if or (eq .role "laptop") .isAgent }}
-
-# The repos live in Dropbox, and each Mac only reads the other's. Status
-# checks (the prompt runs one at every line) must not rewrite .git/index
-# behind Dropbox's back, so Git skips its optional index refresh on this Mac.
-export GIT_OPTIONAL_LOCKS=0
-{{- end }}
 {{- if .isAgent }}
 
 # no-mistakes reads these from the login shell: no telemetry, and no update
@@ -25,7 +18,7 @@ export NO_MISTAKES_NO_UPDATE_CHECK=1
 # OpenSCAD's libraries (BOSL2) live outside ~/Documents on the mini.
 export OPENSCADPATH="$HOME/.local/share/openscad/libraries"
 
-# FirstMate's state and projects, outside Dropbox. Its crews' worktrees go to
-# treehouse's default, ~/.treehouse.
+# FirstMate's state and projects. Its crews' worktrees go to treehouse's
+# default, ~/.treehouse.
 export FM_HOME="$HOME/{{ .firstmate.home }}"
 {{- end }}

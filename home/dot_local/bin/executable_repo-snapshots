@@ -1,0 +1,441 @@
+#!/bin/bash
+#
+# repo-snapshots: keep git bundles of the repos in ~/src in Dropbox, so
+# Dropbox still holds a copy of each repo that does not depend on GitHub.
+#
+# For each folder directly under ~/src that has a .git, it takes a
+# fingerprint of all the repo's refs, the stash included. When that changed
+# since the repo's last snapshot, it writes `git bundle create --all` into
+# backups/repositories/snapshots/<repo>/<YYYY-MM-DD>.bundle in Dropbox under
+# a temporary name, checks it, and only then renames it and records the
+# fingerprint. It keeps the newest four bundles of each repo and deletes no
+# other file. A bundle holds what the refs reach and nothing else: no
+# untracked file, such as a .env or notes, goes in.
+#
+# The fingerprints stay on this Mac, under ~/Library/Logs/repo-snapshots/state,
+# so deciding never downloads a bundle. The job never fetches, gc's or
+# writes the repos. Every git call runs with GIT_OPTIONAL_LOCKS=0 and with
+# auto maintenance, fsmonitor and hooks switched off for that one command.
+#
+# It writes nowhere in Dropbox but backups/repositories/snapshots, and
+# nothing there at all when ~/src is missing or a link, or when backups is
+# not there: a backups folder made here while Dropbox is not syncing it
+# would come back as a conflicting copy.
+#
+# Usage: repo-snapshots [--dry-run] [--root DIR] [--dest DIR] [--keep N]
+
+set -u
+umask 077
+
+PROG=repo-snapshots
+LABEL=com.carlosetejada.repo-snapshots
+DRY_RUN=0
+KEEP=4
+ROOT="$HOME/src"
+DEST="$HOME/Library/CloudStorage/Dropbox/backups/repositories/snapshots"
+STATE_DIR="$HOME/Library/Logs/repo-snapshots"
+PRINTS="$STATE_DIR/state"
+LOG_FILE="$STATE_DIR/repo-snapshots.log"
+ATTENTION_FILE="$STATE_DIR/attention.txt"
+LOG_MAX_LINES=20000
+
+# System tools come first, as in worktree-ttl, so a Homebrew tool can never
+# shadow one. git is found by absolute path.
+PATH=${REPO_SNAPSHOTS_PATH:-/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin}
+GIT=${REPO_SNAPSHOTS_GIT:-}
+if [ -z "$GIT" ]; then
+  for c in /opt/homebrew/bin/git /usr/local/bin/git /usr/bin/git; do
+    if [ -x "$c" ]; then GIT=$c; break; fi
+  done
+fi
+LC_ALL=C
+GIT_OPTIONAL_LOCKS=0
+GIT_TERMINAL_PROMPT=0
+export PATH LC_ALL GIT_OPTIONAL_LOCKS GIT_TERMINAL_PROMPT
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+# The day a new bundle is named for. The tests set it to stand for later runs.
+TODAY=${REPO_SNAPSHOTS_TODAY:-$(date +%Y-%m-%d)}
+
+usage() {
+  cat <<'EOF'
+Usage: repo-snapshots [options]
+
+  -n, --dry-run   Decide and print, but write nothing: no bundle, no
+                  fingerprint, no log and no attention file.
+  --root DIR      The folder whose repos are snapshotted: each folder directly
+                  under it that has a .git. Default: ~/src.
+  --dest DIR      Where the bundles go, as DIR/<repo>/<YYYY-MM-DD>.bundle.
+                  Default: ~/Library/CloudStorage/Dropbox/backups/repositories/snapshots.
+                  The folder two levels up, backups by default, must exist:
+                  the job makes the two folders below it, never that one.
+  --keep N        Bundles to keep for each repo, the newest (default 4).
+  -h, --help      Show this help.
+
+It logs to ~/Library/Logs/repo-snapshots/repo-snapshots.log, and rewrites
+attention.txt there on every run with what needs a person.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    -n | --dry-run) DRY_RUN=1 ;;
+    --root) shift; ROOT=${1:-} ;;
+    --dest) shift; DEST=${1:-} ;;
+    --keep) shift; KEEP=${1:-} ;;
+    --keep=*) KEEP=${1#*=} ;;
+    -h | --help) usage; exit 0 ;;
+    *) printf '%s: unknown option: %s\n' "$PROG" "$1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+case $KEEP in
+  '' | *[!0-9]*) printf '%s: --keep needs a whole number\n' "$PROG" >&2; exit 2 ;;
+esac
+KEEP=$((10#$KEEP))
+if [ "$KEEP" -lt 1 ]; then
+  printf '%s: --keep must be at least 1\n' "$PROG" >&2
+  exit 2
+fi
+case $TODAY in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+  *) printf '%s: %s is not a date in the form YYYY-MM-DD\n' "$PROG" "$TODAY" >&2; exit 2 ;;
+esac
+ROOT=${ROOT%/}
+DEST=${DEST%/}
+if [ -z "$GIT" ] || [ -z "$ROOT" ] || [ -z "$DEST" ]; then
+  printf '%s: git, --root or --dest is missing\n' "$PROG" >&2
+  exit 2
+fi
+# The folder that must already be there, backups by default.
+BACKUPS=$(dirname -- "$(dirname -- "$DEST")")
+
+# ---------------------------------------------------------------- helpers
+
+ts() { date '+%Y-%m-%dT%H:%M:%S%z'; }
+
+# A dry run prints its log lines and writes them nowhere.
+log() {
+  local line
+  line="$(ts) $*"
+  [ "$DRY_RUN" = 1 ] || printf '%s\n' "$line" >>"$LOG_FILE"
+  printf '%s\n' "$line"
+}
+
+# git with the guards this job relies on: no automatic gc or maintenance, no
+# fsmonitor daemon and no hooks, for this one command.
+g() {
+  "$GIT" -c maintenance.auto=false -c gc.auto=0 -c core.fsmonitor=false \
+    -c core.hooksPath=/dev/null "$@" </dev/null
+}
+
+WROTE=0 SAME=0 SKIPPED=0 FAILED=0 ATTN=0 REFUSED=0
+NOTES="" ERR=""
+
+attention() {
+  ATTN=$((ATTN + 1))
+  NOTES="$NOTES$*
+"
+}
+
+# The attention file is rewritten on every run. A dry run prints it instead.
+write_attention() {
+  local text
+  text="$(ts) $PROG: $ATTN item(s) need a person
+$NOTES"
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '%s' "$text"
+    return
+  fi
+  printf '%s' "$text" >"$ATTENTION_FILE.tmp" && mv -- "$ATTENTION_FILE.tmp" "$ATTENTION_FILE"
+}
+
+one_line() { printf '%s' "$1" | tr '\n' ' ' | sed 's/ *$//'; }
+
+# macOS answers "Operation not permitted" when it keeps a background job out
+# of a folder, as it keeps one out of Dropbox's until /bin/bash has Full Disk
+# Access. Every write after the first refusal would be refused too, so the
+# run stops there.
+denied() {
+  case $1 in *'Operation not permitted'*) return 0 ;; esac
+  return 1
+}
+
+# What a person does about it. macOS never asks a background job, and Full
+# Disk Access for /bin/bash is the only grant it takes for Dropbox's folder.
+refusal_note() {
+  attention "$1 | macOS hasn't let the job into Dropbox's folder (Operation not permitted), so the run stopped; give /bin/bash Full Disk Access in System Settings > Privacy & Security, then run launchctl kickstart gui/\$(id -u)/$LABEL"
+}
+
+# refused PATH: a write there that macOS refused.
+refused() {
+  REFUSED=1
+  FAILED=$((FAILED + 1))
+  log "ABORT   $1 | macOS refused the write (Operation not permitted)"
+  refusal_note "$1"
+}
+
+# Why a folder cannot be listed, or nothing when it can.
+cannot_list() {
+  local err
+  err=$(ls -- "$1" 2>&1 >/dev/null) && return 0
+  err=$(printf '%s\n' "$err" | head -n 1)
+  err=${err##*: }
+  printf '%s\n' "${err:-ls failed}"
+}
+
+# make_dir DIR: one folder, never its parents, so a folder above it that is
+# missing, such as backups, is never made by accident. Sets ERR.
+make_dir() {
+  [ -d "$1" ] && return 0
+  ERR=$(mkdir -- "$1" 2>&1) && return 0
+  ERR="could not make $1: ${ERR##*: }"
+  return 1
+}
+
+# fail_repo REPO FOLDER WHAT ERROR: a snapshot that did not happen. FOLDER is
+# the repo's folder of bundles, named when macOS refused the write.
+fail_repo() {
+  local err
+  err=$(one_line "$4")
+  if denied "$err"; then
+    refused "$2"
+    return
+  fi
+  FAILED=$((FAILED + 1))
+  log "FAILED  $1 | $3: $err"
+  attention "$1 | snapshot failed: $3: $err; its older bundles are as they were, and the next run tries again"
+}
+
+# check_bundle REPO FILE: `git bundle verify`, which reads only the bundle's
+# header and passes one that is truncated or corrupted, and then a clone of
+# the bundle outside Dropbox, which reads every object in it and checks that
+# its refs are complete. Prints why it failed.
+check_bundle() {
+  local out rc
+  if ! out=$(g -C "$1" bundle verify --quiet "$2" 2>&1); then
+    printf 'git bundle verify: %s\n' "$(one_line "$out")"
+    return 1
+  fi
+  rm -rf -- "$SCRATCH/check.git"
+  out=$(g clone --quiet --mirror -- "$2" "$SCRATCH/check.git" 2>&1)
+  rc=$?
+  rm -rf -- "$SCRATCH/check.git"
+  [ "$rc" = 0 ] && return 0
+  printf 'a clone of it failed: %s\n' "$(one_line "$out")"
+  return 1
+}
+
+# record NAME REFS: the fingerprint of the bundle just written, with that
+# bundle's name on the first line, kept on this Mac.
+record() {
+  mkdir -p -- "$PRINTS" &&
+    printf '%s\n%s\n' "$TODAY.bundle" "$2" >"$PRINTS/$1.tmp" &&
+    mv -- "$PRINTS/$1.tmp" "$PRINTS/$1"
+}
+
+# prune FOLDER: keeps the newest KEEP bundles in one repo's folder, the one
+# this run is for among them. Only regular files named as the job names its
+# bundles count or go, so nothing else there is ever deleted, and neither is
+# the bundle this run is for, whatever the others are dated.
+prune() {
+  local folder=$1 f drop err
+  set --
+  for f in "$folder"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].bundle; do
+    if [ ! -f "$f" ] || [ -L "$f" ] || [ "${f##*/}" = "$TODAY.bundle" ]; then
+      continue
+    fi
+    set -- "$@" "$f"
+  done
+  # A glob comes back sorted by name, which for these names is by date.
+  drop=$(($# - KEEP + 1))
+  for f in "$@"; do
+    [ "$drop" -gt 0 ] || break
+    drop=$((drop - 1))
+    if [ "$DRY_RUN" = 1 ]; then
+      log "WOULD   $f | would delete it, as older than the newest $KEEP"
+      continue
+    fi
+    # -f so a run from a terminal never stops to ask about a read-only file.
+    if err=$(rm -f -- "$f" 2>&1); then
+      log "DELETED $f | older than the newest $KEEP"
+    elif denied "$err"; then
+      refused "$f"
+      return
+    else
+      err=${err##*: }
+      FAILED=$((FAILED + 1))
+      log "FAILED  $f | could not delete it: $err"
+      attention "$f | could not delete this old bundle: $err"
+    fi
+  done
+}
+
+# ---------------------------------------------------------- one repo
+
+# snapshot DIR: one folder directly under the root.
+snapshot() {
+  local dir=$1 name out prev last refs reason tmp final err f
+  name=${dir##*/}
+  out="$DEST/$name"
+  if [ -L "$dir" ]; then
+    SKIPPED=$((SKIPPED + 1))
+    log "SKIP    $dir | a link, not a clone"
+    attention "$dir | a link, not a clone, so it was not snapshotted"
+    return
+  fi
+  if [ ! -e "$dir/.git" ]; then
+    SKIPPED=$((SKIPPED + 1))
+    log "SKIP    $dir | no .git"
+    return
+  fi
+  if ! refs=$(g -C "$dir" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null); then
+    err=$(one_line "$(g -C "$dir" for-each-ref --format='%(refname)' 2>&1 >/dev/null)")
+    FAILED=$((FAILED + 1))
+    log "FAILED  $dir | git cannot read its refs: ${err:-git failed}"
+    attention "$dir | git cannot read its refs (${err:-git failed}), so it was not snapshotted"
+    return
+  fi
+  if [ -z "$refs" ]; then
+    SKIPPED=$((SKIPPED + 1))
+    log "SKIP    $dir | no refs yet"
+    return
+  fi
+  # A temporary bundle that a run stopped partway through, as by a restart,
+  # left behind. It is not the job's to delete.
+  for f in "$out"/.~*; do
+    if [ -e "$f" ] || [ -L "$f" ]; then
+      attention "$f | left by a run that stopped while writing a bundle; delete it"
+    fi
+  done
+  # Decided from this Mac's own record alone. The one look into Dropbox is
+  # whether the last bundle's name is still listed, which downloads nothing.
+  prev="$PRINTS/$name"
+  last=$(head -n 1 "$prev" 2>/dev/null)
+  case $last in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].bundle) ;; *) last="" ;; esac
+  if [ -z "$last" ]; then
+    reason="first snapshot"
+  elif [ "$refs" != "$(tail -n +2 "$prev" 2>/dev/null)" ]; then
+    reason="refs changed since $last"
+  elif [ ! -f "$out/$last" ]; then
+    reason="refs unchanged, but $last is gone"
+  else
+    SAME=$((SAME + 1))
+    log "SAME    $dir | refs unchanged since $last"
+    return
+  fi
+  final="$out/$TODAY.bundle"
+  if [ "$DRY_RUN" = 1 ]; then
+    WROTE=$((WROTE + 1))
+    log "WOULD   $dir | $reason | would write $final"
+    prune "$out"
+    return
+  fi
+  if ! make_dir "$(dirname -- "$DEST")" || ! make_dir "$DEST" || ! make_dir "$out"; then
+    fail_repo "$dir" "$out" "no folder for its bundles" "$ERR"
+    return
+  fi
+  # Written under a name Dropbox leaves alone as a temporary file, and only
+  # renamed to the real one once it has passed its check.
+  tmp="$out/.~$TODAY.bundle.$$"
+  if ! err=$(g -C "$dir" bundle create --quiet "$tmp" --all 2>&1); then
+    fail_repo "$dir" "$out" "git bundle create" "$err"
+    return
+  fi
+  if ! err=$(check_bundle "$dir" "$tmp"); then
+    rm -f -- "$tmp"
+    fail_repo "$dir" "$out" "the new bundle failed its check" "$err"
+    return
+  fi
+  if ! err=$(mv -f -- "$tmp" "$final" 2>&1); then
+    rm -f -- "$tmp"
+    fail_repo "$dir" "$out" "could not rename it to $final" "$err"
+    return
+  fi
+  WROTE=$((WROTE + 1))
+  log "WROTE   $dir | $final | $reason | $(wc -c <"$final" | tr -d ' ') bytes, $(printf '%s\n' "$refs" | wc -l | tr -d ' ') refs"
+  if ! record "$name" "$refs"; then
+    FAILED=$((FAILED + 1))
+    log "FAILED  $dir | could not record its fingerprint in $PRINTS"
+    attention "$dir | could not record its fingerprint in $PRINTS, so the next run writes another bundle; check that folder's permissions"
+  fi
+  prune "$out"
+}
+
+# ------------------------------------------------------------------ main
+
+if [ "$DRY_RUN" != 1 ]; then
+  mkdir -p -- "$STATE_DIR" || exit 1
+  if [ -f "$LOG_FILE" ] && [ "$(wc -l <"$LOG_FILE")" -gt "$LOG_MAX_LINES" ]; then
+    tail -n $((LOG_MAX_LINES / 2)) "$LOG_FILE" >"$LOG_FILE.tmp" && mv -- "$LOG_FILE.tmp" "$LOG_FILE"
+  fi
+  LOCK_DIR="$STATE_DIR/run.lock"
+  if ! mkdir -- "$LOCK_DIR" 2>/dev/null; then
+    old=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+    if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+      log "SKIP    another run (pid $old) is still going"
+      exit 0
+    fi
+    rm -f -- "$LOCK_DIR/pid"
+    rmdir -- "$LOCK_DIR" 2>/dev/null
+    mkdir -- "$LOCK_DIR" || exit 1
+  fi
+  echo $$ >"$LOCK_DIR/pid"
+  # Where each new bundle is cloned to be checked, outside Dropbox.
+  SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/$PROG.XXXXXX") || exit 1
+  cleanup() {
+    rm -rf -- "$SCRATCH" 2>/dev/null
+    rm -f -- "$LOCK_DIR/pid" 2>/dev/null
+    rmdir -- "$LOCK_DIR" 2>/dev/null
+  }
+  trap cleanup EXIT
+fi
+
+log "START   root=$ROOT dest=$DEST keep=$KEEP dry_run=$DRY_RUN git=$(g --version 2>/dev/null | cut -d' ' -f3)"
+
+# Nothing is written in Dropbox unless the root is a real folder and backups
+# is there already, each said where a person will see it.
+STOP=""
+if [ -L "$ROOT" ]; then
+  STOP="$ROOT is a link"
+  attention "$ROOT | a link to $(readlink -- "$ROOT"), not a folder of clones, so no repo was snapshotted; remove just the link with unlink, never what it points to, then run chezmoi apply, which clones the repos into a real folder"
+elif [ ! -d "$ROOT" ]; then
+  STOP="$ROOT is not there"
+  attention "$ROOT | not there, so no repo was snapshotted; chezmoi apply clones the repos into it"
+fi
+why=$(cannot_list "$BACKUPS")
+if [ -z "$why" ] && [ ! -d "$BACKUPS" ]; then why="not a folder"; fi
+case $why in
+  '') ;;
+  *'No such file or directory'*)
+    STOP="${STOP:+$STOP; }$BACKUPS is not there"
+    attention "$BACKUPS | not there, so no repo was snapshotted; tick it in Dropbox's Preferences > Sync, under Select folders to sync to this Mac, rather than making it by hand, which would give a conflicting copy"
+    ;;
+  *'Operation not permitted'*)
+    STOP="${STOP:+$STOP; }macOS kept the job out of $BACKUPS"
+    refusal_note "$BACKUPS"
+    ;;
+  *)
+    STOP="${STOP:+$STOP; }cannot read $BACKUPS: $why"
+    attention "$BACKUPS | cannot read it ($why), so no repo was snapshotted; check its permissions"
+    ;;
+esac
+if [ -n "$STOP" ]; then
+  write_attention
+  log "ABORT   $STOP"
+  [ "$DRY_RUN" = 1 ] || logger -t "$PROG" "aborted: $STOP" 2>/dev/null
+  exit 1
+fi
+
+for d in "$ROOT"/*; do
+  [ -d "$d" ] || [ -L "$d" ] || continue
+  snapshot "$d"
+  [ "$REFUSED" = 1 ] && break
+done
+
+write_attention
+
+summary="wrote=$WROTE unchanged=$SAME skipped=$SKIPPED failed=$FAILED attention=$ATTN dry_run=$DRY_RUN"
+log "DONE    $summary"
+[ "$DRY_RUN" = 1 ] || logger -t "$PROG" "$summary" 2>/dev/null
+[ "$FAILED" -eq 0 ]

@@ -21,10 +21,10 @@ run tests/check-roles.sh
 run tests/guard-git.sh
 run tests/guard-vault.sh
 run tests/warn-risky.sh
-run tests/laptop-git.sh
 run tests/agent-gate.sh
 run tests/worktree.sh
 run tests/worktree-ttl.sh
+run tests/repo-snapshots.sh
 run tests/ansible.sh
 run tests/apply-twice.sh
 run tests/zsh-baseline.sh

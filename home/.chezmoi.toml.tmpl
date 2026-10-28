@@ -64,10 +64,8 @@
   use1Password = {{ eq $role "laptop" }}
   ci = {{ eq $role "ci" }}
 {{- if eq $os "darwin" }}
-  # Both Macs keep their repos here; ~/src and ~/Repositories link to it.
-  # destDir is the home folder, or a test's throwaway one.
-  dropboxRepositories = {{ joinPath .chezmoi.destDir "Library/CloudStorage/Dropbox/repositories" | quote }}
   # The laptop's ~/.config links here, so its app configs sync through Dropbox.
+  # destDir is the home folder, or a test's throwaway one.
   dropboxConfig = {{ joinPath .chezmoi.destDir "Library/CloudStorage/Dropbox/config-files" | quote }}
 {{- end }}
 

@@ -7,26 +7,29 @@
 {{- if or .isAgent $repos -}}
 #!/bin/bash
 # Clones each repo into ~/src when it's missing, over HTTPS, and never pulls.
-# ~/src is the Dropbox repositories folder, so a clone here is one Dropbox
-# carries to the other Mac.
+# ~/src is a real folder on this Mac alone; work reaches the other Mac through
+# GitHub.
 {{- if .isAgent }}
 # Agents work in these checkouts on their own branches, and a pull from here
 # would land in the middle of their work. gh's token authenticates.
 {{- else }}
-# These tools update themselves, so a pull from here would fight them. Their
-# personal data stays inside each checkout, untracked, where Dropbox syncs it.
+# The job-search tools update themselves, so a pull from here would fight them,
+# and cv is pulled by hand. Their personal data stays inside each checkout,
+# untracked.
 {{- end }}
 
 set -uo pipefail
 SCRIPT=clone-repos
 {{ template "script-lib.sh" . }}
 
-# Only once Dropbox has brought the folder down: a clone into a folder that is
-# still syncing ends in conflicted copies. hurin is always there when it has.
-if [ ! -e "$HOME/src/hurin/.git" ]; then
-  warn "the Dropbox repositories folder isn't synced yet; cloning waits for the next apply"
+# ~/src used to be a link into Dropbox. A clone made through it would land in
+# Dropbox and reach the other Mac, so nothing is cloned while it is one; the
+# preflight says how to replace it.
+if [ -L "$HOME/src" ]; then
+  warn "the src folder in your home is still a link to $(readlink "$HOME/src"), so nothing was cloned"
   exit 0
 fi
+mkdir -p "$HOME/src"
 
 # A clone that needs credentials gets them from the helper or fails. Git never
 # asks at the terminal: GitHub takes no password there, and an attended apply

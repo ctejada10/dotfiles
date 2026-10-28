@@ -49,9 +49,10 @@ A second `chezmoi apply` changes nothing, `chezmoi diff` is empty and
 **Dropbox.** On a wiped Mac, Dropbox is installed during that first apply, so
 anything that lives in Dropbox waits for it: sign in to Dropbox, let it finish,
 then run `chezmoi apply` once more. That second apply writes 1Password's
-`agent.toml` into `config-files` and clones any missing tools into `~/src`. It
-also stops once, because `~/.config` is still the real folder `init` made;
-[`~/.config`](#config) says what to do.
+`agent.toml` into `config-files`. It also stops once, because `~/.config` is
+still the real folder `init` made; [`~/.config`](#config) says what to do. The
+repos don't wait for Dropbox: the first apply already cloned them into `~/src`
+from GitHub.
 
 **Time zone.** The laptop's time zone follows its location. That needs System
 Settings → Privacy & Security → Location Services → System Services → Setting
@@ -110,8 +111,21 @@ servers. Beeper doesn't show Telegram's approval buttons; type `/approve` or
 
 ## Repos
 
-Both Macs keep their repos in the Dropbox `repositories` folder; `~/src` and
-`~/Repositories` link to it, and Dropbox carries the repos between them.
+Each Mac clones its own repos from GitHub into a real `~/src`, once, when
+they're missing; the lists are in `home/.chezmoidata/repos.yaml`. On the laptop
+that's the job-search tools, `cv`, and `scripts`, which Raycast and Hazel run.
+Work moves between the Macs through GitHub, not Dropbox, and nothing pulls the
+clones for you. Dropbox's `repositories` folder is the repos' old home: it
+keeps the ones no Mac clones, such as the research code, the thesis and the
+talks, as they were.
+
+Of the repos the mini's agents work in, the laptop clones only `scripts`, and
+only to run it: develop it on the mini, and `git pull` here to update. Set it
+up as its README says (pre-commit, `scripts secrets pull`, then
+`uv tool install --editable .`), and point Raycast's script commands at
+`~/src/scripts/interfaces/raycast` and Hazel's rules at
+`~/src/scripts/interfaces/hazel`. Read the other repos on GitHub, or on the
+mini through T3.
 
 ### `~/.config`
 
@@ -127,8 +141,9 @@ link yourself, since chezmoi can't find its config until it exists:
 `rmdir ~/.config && ln -s ~/Library/CloudStorage/Dropbox/config-files ~/.config && chezmoi apply`.
 On a wiped laptop the first apply's 1Password check also leaves
 `~/.config/op` holding only op's socket; remove it first (`rm -r ~/.config/op`),
-or `rmdir` refuses. The preflight's message says so. It stops the same way
-for a real `~/src` or `~/Repositories` with files in it.
+or `rmdir` refuses. The preflight's message says so. It also stops while
+`~/src` is still a link into Dropbox from before the repos moved out;
+`unlink ~/src` removes just the link, never what it points to.
 
 This repo writes nothing inside that link except 1Password's `agent.toml`,
 which has to live there. Its own files sit outside it: the shell in `~/.zsh`,
@@ -136,59 +151,15 @@ and Ghostty's config in `~/Library/Application Support/com.mitchellh.ghostty`.
 The personal age key is on no Mac at all (see
 [Re-sealing secrets](setup-servers.md#re-sealing-secrets)).
 
-### The agents' repos are read-only here
-
-The repos the mini's agents work in are listed under `agent-mini` in
-`home/.chezmoidata/repos.yaml`. On the laptop they are read-only, because two
-Macs writing one `.git` through Dropbox is how an object store gets destroyed:
-
-- `git`, which on the laptop is a wrapper in `~/.local/bin`, runs only
-  commands that read there: status, log, diff, show, blame, grep, listing
-  branches and tags, and the like. Everything else, switch, checkout, reset,
-  rebase, add, commit, stash, fetch, pull and push included, is refused before
-  Git starts, so nothing touches the working tree or the `.git`.
-- Behind it, for anything that runs the real git directly, such as VS Code's
-  autofetch, Git refuses any change to their refs, refuses a rebase before it
-  starts, and may use no transport there (`protocol.allow = never`), so it
-  can't fetch, pull or push; Git LFS gets a URL it can't use, and keeps the
-  temporary files it makes whenever Git hashes an LFS file in a folder of the
-  laptop's own. The wrapper lets `git lfs ls-files` through only in a repo
-  whose own config already holds git-lfs's version, which the mini's git-lfs
-  writes there; elsewhere git-lfs would write it. The remote URLs stay as they
-  are, so `gh pr view`, `list` and `checks` work. A refused switch or reset
-  through the real git can still have rewritten the working tree by then;
-  clean that up on the mini.
-- Nothing that reads writes the index back: `GIT_OPTIONAL_LOCKS=0` covers
-  status, the wrapper gives diff and `describe --dirty` a copy of the index,
-  and `diff.autoRefreshIndex` is off for the real git. No fsmonitor daemon, no
-  untracked cache, no automatic gc.
-- Claude Code's Edit and Write tools can't touch files in them (a shell
-  command still can), and it doesn't fetch without asking.
-
-Plain edits in an editor are still possible, so leave those to the mini too.
-Read on the laptop; change on the mini. To run something anyway, call the real
-git by its path, `/opt/homebrew/bin/git`. A repo that sets its own
-`core.hooksPath` in `.git/config` skips the hooks; every apply on the laptop
-names any that do.
-
-**Keep `.git` folders syncing.** Dropbox can mark a folder as ignored, and a
-repo whose `.git` it ignores never reaches the mini. On 27 Oct four agent repos
-had it. To list any, run this on the laptop; it should print nothing:
-
-```sh
-for d in ~/src/*/.git; do xattr "$d" 2>/dev/null | grep -qE 'com.dropbox.ignored|com.apple.fileprovider.ignore' && echo "$d"; done
-```
-
-`xattr -d com.dropbox.ignored <path>` and
-`xattr -d 'com.apple.fileprovider.ignore#P' <path>` clear them.
-
-### Job-search tools
+### Job-search tools and cv
 
 The job-search tools, career-ops and ai-job-search, are cloned once into
 `~/src` and keep your CV, salary expectations and applications inside their
-checkouts, where Dropbox syncs them. Neither can ever push: their push URL goes
-nowhere, and ai-job-search, whose setup writes your profile into files Git
-tracks, also has a pre-push hook that refuses. Personal edits stay uncommitted.
+checkouts. Neither can ever push: their push URL goes nowhere, and
+ai-job-search, whose setup writes your profile into files Git tracks, also has
+a pre-push hook that refuses. Personal edits stay uncommitted. `cv` is cloned
+there too, and its applications live in git-ignored folders of its checkout.
+`~/src` isn't in Dropbox, so none of that personal data syncs anywhere.
 
 ## Claude Code on the laptop
 
@@ -233,9 +204,10 @@ NetBIOSName) and Tailscale's. Then check by hand:
 ## Cutting arnor over from the old tilde
 
 A preflight script refuses any apply while `~/.ssh` is a link, and refuses to
-replace the old tilde's links unless `DOTFILES_CUTOVER=1` is set. `~/src`,
-`~/Repositories` and `~/.config` stay as they are: they already link to
-Dropbox.
+replace the old tilde's links unless `DOTFILES_CUTOVER=1` is set. `~/.config`
+stays as it is: it already links to Dropbox. `~/src` doesn't: the preflight
+also refuses while it links into Dropbox, so step 7 replaces it with a real
+folder of fresh clones.
 
 1. Check that the old tilde is gone from GitHub: `gh api repos/ctejada10/tilde`
    says `Not Found (HTTP 404)`.
@@ -244,11 +216,10 @@ Dropbox.
 3. Create the new login and signing keys in 1Password and put their public
    halves in `home/.chezmoidata/keys.yaml`. Register both with GitHub. (Done on
    25 Oct 2026.)
-4. Commit and push any work still open on the laptop in the repos listed under
-   `agent-mini` in `home/.chezmoidata/repos.yaml`. After the apply, Git on the
-   laptop refuses to commit or fetch in them. While the laptop is still the
-   only Mac writing them, unset cad-a11y's own hooks path, which only points
-   at its default `.git/hooks`: `git -C ~/src/cad-a11y config --unset core.hooksPath`.
+4. Commit and push any work still open in the laptop's own repos: career-ops,
+   ai-job-search and cv. After the apply, `~/src` holds fresh clones of them,
+   and the old checkouts stay in Dropbox's `repositories` folder, where step 7
+   copies their personal files from.
 5. `chezmoi init ctejada10`, answering `laptop`, `arnor`, and the display name.
 6. Read what the apply would change. `chezmoi diff` shows the files; it leaves
    out the setup scripts, which run on every apply. For the macOS settings,
@@ -256,7 +227,13 @@ Dropbox.
    prints each one it would change and writes nothing. For packages,
    `HOMEBREW_TILDE_ROLE=laptop brew bundle check --no-upgrade --verbose --file=~/.local/share/chezmoi/Brewfile`
    lists what it would install.
-7. `DOTFILES_CUTOVER=1 chezmoi apply`.
+7. `unlink ~/src && DOTFILES_CUTOVER=1 chezmoi apply`. `unlink` removes only
+   the link, never the Dropbox folder it points to, and the apply clones
+   career-ops, ai-job-search, cv and scripts into a new `~/src`. Then copy each one's
+   personal files over from its old checkout in
+   `~/Library/CloudStorage/Dropbox/repositories`: the job-search tools'
+   untracked files and cv's application folders. `~/Repositories` still links
+   to that folder; remove it with `unlink ~/Repositories` once nothing uses it.
 8. Save anything running in tmux, run `tmux kill-server` (it closes every pane),
    quit Ghostty with Cmd-Q and open it again. Every Ghostty window reattaches
    to the running tmux session, so without this the next step checks the old
@@ -308,7 +285,8 @@ Dropbox.
     checkout* is done. Then `rm -rf ~/src/tilde`.
 
 **A clean install instead.** Before wiping, do step 4 and let Dropbox finish
-uploading. Note the fingerprints step 12 needs (`ssh-keygen -lf ~/.ssh/arnor.pub`
+uploading. After the setup, copy the personal files into the new clones as
+step 7 says. Note the fingerprints step 12 needs (`ssh-keygen -lf ~/.ssh/arnor.pub`
 and `ssh-keygen -lf ~/.ssh/arnor_signing.pub`), since the wipe takes those
 files. Then set the laptop up from the top of this guide, as a wiped Mac, and
 do steps 9, 12 and 13 afterwards. Steps 6 to 8, 10 and 11 clean up an old

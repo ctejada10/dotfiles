@@ -250,13 +250,13 @@ expect allowed feature "printf 'Add the parser\\n' > m.txt && git commit -F m.tx
 expect allowed feature "git commit -m 'Strip the Co-authored-by: Claude lines an old hook left'"
 expect allowed feature "git commit -m \$'Fix the parser\\n\\nIt\\'s strict now.'"
 
-# A home laid out like the mini's: the Dropbox repositories folder, ~/src
-# linked to it, FirstMate's project links, the dotfiles source, and clones and
-# worktrees in ~/worktrees.
+# A home laid out like the mini's: the agents' repos cloned into a real ~/src,
+# Dropbox's repositories folder with repos still in it, the dotfiles source,
+# and clones and worktrees in ~/worktrees. No FirstMate project link points at
+# ~/src: where a repo is decides whose it is.
 home="$work/home"
 box="$home/Library/CloudStorage/Dropbox/repositories"
-mkdir -p "$box" "$home/.local/share/firstmate/projects" "$home/worktrees"
-ln -s "$box" "$home/src"
+mkdir -p "$box" "$home/src" "$home/worktrees"
 g() { git -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 # with_origin <folder>: a checkout of a new bare origin whose default is main.
 with_origin() {
@@ -267,35 +267,48 @@ with_origin() {
   g -C "$1" remote set-head origin main
   mkdir -p "$1/pkg"
 }
-with_origin "$box/agentrepo"
+with_origin "$home/src/agentrepo"
+g -C "$home/src/agentrepo" worktree add -q --no-track -b worktree-oak "$home/worktrees/agentrepo/oak" origin/main
+# Worktrees of it where T3 and FirstMate's crews make theirs.
+g -C "$home/src/agentrepo" worktree add -q --no-track -b t3-thread "$home/.t3/worktrees/agentrepo/t3-thread" origin/main
+g -C "$home/src/agentrepo" worktree add -q --no-track -b crew "$home/.treehouse/agentrepo/crew" origin/main
+# A repo still in Dropbox's repositories folder, the repos' old home, and a
+# worktree of it outside Dropbox.
+with_origin "$box/oldrepo"
+g -C "$box/oldrepo" switch -q -c feature
+g -C "$box/oldrepo" worktree add -q -b old "$home/worktrees/oldrepo/old" 2>/dev/null
+# The way to change it: a clone of it, with its own .git, in ~/worktrees.
+g clone -q "$work/origins/oldrepo.git" "$home/worktrees/oldrepo/fix" 2>/dev/null
+g -C "$home/worktrees/oldrepo/fix" switch -q -c fix
+# agentrepo's old copy in Dropbox, which FirstMate's projects linked before the
+# move, and ~/Repositories, a link from then into the repositories folder.
+g clone -q "$work/origins/agentrepo.git" "$box/agentrepo" 2>/dev/null
+mkdir -p "$home/.local/share/firstmate/projects"
 ln -s "$box/agentrepo" "$home/.local/share/firstmate/projects/agentrepo"
-g -C "$box/agentrepo" worktree add -q --no-track -b worktree-oak "$home/worktrees/agentrepo/oak" origin/main
-with_origin "$box/laptoprepo"
-g -C "$box/laptoprepo" switch -q -c feature
-g -C "$box/laptoprepo" worktree add -q -b old "$home/worktrees/laptoprepo/old" 2>/dev/null
-# The way to change a laptop repo: a clone of it, with its own .git, in ~/worktrees.
-g clone -q "$work/origins/laptoprepo.git" "$home/worktrees/laptoprepo/fix" 2>/dev/null
-g -C "$home/worktrees/laptoprepo/fix" switch -q -c fix
+ln -s "$box" "$home/Repositories"
+# A repo elsewhere in Dropbox, outside the repositories folder.
+K="$home/Library/CloudStorage/Dropbox/archive/keep"
+g init -q -b main "$K"
+g -C "$K" commit -q --allow-empty -m init
 with_origin "$home/.local/share/chezmoi"
 g -C "$home/.local/share/chezmoi" worktree add -q --no-track -b fix "$home/worktrees/dotfiles/fix" origin/main
 # An agent repo with a submodule, as rivendell has arwen.
 with_origin "$work/subseed"
 g -C "$work/subseed" commit -q --allow-empty -m two
 g -C "$work/subseed" push -q origin main
-g init -q -b main "$box/superrepo"
-g -C "$box/superrepo" -c protocol.file.allow=always submodule add -q "$work/origins/subseed.git" sub 2>/dev/null
-g -C "$box/superrepo" commit -q -m "Add sub"
-ln -s "$box/superrepo" "$home/.local/share/firstmate/projects/superrepo"
-older=$(git -C "$box/superrepo/sub" rev-parse HEAD~1)
-# A worktree of it outside Dropbox, with the submodule on main, as after
+g init -q -b main "$home/src/superrepo"
+g -C "$home/src/superrepo" -c protocol.file.allow=always submodule add -q "$work/origins/subseed.git" sub 2>/dev/null
+g -C "$home/src/superrepo" commit -q -m "Add sub"
+older=$(git -C "$home/src/superrepo/sub" rev-parse HEAD~1)
+# A worktree of it in ~/worktrees, with the submodule on main, as after
 # git submodule update --init and a switch.
 S="$home/worktrees/superrepo/bump"
-g -C "$box/superrepo" worktree add -q -b bump "$S" main
+g -C "$home/src/superrepo" worktree add -q -b bump "$S" main
 g -C "$S" -c protocol.file.allow=always submodule update -q --init 2>/dev/null
 g -C "$S/sub" switch -q main
 # A fresh clone of an agent repo, still on main, with a branch on origin to
 # continue, as when an agent picks up a handed-over PR.
-g -C "$box/agentrepo" push -q origin main:review
+g -C "$home/src/agentrepo" push -q origin main:review
 T="$home/worktrees/agentrepo/fresh"
 g clone -q "$work/origins/agentrepo.git" "$T" 2>/dev/null
 
@@ -308,13 +321,16 @@ at() {
   label="$want in ~${dir#"$home"} (attended=$attended): ${5:-${cmd//$'\n'/ <newline> }}"
   if [ "$got" = "$want" ]; then pass "$label"; else fail "$label" "got $got"; fi
 }
-L="$box/laptoprepo"
+L="$box/oldrepo"
 D="$home/.local/share/chezmoi"
-A="$box/agentrepo"
+A="$home/src/agentrepo"
 W="$home/worktrees/agentrepo/oak"
 
-section "a laptop repo is only read, attended or not"
+section "a repo in Dropbox's repositories folder is never used, not even to read, attended or not"
 for attended in 0 1; do
+  at blocked "$L" "$attended" 'git status'
+  at blocked "$L" "$attended" 'git log --oneline -3'
+  at blocked "$L" "$attended" 'gh pr view 3'
   at blocked "$L" "$attended" 'git commit -m "Add the parser"'
   at blocked "$L" "$attended" 'git add README.md'
   at blocked "$L" "$attended" 'git fetch origin'
@@ -323,7 +339,7 @@ for attended in 0 1; do
   at blocked "$L" "$attended" 'git config user.email x@y'
   at blocked "$L" "$attended" 'git branch newname'
   at blocked "$L" "$attended" 'git tag v1'
-  at blocked "$L" "$attended" 'git worktree add --no-track -b fix-2 ~/worktrees/laptoprepo/fix-2 origin/HEAD'
+  at blocked "$L" "$attended" 'git worktree add --no-track -b fix-2 ~/worktrees/oldrepo/fix-2 origin/HEAD'
   at blocked "$L" "$attended" 'gh pr create --draft --fill'
 done
 at blocked "$L" 0 'git push -u origin feature'
@@ -343,6 +359,8 @@ at blocked "$L" 0 'gh issue comment 3 --body x'
 at blocked "$L" 0 'gh -R ctejada10/x pr edit 3 --body x'
 at blocked "$L" 0 'gh pr checkout 3'
 at blocked "$L" 0 $'git commit -m "Fix the crash\n\nFixes #12."'
+# What used to be fine there as a read, gh's included: gh reads the repo it
+# runs in to know which repo it works on.
 for cmd in 'git status' 'git log --oneline -3' 'git diff HEAD' 'git show HEAD' 'git branch --show-current' \
            'git branch -a' 'git branch' 'git tag --list' 'git tag' "git tag -l 'v*'" 'git worktree list' \
            'git stash list' 'git config --get user.name' 'git config user.name' 'git config --list' \
@@ -350,33 +368,60 @@ for cmd in 'git status' 'git log --oneline -3' 'git diff HEAD' 'git show HEAD' '
            'git branch -av' 'git branch -ra' 'git branch -avv' 'git tag -ln' 'git tag -ln3' 'git tag -n3' \
            'git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null' 'git branch --show-current 2>/dev/null' \
            'git branch -a 2>/dev/null' 'git tag 2>/dev/null | tail -5' 'git config user.email 2>/dev/null' \
-           'git remote -v 2>&1' 'git describe --tags --always'; do
-  at allowed "$L" 0 "$cmd"
+           'git remote -v 2>&1' 'git describe --tags --always' 'git status --porcelain' 'git rev-parse HEAD' \
+           'gh -R ctejada10/oldrepo pr view 3' 'gh run list' 'gh repo view' 'gh api repos/{owner}/{repo}'; do
+  at blocked "$L" 0 "$cmd"
 done
+# Read it on GitHub from anywhere else, or clone it from there.
+at allowed "$W" 0 'gh -R ctejada10/oldrepo pr view 3'
+at allowed "$home" 0 'gh repo view ctejada10/oldrepo'
 for cmd in 'git branch -dr old' 'git tag -am msg v1' 'git branch newname 2>/dev/null' \
-           'git config user.email x 2> /dev/null' 'git worktree lock ~/worktrees/laptoprepo/old' \
+           'git config user.email x 2> /dev/null' 'git worktree lock ~/worktrees/oldrepo/old' \
            'git describe --dirty' 'git describe --tags --dirty --always' 'git describe --broken'; do
   at blocked "$L" 0 "$cmd"
 done
-at blocked "$W" 0 'git -C ~/src/laptoprepo describe --dirty'
+at blocked "$W" 0 'git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo describe --dirty'
 
-section "a laptop repo however it is named"
-at blocked "$home/src/laptoprepo" 0 'git commit -m x'
-at blocked "$home/worktrees/laptoprepo/old" 0 'git commit -m x'
-at blocked "$W" 0 'git -C ~/src/laptoprepo commit -m x'
-at blocked "$W" 0 'git -C "$HOME/src/laptoprepo" commit -m x'
-at blocked "$W" 0 'cd $HOME/src/laptoprepo && git commit -m x'
-at blocked "$W" 0 'pushd ~/src/laptoprepo && git commit -m x'
-at blocked "$W" 0 'git --git-dir ~/src/laptoprepo/.git commit -m x'
+section "a repo in Dropbox however it is named, and whatever links to it"
+at blocked "$home/Repositories/oldrepo" 0 'git commit -m x'
+at blocked "$home/worktrees/oldrepo/old" 0 'git commit -m x'
+at blocked "$W" 0 'git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo commit -m x'
+at blocked "$W" 0 'git -C "$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo" commit -m x'
+at blocked "$W" 0 'cd $HOME/Library/CloudStorage/Dropbox/repositories/oldrepo && git commit -m x'
+at blocked "$W" 0 'pushd ~/Repositories/oldrepo && git commit -m x'
+at blocked "$W" 0 'git --git-dir ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git commit -m x'
 at blocked "$L/pkg" 0 'cd "$(git rev-parse --show-toplevel)" && git commit -m x'
-at allowed "$W" 0 'git -C ~/src/laptoprepo branch -a'
+at blocked "$W" 0 'git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo branch -a'
+# Reads too, however the command names it.
+for cmd in 'git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo log -1' \
+           'git -C "$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo" status' \
+           'git -C ~/Repositories/oldrepo status' 'cd ~/Library/CloudStorage/Dropbox/repositories/oldrepo && git status' \
+           'pushd ~/Repositories/oldrepo && git log -1' \
+           'env -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo git status' \
+           'git --git-dir ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git log -1' \
+           'git --git-dir=$HOME/Repositories/oldrepo/.git log -1' \
+           'git --work-tree ~/Library/CloudStorage/Dropbox/repositories/oldrepo status' \
+           'git -c core.worktree=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo status' \
+           'git -C ~/worktrees/oldrepo/old status' 'git -C ~/.local/share/firstmate/projects/agentrepo log -1' \
+           'chezmoi --source ~/Library/CloudStorage/Dropbox/repositories/oldrepo git -- status' \
+           'cd ~/Library/CloudStorage/Dropbox/repositories/oldrepo && gh pr list'; do
+  at blocked "$W" 0 "$cmd"
+done
+at blocked "$home/Repositories/oldrepo" 0 'git status'
+at blocked "$home/worktrees/oldrepo/old" 0 'git log -1'
+# agentrepo's old copy is no agent repo, though FirstMate's projects link it.
+for cmd in 'git commit -m x' 'git fetch origin' 'git switch -c fix' \
+           'git worktree add --no-track -b fix ~/worktrees/agentrepo/fix origin/HEAD' 'git log --oneline -3'; do
+  at blocked "$box/agentrepo" 0 "$cmd"
+done
+at blocked "$W" 0 'git -C ~/.local/share/firstmate/projects/agentrepo commit -m x'
 
-section "a laptop repo is changed in a clone in ~/worktrees"
-at allowed "$L" 0 'git clone https://github.com/ctejada10/laptoprepo ~/worktrees/laptoprepo/fix-2'
-at allowed "$L" 0 'gh repo clone ctejada10/laptoprepo ~/worktrees/laptoprepo/fix-3'
-at blocked "$L" 0 'git clone https://github.com/ctejada10/laptoprepo'
-at blocked "$home" 0 'git clone https://github.com/ctejada10/newrepo ~/src/newrepo'
-C="$home/worktrees/laptoprepo/fix"
+section "a repo in Dropbox is changed in a clone in ~/worktrees"
+at allowed "$L" 0 'git clone https://github.com/ctejada10/oldrepo ~/worktrees/oldrepo/fix-2'
+at allowed "$L" 0 'gh repo clone ctejada10/oldrepo ~/worktrees/oldrepo/fix-3'
+at blocked "$L" 0 'git clone https://github.com/ctejada10/oldrepo'
+at blocked "$home" 0 'git clone https://github.com/ctejada10/newrepo ~/Library/CloudStorage/Dropbox/repositories/newrepo'
+C="$home/worktrees/oldrepo/fix"
 at allowed "$C" 0 'git commit -m "Add the parser"'
 at allowed "$C" 0 'git push -u origin fix'
 at allowed "$C" 0 'gh pr create --draft --title x --body y'
@@ -384,6 +429,35 @@ at blocked "$C" 0 'git push --force origin fix'
 at blocked "$C" 0 'git push origin HEAD:main'
 at blocked "$C" 0 'gh pr create --title x --body y'
 at blocked "$C" 0 'git commit -m x -m "Co-Authored-By: Claude <noreply@anthropic.com>"'
+
+section "nor is a repo in Dropbox read as another repo's source or target"
+for cmd in 'git clone ~/Library/CloudStorage/Dropbox/repositories/oldrepo ~/worktrees/oldrepo/fix-9' \
+           'git clone ~/Repositories/oldrepo ~/worktrees/oldrepo/fix-9' \
+           'git clone file://$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo ~/worktrees/oldrepo/fix-9' \
+           'git clone --reference ~/Library/CloudStorage/Dropbox/repositories/oldrepo https://github.com/ctejada10/oldrepo ~/worktrees/oldrepo/fix-9' \
+           'git clone --reference-if-able=$HOME/Repositories/oldrepo https://github.com/ctejada10/oldrepo ~/worktrees/oldrepo/fix-9' \
+           'git clone ~/worktrees/oldrepo/old ~/worktrees/oldrepo/fix-9' \
+           'git ls-remote ~/Library/CloudStorage/Dropbox/repositories/oldrepo' \
+           'git -C ~/worktrees/agentrepo/oak fetch ~/Library/CloudStorage/Dropbox/repositories/agentrepo main' \
+           'git -C ~/worktrees/agentrepo/oak pull --no-rebase ~/Repositories/agentrepo main' \
+           'git -C ~/worktrees/agentrepo/oak push ~/Library/CloudStorage/Dropbox/repositories/agentrepo HEAD:fix' \
+           'git -C ~/worktrees/agentrepo/oak remote add old ~/Library/CloudStorage/Dropbox/repositories/agentrepo' \
+           'git -C ~/worktrees/agentrepo/oak remote set-url origin ~/Repositories/agentrepo' \
+           'git -C ~/worktrees/agentrepo/oak submodule add ~/Library/CloudStorage/Dropbox/repositories/oldrepo vendor/oldrepo' \
+           'ls ~/Repositories | xargs -I{} git clone ~/Repositories/{} ~/worktrees/{}/copy' \
+           'echo ~/Repositories/agentrepo | xargs git -C ~/worktrees/agentrepo/oak fetch'; do
+  at blocked "$home" 0 "$cmd"
+done
+for cmd in 'git clone https://github.com/ctejada10/oldrepo ~/worktrees/oldrepo/fix-9' \
+           'git clone git@github.com:ctejada10/oldrepo.git ~/worktrees/oldrepo/fix-9' \
+           'git clone ~/src/agentrepo ~/worktrees/agentrepo/copy' 'git ls-remote https://github.com/ctejada10/oldrepo' \
+           'git -C ~/worktrees/agentrepo/oak fetch origin main' 'git -C ~/worktrees/agentrepo/oak fetch ~/src/agentrepo main' \
+           'git -C ~/worktrees/agentrepo/oak pull --no-rebase origin main' 'git -C ~/worktrees/agentrepo/oak push -u origin HEAD' \
+           'git -C ~/worktrees/agentrepo/oak push origin HEAD:refs/heads/fix-9' \
+           'git -C ~/worktrees/agentrepo/oak remote add upstream https://github.com/ctejada10/agentrepo' \
+           'git -C ~/worktrees/agentrepo/oak submodule add https://github.com/ctejada10/lib vendor/lib'; do
+  at allowed "$home" 0 "$cmd"
+done
 
 section "the dotfiles checkout is only read, attended or not"
 for attended in 0 1; do
@@ -432,7 +506,7 @@ at blocked "$A/pkg" 0 'cd "$(git rev-parse --show-toplevel)" && git push origin 
 at blocked "$A/pkg" 0 'cd "$(git rev-parse --show-toplevel)" && git push'
 at blocked "$W" 0 'git -C "$HOME/src/agentrepo" push origin HEAD'
 
-section "an agent repo's main checkout in Dropbox keeps its branch, index and files"
+section "an agent repo's main checkout in ~/src keeps its branch, index and files"
 for cmd in 'git switch -c add-parser' 'git checkout -b add-parser && git commit -am "Add the parser" && git push -u origin HEAD' \
            'git reset --hard origin/main' 'git add -A' 'git restore .' 'git checkout worktree-oak' 'git checkout -- README.md' \
            'git checkout origin/main' 'git checkout -' 'git switch -f main' 'git merge feature' 'git pull' 'git rebase origin/main' \
@@ -457,14 +531,82 @@ for cmd in 'git switch other 2>/dev/null' 'git pull 2>&1' '2>/dev/null git reset
   at blocked "$A" 0 "$cmd"
 done
 
+section "a worktree of an agent repo is an ordinary repo, wherever it is"
+for dir in "$W" "$home/.t3/worktrees/agentrepo/t3-thread" "$home/.treehouse/agentrepo/crew"; do
+  at allowed "$dir" 0 'git switch -c add-parser && git commit -am "Add the parser" && git push -u origin HEAD'
+  at allowed "$dir" 0 'git reset --hard origin/main && git rebase origin/main'
+  at blocked "$dir" 0 'git push --force origin HEAD'
+  at blocked "$dir" 0 'git push origin HEAD:main'
+done
+# Its folder in .git/worktrees goes with it, and the main checkout's .git
+# with the main checkout.
+at allowed "$A/.git/worktrees/oak" 0 'git commit -m x'
+at blocked "$A/.git" 0 'git reset --soft HEAD~1'
+
 section "a submodule of an agent repo"
-at blocked "$box/superrepo/sub" 0 "git checkout $older"
-at blocked "$box/superrepo/sub" 0 'git switch -c bump-theme'
-at blocked "$box/superrepo" 0 "git -C sub checkout $older && git add sub && git switch -c bump-2"
+at blocked "$home/src/superrepo/sub" 0 "git checkout $older"
+at blocked "$home/src/superrepo/sub" 0 'git switch -c bump-theme'
+at blocked "$home/src/superrepo" 0 "git -C sub checkout $older && git add sub && git switch -c bump-2"
 at allowed "$S/sub" 0 "git checkout $older"
 at allowed "$S/sub" 0 'git switch -c bump-theme'
 at blocked "$S/sub" 0 'git commit -m "Fix the theme"'
 at allowed "$S" 0 "git -C sub checkout $older && git add sub && git commit -m 'Bump sub'"
+
+section "nothing new goes in ~/src, which holds only the clones chezmoi makes"
+for cmd in 'git clone https://github.com/ctejada10/newrepo ~/src/newrepo' 'gh repo clone ctejada10/newrepo ~/src/newrepo' \
+           'gh repo clone ctejada10/hurin ~/src/hurin' 'git init ~/src/newrepo' 'git -C ~/src init newrepo' 'git init ~/src' \
+           'cd ~/src && git clone https://github.com/ctejada10/newrepo' 'cd ~/src && gh repo clone ctejada10/newrepo' \
+           'git clone --separate-git-dir ~/src/newrepo.git https://github.com/ctejada10/newrepo ~/worktrees/newrepo/main' \
+           'git clone https://github.com/ctejada10/newrepo ~/src/"new-$(date +%s)"' \
+           'git clone https://github.com/ctejada10/lib ~/src/agentrepo/vendor/lib' \
+           'git -C ~/src/agentrepo worktree add --no-track -b fix ~/src/agentrepo-fix origin/HEAD' \
+           'git -C ~/worktrees/agentrepo/oak worktree add -b fix-2 ~/src/fix-2'; do
+  at blocked "$home" 0 "$cmd"
+done
+at blocked "$A" 0 'git init vendor/lib'
+at blocked "$A/pkg" 0 'git clone https://github.com/ctejada10/lib lib'
+at blocked "$W" 0 'git worktree add --no-track -b fix-3 ~/src/agentrepo-fix-3 origin/HEAD'
+at blocked "$T" 0 'git worktree add -b fix-4 ../../../src/fix-4'
+at blocked "$D" 0 'git worktree add --no-track -b fix-5 ~/src/dotfiles-fix-5 origin/HEAD'
+at blocked "$C" 0 'git worktree add -b fix-6 ~/src/oldrepo-fix-6'
+# Nor in Dropbox's repositories folder or the dotfiles checkout, from any repo.
+for cmd in 'git init ~/Library/CloudStorage/Dropbox/repositories/newrepo' \
+           'git -C ~/src/agentrepo worktree add -b x ~/Library/CloudStorage/Dropbox/repositories/agentrepo-x' \
+           'git -C ~/worktrees/agentrepo/oak worktree add -b y ~/Library/CloudStorage/Dropbox/repositories/agentrepo-y' \
+           'git clone https://github.com/ctejada10/lib ~/.local/share/chezmoi/vendor/lib' \
+           'git -C ~/worktrees/agentrepo/oak worktree add -b z ~/.local/share/chezmoi/wt'; do
+  at blocked "$home" 0 "$cmd"
+done
+for cmd in 'git clone https://github.com/ctejada10/newrepo ~/worktrees/newrepo/fix' \
+           'gh repo clone ctejada10/newrepo ~/worktrees/newrepo/fix' \
+           'cd ~/worktrees && git clone https://github.com/ctejada10/newrepo newrepo/fix' \
+           'git -C ~/src/agentrepo worktree add --no-track -b fix-7 ~/worktrees/agentrepo/fix-7 origin/HEAD' \
+           'git -C ~/src/agentrepo worktree add --no-track -b fix-8 ~/.t3/worktrees/agentrepo/fix-8 origin/HEAD' \
+           'git init ~/worktrees/scratch/x'; do
+  at allowed "$home" 0 "$cmd"
+done
+at allowed "$W" 0 'git clone https://github.com/ctejada10/lib vendor/lib'
+
+section "gc, repack, prune and maintenance run anywhere but under Dropbox"
+for cmd in 'git gc' 'git gc --aggressive --prune=now' 'git repack -ad' 'git prune' 'git maintenance run --task=gc' \
+           'git maintenance start' 'git worktree prune'; do
+  at allowed "$A" 0 "$cmd"
+  at allowed "$W" 0 "$cmd"
+  at allowed "$T" 0 "$cmd"
+  at blocked "$L" 0 "$cmd"
+  at blocked "$home/worktrees/oldrepo/old" 0 "$cmd"
+  at blocked "$K" 0 "$cmd"
+done
+at allowed "$home" 0 'git -C ~/src/agentrepo gc'
+at allowed "$home" 0 'git -C ~/src/agentrepo worktree prune'
+for cmd in 'git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo gc' \
+           'git --git-dir ~/Library/CloudStorage/Dropbox/archive/keep/.git gc' \
+           'GIT_DIR=$HOME/Library/CloudStorage/Dropbox/archive/keep/.git git repack -ad' \
+           'cd ~/Library/CloudStorage/Dropbox/archive/keep && git gc' 'GIT_DIR="$(cat gitdir.txt)" git gc'; do
+  at blocked "$W" 0 "$cmd"
+done
+at blocked "$K" 0 'git gc && echo "unbalanced'
+at allowed "$A" 0 'git gc && echo "unbalanced'
 
 section "folders held in variables"
 at allowed "$A" 0 'WT="$HOME/worktrees/agentrepo/oak"; cd "$WT" && git add -A && git commit -m x'
@@ -473,19 +615,19 @@ at allowed "$A" 0 'declare -x WT="$HOME/worktrees/agentrepo/oak"; git -C "$WT" c
 at allowed "$A" 0 'cd "$(mktemp -d)" && git init -q && git commit --allow-empty -m x'
 at allowed "$D" 0 'T=$(mktemp -d); git init -q "$T/repo" && git -C "$T/repo" commit --allow-empty -m x'
 at allowed "$D" 0 'T=`mktemp -d`; git -C "$T" init -q'
-at allowed "$L" 0 'WT="$HOME/worktrees/laptoprepo/fix-4"; git clone https://github.com/ctejada10/laptoprepo "$WT" && cd "$WT" && git switch -c fix-4 && git commit -am x'
+at allowed "$L" 0 'WT="$HOME/worktrees/oldrepo/fix-4"; git clone https://github.com/ctejada10/oldrepo "$WT" && cd "$WT" && git switch -c fix-4 && git commit -am x'
 at blocked "$F" 0 'SRC="$HOME/.local/share/chezmoi"; git -C "$SRC" add -A && git -C "$SRC" commit -m x'
-at blocked "$W" 0 'L="$HOME/src/laptoprepo"; git -C "$L" commit -am x'
-at blocked "$W" 0 'export L=~/src/laptoprepo; cd "$L" && git commit -am x'
+at blocked "$W" 0 'L="$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo"; git -C "$L" commit -am x'
+at blocked "$W" 0 'export L=~/Library/CloudStorage/Dropbox/repositories/oldrepo; cd "$L" && git commit -am x'
 at blocked "$A/pkg" 0 'WT="$(git rev-parse --show-toplevel)"; cd "$WT" && git commit -m x'
 
 section "folders held in variables built from other variables"
 at allowed "$A" 0 'b=fix-parser; wt="$HOME/worktrees/agentrepo/$b"; git fetch origin && git worktree add --no-track -b "$b" "$wt" origin/HEAD && cd "$wt"'
-at allowed "$L" 0 'b=fix-x; wt=~/worktrees/laptoprepo/$b; git clone https://github.com/ctejada10/laptoprepo "$wt" && cd "$wt" && git switch -c "$b"'
+at allowed "$L" 0 'b=fix-x; wt=~/worktrees/oldrepo/$b; git clone https://github.com/ctejada10/oldrepo "$wt" && cd "$wt" && git switch -c "$b"'
 at allowed "$D" 0 'b=fix; wt=~/worktrees/dotfiles/$b; chezmoi --source "$wt" add ~/.zshrc'
-at blocked "$W" 0 'r=laptoprepo; m=~/src/$r; git -C "$m" commit -am x'
+at blocked "$W" 0 'r=oldrepo; m=~/Library/CloudStorage/Dropbox/repositories/$r; git -C "$m" commit -am x'
 at blocked "$W" 0 'r=agentrepo; m=~/src/$r; cd "$m" && git switch -c foo'
-at blocked "$L" 0 'd=~/worktrees/laptoprepo/x; d=$(pwd); t=$d; git -C "$t" commit -am x'
+at blocked "$L" 0 'd=~/worktrees/oldrepo/x; d=$(pwd); t=$d; git -C "$t" commit -am x'
 at blocked "$A" 0 $'b=oak\nwhile true; do\nwt=~/worktrees/agentrepo/$b\ngit -C "$wt" commit -am x\nb=../../src/agentrepo\ndone'
 
 section "checkouts named by GIT_DIR, GIT_WORK_TREE and the like"
@@ -493,35 +635,51 @@ for cmd in 'GIT_DIR=$HOME/src/agentrepo/.git GIT_WORK_TREE=$HOME/src/agentrepo g
            'env GIT_DIR=$HOME/src/agentrepo/.git GIT_WORK_TREE=$HOME/src/agentrepo git reset --hard' \
            'export GIT_DIR=$HOME/src/agentrepo/.git GIT_WORK_TREE=$HOME/src/agentrepo; git reset --hard HEAD~1' \
            'GIT_DIR=$HOME/src/agentrepo/.git git switch -c foo' \
-           'GIT_DIR=$HOME/src/laptoprepo/.git GIT_WORK_TREE=$HOME/src/laptoprepo git add -A' \
-           'GIT_DIR=~/src/laptoprepo/.git git commit -m x' \
+           'GIT_DIR=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git GIT_WORK_TREE=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo git add -A' \
+           'GIT_DIR=~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git git commit -m x' \
            'GIT_DIR=$HOME/.local/share/chezmoi/.git GIT_WORK_TREE=$HOME/.local/share/chezmoi git checkout -- .' \
            'B="$HOME/src/agentrepo"; GIT_DIR="$B/.git" GIT_WORK_TREE="$B" git restore .' \
-           'git --work-tree=$HOME/src/agentrepo checkout HEAD~1 -- .' 'git --work-tree ~/src/laptoprepo checkout -- .' \
-           'GIT_WORK_TREE=~/src/agentrepo git checkout -- .' 'git -c core.worktree=$HOME/src/laptoprepo checkout -- .' \
-           'GIT_COMMON_DIR=$HOME/src/laptoprepo/.git git commit -m x' \
-           'GIT_INDEX_FILE=$HOME/src/laptoprepo/.git/index git add README.md' \
-           'export GIT_DIR=~/src/laptoprepo/.git; cd /tmp && git commit -m x' \
+           'git --work-tree=$HOME/src/agentrepo checkout HEAD~1 -- .' \
+           'git --work-tree ~/Library/CloudStorage/Dropbox/repositories/oldrepo checkout -- .' \
+           'GIT_WORK_TREE=~/src/agentrepo git checkout -- .' \
+           'git -c core.worktree=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo checkout -- .' \
+           'GIT_COMMON_DIR=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git git commit -m x' \
+           'GIT_INDEX_FILE=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git/index git add README.md' \
+           'export GIT_DIR=~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; cd /tmp && git commit -m x' \
            'declare -x GIT_WORK_TREE=~/.local/share/chezmoi; git checkout -- .' \
-           'env -C ~/src/agentrepo git reset --hard' 'env -u FOO git -C ~/src/laptoprepo commit -m x' \
-           'GIT_DIR=$HOME/src/laptoprepo/.git chezmoi --source ~/worktrees/dotfiles/fix git -- commit -m x' \
+           'env -C ~/src/agentrepo git reset --hard' \
+           'env -u FOO git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo commit -m x' \
+           'GIT_DIR=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git chezmoi --source ~/worktrees/dotfiles/fix git -- commit -m x' \
            'GIT_DIR="$(git rev-parse --git-dir)" git commit -m x' 'git --work-tree="$WT_FROM_ELSEWHERE" checkout -- .' \
-           'read GIT_DIR <<< ~/src/laptoprepo/.git; export GIT_DIR; git commit -m x' \
+           'read GIT_DIR <<< ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; export GIT_DIR; git commit -m x' \
            'IFS= read -r GIT_WORK_TREE <<< ~/src/agentrepo; export GIT_WORK_TREE; git checkout -- .' \
-           'printf -v GIT_DIR %s ~/src/laptoprepo/.git; export GIT_DIR; git commit -m x' \
-           'for GIT_DIR in ~/src/laptoprepo/.git; do export GIT_DIR; git commit -m x; done' \
-           'mapfile -t GIT_INDEX_FILE <<< ~/src/laptoprepo/.git/index; export GIT_INDEX_FILE; git add -A' \
-           'echo ~/src/laptoprepo/.git | read GIT_DIR; export GIT_DIR; git commit -m x' \
-           'export GIT_DIR=~/src/laptoprepo/.git; unset -f GIT_DIR; git commit -m x'; do
+           'printf -v GIT_DIR %s ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; export GIT_DIR; git commit -m x' \
+           'for GIT_DIR in ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; do export GIT_DIR; git commit -m x; done' \
+           'mapfile -t GIT_INDEX_FILE <<< ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git/index; export GIT_INDEX_FILE; git add -A' \
+           'echo ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git | read GIT_DIR; export GIT_DIR; git commit -m x' \
+           'export GIT_DIR=~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; unset -f GIT_DIR; git commit -m x'; do
   at blocked "$W" 0 "$cmd"
 done
-for cmd in 'GIT_DIR=$HOME/src/laptoprepo/.git git log --oneline -3' 'env GIT_DIR=~/src/agentrepo/.git git log -1' \
-           'read GIT_DIR <<< ~/src/laptoprepo/.git; export GIT_DIR; git log -1' \
-           'for GIT_DIR in ~/src/laptoprepo/.git; do git --no-pager log -1; done' \
-           'GIT_DIR="$(git rev-parse --git-dir)" git status' 'GIT_INDEX_FILE="$(mktemp)" git add -A' \
-           'export GIT_DIR=~/src/laptoprepo/.git; unset GIT_DIR; git commit -m x' \
-           '(export GIT_DIR=~/src/laptoprepo/.git); git commit -m x' \
-           'GIT_DIR=$HOME/worktrees/agentrepo/oak/.git git commit -m x' 'GIT_TRACE=1 git commit -m x'; do
+# A read there is refused just the same, and so is any use of a folder worked
+# out only when the command runs, which could be one.
+for cmd in 'GIT_DIR=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git git log --oneline -3' \
+           'env GIT_DIR=~/Repositories/oldrepo/.git git log -1' \
+           'export GIT_DIR=~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; git status' \
+           'declare -x GIT_DIR=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; git log -1' \
+           'GIT_WORK_TREE=~/Library/CloudStorage/Dropbox/repositories/oldrepo git status' \
+           'GIT_COMMON_DIR=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git git log -1' \
+           'GIT_INDEX_FILE=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git/index git diff --cached' \
+           'GIT_OBJECT_DIRECTORY=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git/objects git cat-file -t HEAD' \
+           'read GIT_DIR <<< ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; export GIT_DIR; git log -1' \
+           'for GIT_DIR in ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; do git --no-pager log -1; done' \
+           'GIT_DIR="$(git rev-parse --git-dir)" git status'; do
+  at blocked "$W" 0 "$cmd"
+done
+for cmd in 'env GIT_DIR=~/src/agentrepo/.git git log -1' 'GIT_INDEX_FILE="$(mktemp)" git add -A' \
+           'export GIT_DIR=~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git; unset GIT_DIR; git commit -m x' \
+           '(export GIT_DIR=~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git); git commit -m x' \
+           'GIT_DIR=$HOME/worktrees/agentrepo/oak/.git git commit -m x' 'GIT_TRACE=1 git commit -m x' \
+           'GIT_DIR=$HOME/.local/share/chezmoi/.git git log -1'; do
   at allowed "$W" 0 "$cmd"
 done
 
@@ -541,7 +699,9 @@ at blocked "$home" 0 'echo x | xargs chezmoi apply'
 at blocked "$home" 0 'echo apply | xargs chezmoi --source ~/worktrees/dotfiles/fix'
 for cmd in 'echo main | xargs git push origin' 'echo --force | xargs git push origin worktree-oak' \
            'echo 12 | xargs gh pr merge' 'echo merge | xargs gh pr' 'echo push | xargs git' \
-           'find ~/src -maxdepth 1 -execdir git pull \;' 'find ~/src/laptoprepo -maxdepth 0 -execdir git commit -m x \;' \
+           'find ~/src -maxdepth 1 -execdir git pull \;' \
+           'find ~/Library/CloudStorage/Dropbox/repositories/oldrepo -maxdepth 0 -execdir git commit -m x \;' \
+           'find ~/src/agentrepo -maxdepth 0 -execdir git commit -m x \;' \
            'ls ~/src | xargs -I{} git -C ~/src/{} commit -am x' \
            $'find ~/src -maxdepth 1 -exec sh -c \'git -C "$1" commit -am x\' _ {} \\;'; do
   at blocked "$W" 0 "$cmd"
@@ -550,8 +710,17 @@ for cmd in 'git diff --name-only | xargs git add' "find . -name '*.py' -exec git
            'echo x | xargs -I{} git commit --allow-empty -m {}' 'git ls-files | xargs git log --oneline -1 --'; do
   at allowed "$W" 0 "$cmd"
 done
-at allowed "$L" 0 'git ls-files | xargs git log --oneline -1 --'
-at allowed "$L" 0 "find . -name '*.md' -exec git log -1 -- {} \\;"
+at allowed "$D" 0 'git ls-files | xargs git log --oneline -1 --'
+at allowed "$D" 0 "find . -name '*.md' -exec git log -1 -- {} \\;"
+at blocked "$L" 0 'git ls-files | xargs git log --oneline -1 --'
+at blocked "$L" 0 "find . -name '*.md' -exec git log -1 -- {} \\;"
+for cmd in 'echo ~/Library/CloudStorage/Dropbox/repositories/oldrepo | xargs -I{} git -C {} log -1' \
+           'find ~/Library/CloudStorage/Dropbox/repositories/oldrepo -maxdepth 0 -execdir git log -1 \;' \
+           'find ~/Repositories/oldrepo -maxdepth 0 -execdir git status \;' \
+           'find ~/src -maxdepth 2 -name .git -execdir git status \;' \
+           'find ~/src -maxdepth 2 -name .git -execdir gh pr list \;'; do
+  at blocked "$W" 0 "$cmd"
+done
 at allowed "$A" 0 'git ls-files | xargs git blame --'
 # BSD xargs replaces only in the arguments, so a one-letter -I string is no
 # command name.
@@ -562,8 +731,8 @@ at blocked "$W" 0 'echo ~/src/agentrepo | xargs -I i git -C i reset --hard'
 # A comment's apostrophe inside a "$(...)" opens no quote, and a quoted
 # "$(...)" holding quotes of its own hides nothing after it.
 at allowed "$W" 0 $'out="$(\n  # it\'s the slow part\n  git log --oneline -3\n)"; echo "$out"'
-at blocked "$W" 0 $'out="$(\n  # it\'s the slow part\n  git -C ~/src/laptoprepo commit -am x\n)"'
-at blocked "$W" 0 $'echo "$(echo "it\'s")"\ngit -C ~/src/laptoprepo commit -am x\necho "$(echo "it\'s")"'
+at blocked "$W" 0 $'out="$(\n  # it\'s the slow part\n  git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo commit -am x\n)"'
+at blocked "$W" 0 $'echo "$(echo "it\'s")"\ngit -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo commit -am x\necho "$(echo "it\'s")"'
 
 section "find's groups and every action it runs"
 # A quoted or escaped ( ) or ; is a word for find, not the shell's operator.
@@ -576,29 +745,40 @@ at blocked "$A" 0 'find . "(" -name a ")" -exec git add {} +'
 at blocked "$A" 0 "find . -name '*.orig' -exec rm {} \\; -exec git rm --cached {} \\;"
 at blocked "$A" 0 'find . -name "" -exec git add {} +'
 at allowed "$W" 0 "find . \\( -name '*.py' -o -name '*.md' \\) -exec git add {} +"
-at allowed "$L" 0 "find . \\( -name '*.md' -o -name '*.txt' \\) -exec git log -1 -- {} \\;"
+at allowed "$D" 0 "find . \\( -name '*.md' -o -name '*.txt' \\) -exec git log -1 -- {} \\;"
+at blocked "$L" 0 "find . \\( -name '*.md' -o -name '*.txt' \\) -exec git log -1 -- {} \\;"
 
 section "what xargs or find hands over can be the subcommand or the command"
-for cmd in 'echo ~/src/agentrepo reset --hard | xargs git -C' 'echo ~/src/laptoprepo commit -am x | xargs git -C' \
-           "printf '%s\\n' ~/src/laptoprepo/.git commit | xargs git --git-dir" \
+for cmd in 'echo ~/src/agentrepo reset --hard | xargs git -C' \
+           'echo ~/Library/CloudStorage/Dropbox/repositories/oldrepo commit -am x | xargs git -C' \
+           "printf '%s\\n' ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git commit | xargs git --git-dir" \
            'echo git push --force | xargs env' 'echo "git -C ~/src/agentrepo reset --hard" | xargs -I{} sh -c {}' \
            'echo git -C ~/src/agentrepo reset --hard | xargs nohup'; do
   at blocked "$W" 0 "$cmd"
 done
 at blocked "$home" 0 'echo ~/.local/share/chezmoi add ~/.zshrc | xargs chezmoi --source'
-for cmd in "git ls-files | xargs -I{} sh -c 'wc -l {}'" "find . -name '*.sh' -exec bash -n {} \\;" \
-           'echo ~/src/agentrepo | xargs -I{} git -C {} log -1'; do
+for cmd in "git ls-files | xargs -I{} sh -c 'wc -l {}'" "find . -name '*.sh' -exec bash -n {} \\;"; do
   at allowed "$W" 0 "$cmd"
 done
+# A folder xargs hands over could be a repo in Dropbox, so git doesn't even
+# read there.
+at blocked "$W" 0 'echo ~/src/agentrepo | xargs -I{} git -C {} log -1'
 
 section "a cd in a subshell, a substitution or a pipeline ends with it, but for zsh's last stage"
-for cmd in '(cd ~/src/laptoprepo && git log -1 --oneline) && git commit -am "Match the laptop repo"' \
-           'sha=$(cd ~/src/laptoprepo && git rev-parse HEAD); git commit -am "Pin at $sha"' \
+for cmd in '(cd ~/.local/share/chezmoi && git log -1 --oneline) && git commit -am "Match the dotfiles"' \
+           'sha=$(cd ~/.local/share/chezmoi && git rev-parse HEAD); git commit -am "Pin at $sha"' \
            '(cd ~/src/agentrepo && git fetch origin) && git rebase origin/main' \
            'pushd ~/src/agentrepo >/dev/null && git fetch origin && popd >/dev/null && git merge origin/main' \
            'cd ~/src/agentrepo && git worktree list && cd - && git commit -m x' \
-           'cd ~/src/laptoprepo | cat; git commit -am x' 'cd ~/src/laptoprepo && git log -1 & git commit -am x'; do
+           'cd ~/Library/CloudStorage/Dropbox/repositories/oldrepo | cat; git commit -am x' \
+           'cd ~/.local/share/chezmoi && git log -1 & git commit -am x'; do
   at allowed "$W" 0 "$cmd"
+done
+# The read inside them, in a repo in Dropbox, is refused all the same.
+for cmd in '(cd ~/Library/CloudStorage/Dropbox/repositories/oldrepo && git log -1 --oneline) && git commit -am "Match the old copy"' \
+           'sha=$(cd ~/Library/CloudStorage/Dropbox/repositories/oldrepo && git rev-parse HEAD); git commit -am "Pin at $sha"' \
+           'cd ~/Library/CloudStorage/Dropbox/repositories/oldrepo && git log -1 & git commit -am x'; do
+  at blocked "$W" 0 "$cmd"
 done
 at blocked "$A" 0 'cd ~/worktrees/agentrepo/oak && git status & git commit -m x'
 at blocked "$A" 0 'cd /tmp & git commit -m x'
@@ -608,12 +788,13 @@ for cmd in '(cd ~/worktrees/agentrepo/oak && git status) && git commit -m x' 'v=
   at blocked "$A" 0 "$cmd"
 done
 at blocked "$L" 0 '(cd "$(mktemp -d)" && touch x) && git add -A && git commit -m x'
-at blocked "$W" 0 '(cd ~/src/laptoprepo && git commit -m x)'
-at blocked "$W" 0 'x="$(git -C ~/src/laptoprepo commit -am x)"'
+at blocked "$W" 0 '(cd ~/Library/CloudStorage/Dropbox/repositories/oldrepo && git commit -m x)'
+at blocked "$W" 0 'x="$(git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo commit -am x)"'
 at blocked "$W" 0 'echo `git -C ~/src/agentrepo reset --hard`'
 # zsh, which runs agents' commands, runs a pipeline's last stage in the
 # current shell, so a cd there lasts. bash and sh run it in a subshell.
-for cmd in 'true | cd ~/src/agentrepo; git reset --hard' 'git status | cd ~/src/laptoprepo && git commit -am x' \
+for cmd in 'true | cd ~/src/agentrepo; git reset --hard' \
+           'git status | cd ~/Library/CloudStorage/Dropbox/repositories/oldrepo && git commit -am x' \
            'echo | cd ~/.local/share/chezmoi; git checkout -- .' "zsh -c 'true | cd ~/src/agentrepo; git reset --hard'"; do
   at blocked "$W" 0 "$cmd"
 done
@@ -648,13 +829,14 @@ section "a new folder whose name is worked out when the command runs"
 at allowed "$A" 0 'git worktree add --no-track -b "fix-$(date +%s)" ~/worktrees/agentrepo/"fix-$(date +%s)" origin/HEAD'
 at allowed "$A" 0 'git worktree add --no-track -b fix-$(date +%s) ~/worktrees/agentrepo/fix-$(date +%s) origin/HEAD'
 at allowed "$A" 0 'repo=$(basename "$PWD"); git worktree add --no-track -b fix "$HOME/worktrees/$repo/fix" origin/HEAD'
-at allowed "$L" 0 'git clone https://github.com/ctejada10/laptoprepo ~/worktrees/laptoprepo/fix-$(date +%Y%m%d)'
-at allowed "$L" 0 'gh repo clone ctejada10/laptoprepo ~/worktrees/laptoprepo/"fix-$(date +%s)"'
+at allowed "$L" 0 'git clone https://github.com/ctejada10/oldrepo ~/worktrees/oldrepo/fix-$(date +%Y%m%d)'
+at allowed "$L" 0 'gh repo clone ctejada10/oldrepo ~/worktrees/oldrepo/"fix-$(date +%s)"'
 at allowed "$D" 0 'git worktree add --no-track -b fix-3 ~/worktrees/dotfiles/fix-$(date +%s) origin/HEAD'
 at allowed "$home" 0 'chezmoi --source ~/worktrees/dotfiles/"$(git -C ~/worktrees/dotfiles/fix branch --show-current)" add ~/.zshrc'
 at blocked "$A" 0 'git worktree add ~/src/agentrepo/wt-$(date +%s)'
 at blocked "$A" 0 'git worktree add wt-$(date +%s)'
-at blocked "$L" 0 'git clone https://github.com/ctejada10/laptoprepo ~/src/laptoprepo-$(date +%s)'
+at blocked "$L" 0 'git clone https://github.com/ctejada10/oldrepo ~/Library/CloudStorage/Dropbox/repositories/oldrepo-$(date +%s)'
+at blocked "$L" 0 'git clone https://github.com/ctejada10/oldrepo ~/src/oldrepo-$(date +%s)'
 at blocked "$D" 0 'git worktree add ~/.local/share/chezmoi/wt-$(date +%s)'
 at blocked "$W" 0 'git clone https://github.com/ctejada10/newrepo ~/$(echo src)/newrepo'
 at blocked "$W" 0 'git worktree add "$(git rev-parse --show-toplevel)/../wt-2"'
@@ -675,7 +857,19 @@ at blocked "$W" 0 $'cd ~/src/agentrepo && git commit -m $\'It\\\'s done\''
 at blocked "$home/worktrees/dotfiles/fix" 0 $'cd ~/.local/share/chezmoi && git commit -m $\'It\\\'s done\''
 at allowed "$A" 0 'cd ~/worktrees/agentrepo/oak && git commit -m "unbalanced'
 at blocked "$W" 0 'cd ~/src/agentrepo && git commit -m "unbalanced'
-at blocked "$W" 0 'git -C ~/src/laptoprepo commit -m "unbalanced'
+at blocked "$W" 0 'git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo commit -m "unbalanced'
+# Nor do they read a repo in Dropbox, wherever they name it.
+for cmd in 'git -C ~/Library/CloudStorage/Dropbox/repositories/oldrepo log -1 && echo "unbalanced' \
+           'cd ~/Repositories/oldrepo && git status && echo "unbalanced' \
+           'git --git-dir ~/Library/CloudStorage/Dropbox/repositories/oldrepo/.git log -1 && echo "unbalanced' \
+           'GIT_DIR=$HOME/Library/CloudStorage/Dropbox/repositories/oldrepo/.git git status && echo "unbalanced' \
+           'git clone ~/Repositories/oldrepo ~/worktrees/oldrepo/fix-9 && echo "unbalanced'; do
+  at blocked "$W" 0 "$cmd"
+done
+for cmd in 'git status && echo "unbalanced' 'gh pr view 3 && echo "unbalanced'; do
+  at blocked "$L" 0 "$cmd"
+done
+at allowed "$W" 0 'git -C ~/.local/share/chezmoi log -1 && echo "unbalanced'
 
 section "chezmoi writes the dotfiles checkout"
 for cmd in 'chezmoi add ~/.config/t3-pstack/models.md' 'chezmoi re-add ~/.claude/settings.json' 'chezmoi re-add' \
@@ -723,8 +917,6 @@ says() {
 says "$A" 'git switch -c add-parser' 'git worktree add --no-track -b <branch> ~/worktrees/agentrepo/<branch> origin/HEAD'
 git -C "$work/repo" switch -q main
 says "$work/repo" 'git commit -m x' "in a worktree if this is the repo's main checkout"
-says "$L" 'git commit -m x' 'Reading is fine: status, diff, log, show, and listing branches, tags, worktrees and config.'
-says "$L" 'git describe --dirty' 'run plain git describe, and git status --porcelain to see whether it has changes'
 says "$D" 'git commit -m x' 'and git worktree lock or unlock'
 says "$home" 'chezmoi add ~/.zshrc' 'chezmoi --source ~/worktrees/dotfiles/<branch> add'
 says "$home" 'chezmoi -v apply' 'or bash tests/run.sh in that worktree'
@@ -732,10 +924,46 @@ says "$home" 'chezmoi destroy ~/.zshrc' 'git rm its source file in ~/worktrees/d
 says "$W" 'GIT_DIR="$(git rev-parse --git-dir)" git commit -m x' 'Name the folder in the command'
 says "$W" 'echo $(echo $(echo $(echo $(echo hi))))' 'Split it into separate commands'
 says "$W" 'echo ~/src/agentrepo reset --hard | xargs git -C' 'Name the subcommand'
+# ends <folder> <command> <text>: the block's message ends with text.
+ends() {
+  local dir="$1" cmd="$2" text="$3" out
+  out=$(jq -n --arg c "$cmd" --arg d "$dir" '{tool_input: {command: $c}, cwd: $d}' \
+          | HOME="$home" /usr/bin/python3 -B "$hook" 2>&1)
+  if [[ "$out" == *"$text" ]]; then pass "$cmd: ends with $text"; else fail "$cmd: ends with $text" "$out"; fi
+}
+# omits <folder> <command> <text>: the block's message doesn't contain text.
+omits() {
+  local dir="$1" cmd="$2" text="$3" out
+  out=$(jq -n --arg c "$cmd" --arg d "$dir" '{tool_input: {command: $c}, cwd: $d}' \
+          | HOME="$home" /usr/bin/python3 -B "$hook" 2>&1)
+  if grep -qF -- "$text" <<< "$out"; then fail "$cmd: never says $text" "$out"; else pass "$cmd: never says $text"; fi
+}
+says "$A" 'git reset --hard' "agentrepo's main checkout in ~/src"
+for cmd in 'git switch -c add-parser' 'git commit -m "unbalanced' 'gh pr checkout 12' 'git worktree add ~/src/agentrepo-wt'; do
+  ends "$A" "$cmd" 'git fetch origin, then git worktree add --no-track -b <branch> ~/worktrees/agentrepo/<branch> origin/HEAD'
+  omits "$A" "$cmd" 'Dropbox'
+done
+ends "$home/src/superrepo/sub" "git checkout $older" \
+  'git fetch origin, then git worktree add --no-track -b <branch> ~/worktrees/superrepo/<branch> origin/HEAD'
+for cmd in 'git status' 'git describe --dirty' 'git commit -m x'; do
+  says "$L" "$cmd" "would use oldrepo in Dropbox's repositories folder, the repos' old home, which nothing on this Mac uses, not even to read."
+  ends "$L" "$cmd" 'Read it on GitHub, or clone it from GitHub into ~/worktrees/oldrepo/<branch>.'
+done
+says "$L" 'gh pr view 3' '`gh pr view` would use oldrepo'
+says "$home" 'git clone ~/Repositories/oldrepo ~/worktrees/oldrepo/fix-9' '`git clone` would use oldrepo'
+says "$W" 'echo ~/src/agentrepo | xargs -I{} git -C {} log -1' 'would use a folder worked out only when the command runs'
+says "$home" 'git clone https://github.com/ctejada10/newrepo ~/src/newrepo' 'That folder holds only the clones chezmoi makes'
+ends "$home" 'git clone https://github.com/ctejada10/newrepo ~/src/newrepo' \
+  'git fetch origin, then git worktree add --no-track -b <branch> ~/worktrees/<repo>/<branch> origin/HEAD'
+omits "$home" 'git clone https://github.com/ctejada10/newrepo ~/src/newrepo' 'Dropbox'
+says "$W" 'GIT_DIR="$(git rev-parse --git-dir)" git commit -m x' "an agent repo's main checkout in ~/src"
+says "$K" 'git gc' 'this repo is under ~/Library/CloudStorage/Dropbox'
+says "$K" 'git worktree prune' '`git worktree prune` rewrites'
 
 section "more that the rules forbid"
-expect blocked feature 'git gc --aggressive'
-expect blocked feature 'git worktree prune'
+# gc and git worktree prune run as usual in a repo outside Dropbox.
+expect allowed feature 'git gc --aggressive'
+expect allowed feature 'git worktree prune'
 expect blocked feature 'git worktree remove --force ../wt'
 expect blocked feature 'git stash'
 expect allowed feature 'git stash list'

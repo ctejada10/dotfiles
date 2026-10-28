@@ -53,9 +53,8 @@ In this order:
    sh -c "$(curl -fsLS get.chezmoi.io)" -- init --apply ctejada10
    ```
 
-   It may stop at the clone step with "the Dropbox repositories folder isn't
-   synced yet". That's expected until [Dropbox](#3-dropbox-and-the-repos) has
-   brought the repos down.
+   Near the end it clones the mini's repos from GitHub into `~/src`. A clone
+   that fails is named, and the next apply tries it again.
 
 Then check:
 
@@ -291,62 +290,48 @@ without valid credentials.
 
 ## 3. Dropbox and the repos
 
-Sign in to Dropbox. On the mini it runs in File Provider mode: files arrive as
-online-only placeholders, and Git and the agents need real files.
+The repos don't live in Dropbox. The apply clones the mini's seven repos from
+GitHub into a real `~/src` (the `agent-mini` list in
+`home/.chezmoidata/repos.yaml`), and work reaches the laptop through GitHub.
+Nothing pulls those clones: agents branch from `origin/HEAD` in worktrees, and
+FirstMate fast-forwards a clone once a PR merges.
 
-1. In Finder, open `~/Library/CloudStorage/Dropbox/repositories`, select the
-   agent repos (hurin, rivendell, scripts, cad-a11y, readme, arwen and
-   faramir, the `agent-mini` list in `home/.chezmoidata/repos.yaml`),
-   right-click → **Make available offline**.
-2. Don't make the whole `repositories` folder available offline. It also holds
-   the old `tilde` checkout, with arnor's old SSH private keys, and your
-   personal repos. Leave `tilde` online-only and never open it on the mini.
-   File Provider mode may not offer the old Selective Sync; untick `tilde`
-   there if it does.
-3. Check the download is complete. Every agent repo has its history:
+Dropbox on the mini holds only the repos' weekly snapshots, in `backups`. Sign
+in to Dropbox; on the mini it runs in File Provider mode, so files arrive as
+online-only placeholders. Then sync that one folder:
 
-   ```sh
-   ls -d ~/src/{hurin,rivendell,scripts,cad-a11y,readme,arwen,faramir}/.git
-   ```
+1. Dropbox icon in the menu bar → your avatar → **Preferences** → **Sync**.
+   Under "Select folders to sync to this Mac", click **Modify**.
+2. Tick **backups** and nothing else, and click **Update**. Leave
+   **repositories** unticked: it's the repos' old home, synced with the
+   laptop, and it holds the old `tilde` checkout with arnor's old SSH private
+   keys. Never open `tilde` on the mini.
+3. `ls ~/Library/CloudStorage/Dropbox` shows `backups` and no `repositories`.
 
-   and this prints `0`, so no file is still a placeholder:
+### The snapshot job's access
 
-   ```sh
-   ls -lOR ~/src/hurin ~/src/rivendell ~/src/scripts ~/src/cad-a11y ~/src/readme ~/src/arwen ~/src/faramir 2>/dev/null | grep -c dataless
-   ```
+A LaunchAgent runs `~/.local/bin/repo-snapshots` every Sunday at 03:47. For
+each repo in `~/src` whose branches changed since its last snapshot, it writes
+a `git bundle` of every branch into `backups/repositories/snapshots/<repo>/`
+in Dropbox, and keeps the newest four. Only bundles: no `.env` or other
+untracked file goes in. macOS refuses a background job into Dropbox's folder
+without asking, as it refused the cleanup job when the repos were there (#3),
+and the only grant that works is Full Disk Access for `/bin/bash` (Files &
+Folders lists no entry for it). The cleanup job itself only reads `~/src` now.
 
-4. Run `chezmoi diff`, then `chezmoi apply` at the mini's own screen. The
-   clone step waits until `~/src/hurin/.git` exists, then clones anything
-   still missing over HTTPS. It also sets up FirstMate's projects.
-
-If a repo's folder arrives but its `.git` never does, Dropbox is ignoring it
-on the laptop, and the clone step keeps saying the folder isn't synced (#3).
-The [personal Macs guide](setup-macs.md#the-agents-repos-are-read-only-here)
-has the check and the fix.
-
-### The cleanup job's access
-
-A LaunchAgent runs `~/.local/bin/worktree-ttl` daily at 04:17. It reads
-`~/src`, which is in Dropbox, and macOS refuses that to a background job
-without asking. The only grant that works is Full Disk Access for `/bin/bash`
-(Files & Folders lists no entry for it).
-
-1. `mkdir -p ~/worktrees`. Until it exists the job exits before it ever reads
-   Dropbox, so the refusal would only show after the first worktree (#3).
-2. System Settings → Privacy & Security → **Full Disk Access** → **+**, press
+1. System Settings → Privacy & Security → **Full Disk Access** → **+**, press
    Cmd-Shift-G, type `/bin/bash`, **Open**, and make sure its switch is on.
    That lets any bash script the system starts read your files. On the mini,
-   that's only this job: commands agents run in T3 count as T3's, and SSH
-   sessions as Remote Login's.
-3. Run it now and read its report:
+   that's only this job and the cleanup job: commands agents run in T3 count
+   as T3's, and SSH sessions as Remote Login's.
+2. Run it now and read its report:
 
    ```sh
-   launchctl kickstart gui/$(id -u)/com.carlosetejada.worktree-ttl && sleep 5 && cat ~/Library/Logs/worktree-ttl/attention.txt
+   launchctl kickstart gui/$(id -u)/com.carlosetejada.repo-snapshots && sleep 5 && while [ -d ~/Library/Logs/repo-snapshots/run.lock ]; do sleep 5; done && cat ~/Library/Logs/repo-snapshots/attention.txt
    ```
 
-   It says `0 item(s) need a person`, and
-   `tail -2 ~/Library/Logs/worktree-ttl/worktree-ttl.log` ends with a `DONE`
-   line.
+   A good run prints one line, ending `repo-snapshots: 0 item(s) need a
+   person`. Each line after it names a path and what to do about it.
 
 ### Other privacy prompts
 
@@ -422,9 +407,8 @@ after every restart.
 At the mini's screen, open `http://localhost:3773`. The wizard checks for
 Claude Code and Codex and offers to import projects.
 
-- Import the agent repos from `~/src` only once Dropbox has them all down:
-  hurin, rivendell, cad-a11y, arwen, faramir and readme, and scripts once it's
-  the new `ctejada10/scripts`.
+- Import the agent repos from `~/src`: hurin, rivendell, scripts, cad-a11y,
+  readme, arwen and faramir.
 - Leave out the vault and `tilde`.
 - The dotfiles repo at `~/.local/share/chezmoi` is the mini's live config.
   Import it only if every thread there starts in a new worktree.
@@ -495,12 +479,11 @@ draft PR. `~/.claude/attended.md` is the prompt the repo keeps for it.
     changes.** Any local files also counts ignored files, so a `.venv`,
     `.pytest_cache` or `.coverage` would keep every Python worktree forever.
 
-Keep the time-based cleanups off because of how T3 recreates a worktree: when
-a follow-up or a rollback reaches a thread whose worktree folder is gone, T3
-runs `git worktree prune` in the project's checkout, which is in Dropbox. The
-agents' rules forbid that there. It only drops `.git/worktrees` entries whose
-folders don't exist on the mini, such as one made on the laptop, and touches
-no commits, but it shouldn't become routine (#3).
+The time-based cleanups were kept off because of how T3 recreates a worktree:
+when a follow-up or a rollback reaches a thread whose worktree folder is gone,
+T3 runs `git worktree prune` in the project's checkout, and that checkout used
+to be in Dropbox (#3). The checkouts are plain clones in `~/src` now (#5), so
+the prune is harmless and turning them on is a choice, not a risk.
 
 ## 6. T3 Connect
 
@@ -1050,12 +1033,13 @@ never on the default branch, never a force-push, a merge or a PR opened ready.
 Claude Code's `hooks/guard-git.py` blocks the ordinary forms of each, and
 refuses a commit or PR that credits an AI.
 
-The laptop's repos in `~/src` and this dotfiles source change only for a task
-you typed, and never in place: a laptop repo's `.git` is the laptop's, shared
-through Dropbox, and `~/.local/share/chezmoi` is the mini's live config. An
-agent clones a laptop repo from GitHub into `~/worktrees/<repo>/<branch>`, or
-makes a worktree of the dotfiles repo in `~/worktrees/dotfiles/<branch>`, and
-ends with a draft PR you merge or drop. The hooks block the in-place forms.
+Any other repo and this dotfiles source change only for a task you typed, and
+never in place: `~/.local/share/chezmoi` is the mini's live config. An agent
+clones another repo from GitHub into `~/worktrees/<repo>/<branch>`, or makes a
+worktree of the dotfiles repo in `~/worktrees/dotfiles/<branch>`, and ends
+with a draft PR you merge or drop. The hooks block the in-place forms, and
+refuse every git and gh command in Dropbox's `repositories` folder, the repos'
+old home, reads included: those repos are read on GitHub.
 Codex has none of those hooks yet. A ruleset on each repo's default branch
 that blocks direct pushes and force-pushes is the only lock that holds for
 every agent.
@@ -1074,13 +1058,12 @@ own command.
 
 ### Worktrees and the cleanup job
 
-Worktrees stay out of Dropbox. T3 keeps its own in `~/.t3/worktrees`, Claude
-Code's go to `~/worktrees/<repo>/<name>` through `hooks/worktree.sh`, and
-FirstMate's crews use treehouse's `~/.treehouse`. They are worktrees of the
-checkouts in Dropbox, so every commit made in one lands in that repo's `.git`
-and reaches the laptop. Git's automatic gc and maintenance are off in every
-Dropbox repo on both Macs. Nothing edits a checkout in Dropbox itself: the
-path guard sends an agent to a worktree.
+Each repo's main checkout is a plain clone in `~/src`, and nothing edits it in
+place: the path guard and the Git guard send an agent to a worktree. T3 keeps
+its own in `~/.t3/worktrees`, Claude Code's go to `~/worktrees/<repo>/<name>`
+through `hooks/worktree.sh`, and FirstMate's crews use treehouse's
+`~/.treehouse`. A commit made in any of them lands in the clone's `.git`, and
+reaches GitHub, and so the laptop, only when its branch is pushed.
 
 Finished worktrees stay, so a follow-up thread can pick one up, and clean up
 after themselves. `~/.local/bin/worktree-ttl` runs daily at 04:17 and removes
@@ -1090,7 +1073,7 @@ apart from caches, environments and build output) and nothing in it would be
 lost: never one with an open PR, unpushed commits, commits only its reflog
 holds, uncommitted work, a running process or a lock
 (`git worktree lock --reason "keep: <why>"` keeps one). A merged branch goes
-with its worktree. A laptop repo's clone there is judged the same way, and
+with its worktree. A clone of another repo there is judged the same way, and
 goes only when each of its branches is merged, or pushed with no open PR, and
 it holds no stash. It goes to the Trash, not deleted, and `git worktree lock`
 doesn't apply to a clone: an open draft PR keeps one. The job never fetches,
@@ -1103,8 +1086,9 @@ anything it can't decide, such as a moved or broken worktree, goes in
 
 The apply clones it to `~/firstmate` at the commit in `pins.yaml` and sets
 `FM_HOME` to `~/.local/share/firstmate`, where its state lives. Its `projects`
-folder holds a link to each repo under `agent-mini` and nothing else, because
-FirstMate fetches, prunes branches and fast-forwards every folder there; the
+folder holds a link to each `agent-mini` repo's clone in `~/src` and nothing
+else, because FirstMate fetches, prunes branches and fast-forwards every
+folder there; the
 registry is written once, every repo `direct-PR`. Then, by hand: start Claude
 Code in `~/firstmate` and let its first session install treehouse and the CLIs
 it asks for, approving each. Its crews branch as `fm/<task>`.
@@ -1180,7 +1164,7 @@ reads it from 1Password and keeps it in memory), the app-settings blob, a key
 that can log in to the servers, Ansible (`bash tests/run.sh` in a dotfiles
 worktree puts it in that worktree's `ansible/.venv` to check the playbook's
 syntax, and never runs it against a host), Docker Desktop, the Claude desktop
-app, any Dropbox folder but `repositories`, or an Anthropic API key. Its Claude
+app, any Dropbox folder but `backups`, or an Anthropic API key. Its Claude
 Code loads none of the account's claude.ai connectors or synced plugins.
 
 **Never managed by this repo on the mini:** `~/.t3`, the Codex auth files,
@@ -1247,11 +1231,11 @@ Code loads none of the account's claude.ai connectors or synced plugins.
   `gh auth status`.
 - **Commits show as Unverified on GitHub:** the signing key isn't registered
   (see [Bootstrap](#1-bootstrap)).
-- **The cleanup job says `Operation not permitted`:** `/bin/bash` needs Full
-  Disk Access ([The cleanup job's access](#the-cleanup-jobs-access)).
-- **The clone step keeps saying Dropbox isn't synced:** a `.git` folder is
-  ignored by Dropbox on the laptop, or the repos aren't available offline yet
-  ([Dropbox and the repos](#3-dropbox-and-the-repos)).
+- **The snapshot job says `Operation not permitted`:** `/bin/bash` needs Full
+  Disk Access ([The snapshot job's access](#the-snapshot-jobs-access)).
+- **An apply stops because `~/src` is still a link:** it points into Dropbox,
+  where the repos used to be. Remove just the link with `unlink ~/src`, never
+  what it points to, and apply again; the clone step makes the folder.
 
 ## Still to bring into this repo
 
@@ -1291,6 +1275,5 @@ Done by hand on the mini first, then to be brought in here:
 
 Fixes owed in the code, from #3: Screen Sharing turned on in System Settings
 rather than by the apply; the apply making `~/worktrees` and the cleanup job's
-message naming Full Disk Access and Settings → Worktrees → Cleanup; the clone
-step saying when Dropbox may be ignoring a `.git`; and an RSA stand-in for the
+message naming Settings → Worktrees → Cleanup; and an RSA stand-in for the
 device keys in CI.

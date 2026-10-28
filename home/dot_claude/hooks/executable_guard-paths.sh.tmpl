@@ -29,6 +29,11 @@ block() {
 
 # macOS paths are case-insensitive, so a differently cased path must still match.
 shopt -s nocasematch
+{{- if .isAgent }}
+
+# Every folder in here is one of the agents' repos' main checkouts.
+src={{ joinPath .chezmoi.homeDir "src" | squote }}
+{{- end }}
 
 for p in "$path" "$real"; do
   case "$p" in
@@ -48,27 +53,18 @@ for p in "$path" "$real"; do
     */.ssh/*|*/.aws/*|*/.config/sops/*|*/.config/gh/*|*/Library/Application\ Support/sops/*)
       block "this path holds keys or tokens. The dotfiles repo manages ~/.ssh; change it there." ;;
   esac
-{{- if eq .role "laptop" }}
-{{-   range $dir, $_ := index .repos "agent-mini" }}
-  case "$p" in
-    {{ joinPath $.dropboxRepositories $dir }}/*)
-      block "{{ $dir }} belongs to the mini's agents and is read-only on this Mac. Make the change on the mini." ;;
-  esac
-{{-   end }}
-{{- end }}
 {{- if .isAgent }}
-{{-   $agentRepos := index .repos "agent-mini" }}
-  # Nothing on the mini edits a checkout in Dropbox or the dotfiles checkout:
-  # the agents' own repos are changed in a worktree outside Dropbox, a laptop
-  # repo (whose .git is the laptop's) in a clone from GitHub, and the dotfiles
-  # repo, this Mac's live config, in a worktree. See ~/.codex/AGENTS.md.
+  # Nothing on the mini edits a main checkout in ~/src, the repos' old home in
+  # Dropbox, or the dotfiles checkout: the agents' own repos are changed in a
+  # worktree, any other repo in a clone from GitHub, and the dotfiles repo,
+  # this Mac's live config, in a worktree. See ~/.codex/AGENTS.md.
   case "$p" in
-{{-   range $dir, $_ := $agentRepos }}
-    {{ joinPath $.dropboxRepositories $dir }}/*)
-      block "this is {{ $dir }}'s main checkout, in Dropbox. Work in a worktree outside it: git worktree add --no-track -b <branch> ~/worktrees/{{ $dir }}/<branch> origin/HEAD" ;;
-{{-   end }}
-    {{ .dropboxRepositories }}/*)
-      block "this repo belongs to the laptop and is never changed in place. Clone it from GitHub into ~/worktrees/<repo>/<branch> and work there." ;;
+    "$src"/*)
+      repo=${p:$((${#src} + 1))}
+      repo=${repo%%/*}
+      block "this is $repo's main checkout. Work in a worktree outside it: git worktree add --no-track -b <branch> ~/worktrees/$repo/<branch> origin/HEAD" ;;
+    {{ joinPath .chezmoi.homeDir "Library/CloudStorage/Dropbox/repositories" }}/*)
+      block "this is in Dropbox's repositories folder, the repos' old home, which nothing on this Mac changes. Clone the repo from GitHub into ~/worktrees/<repo>/<branch> and work there." ;;
     {{ joinPath .chezmoi.homeDir ".local/share/chezmoi" }}/*)
       block "this is the dotfiles checkout, this Mac's live config, and is never changed in place. Make a worktree of it in ~/worktrees/dotfiles/<branch> and work there." ;;
   esac

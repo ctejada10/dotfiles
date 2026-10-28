@@ -16,9 +16,9 @@ old tilde until its cutover, and no server has had the playbook yet.
 
 `gondor` is kept for a future Mac Studio.
 
-- **The laptop** is for personal work and job hunting. It reads the
-  development repos but never changes them, and it's the only machine with
-  1Password's SSH agent and Ansible.
+- **The laptop** is for personal work and job hunting. Of the development
+  repos it clones only scripts, which its Raycast and Hazel run, and it's the
+  only machine with 1Password's SSH agent and Ansible.
 - **The mini** is where all development happens, run by agents in T3 Code, and
   where Hermes, the everyday assistant, lives. It runs on your Claude and
   ChatGPT subscriptions, headless after its first setup.
@@ -72,7 +72,7 @@ a line that only adds it can go.
 ### Everything else, by guide
 
 - **[Personal Macs](docs/setup-macs.md):** bootstrap, Dropbox and `~/.config`,
-  why the agents' repos are read-only on the laptop, Claude Code there, fonts,
+  the repos the laptop clones, Claude Code there, fonts,
   renaming a Mac, and cutting arnor over from the old tilde.
 - **[The mini](docs/setup-mini.md):** bootstrap and macOS, Dropbox, T3 Code and
   T3 Connect, t3-pstack, Hermes, scheduled jobs, the final checks, how the

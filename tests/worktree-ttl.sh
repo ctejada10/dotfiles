@@ -112,7 +112,7 @@ chmod +x "$T/bin/git" "$T/bin/gh" "$T/bin/logger" "$T/bin/trash"
 : >"$T/gh-fail"
 : >"$T/parents.tsv"
 
-R="$HOME/Library/CloudStorage/Dropbox/repositories"
+R="$HOME/src"
 W="$HOME/worktrees"
 mkdir -p "$R"
 
@@ -242,7 +242,7 @@ touch "$W/r/edit/f-v.txt"
 # W: recent Claude Code transcript in a folder named for the path
 hookwt "$R/r" r transcript; work "$W/r/transcript" w; pushwt "$W/r/transcript"; age "$W/r/transcript" 20
 mkdir -p "$HOME/.claude/projects/$(enc "$W/r/transcript")"; echo '{}' >"$HOME/.claude/projects/$(enc "$W/r/transcript")/s1.jsonl"
-# X: broken gitfile (admin dir gone, as after a laptop-side prune)
+# X: broken gitfile (admin dir gone, as after a git worktree prune while the folder was moved away)
 mkdir -p "$W/r/broken"; echo "gitdir: $R/r/.git/worktrees/vanished" >"$W/r/broken/.git"
 # X2: gitfile pointing at a folder that is there but is no admin dir
 mkdir -p "$W/r/husk" "$T/husk-admin"; echo "gitdir: $T/husk-admin" >"$W/r/husk/.git"
@@ -606,7 +606,7 @@ RB28=$(git -C "$W/rb/stashed" rev-parse 'stash@{0}')
 git -C "$W/rb/stashed" checkout -q 'stash@{0}'; git -C "$W/rb/stashed" switch -q worktree-stashed
 git -C "$W/rb/stashed" stash drop -q; age "$W/rb/stashed" 20
 
-# ===================== full clones of a laptop repo in ~/worktrees, from test/co
+# ===================== full clones of another repo in ~/worktrees, from test/co
 clone() { git clone -q git@github.com:test/co.git "$W/co/$1" 2>/dev/null && git -C "$W/co/$1" switch -q -c "$1"; }
 # CO1: PR merged at this tip, remote branch deleted and pruned
 clone merged; work "$W/co/merged" co1; pushwt "$W/co/merged"
@@ -667,7 +667,7 @@ git clone -q git@github.com:test/co.git "$T/coseed" 2>/dev/null
 (cd "$T/coseed" && echo theirs >f-co14.txt && git add f-co14.txt && git commit -q -m clash && git push -q origin main) >/dev/null 2>&1
 git -C "$W/co/abortrl" fetch -q; rebase_abort "$W/co/abortrl"
 git -C "$W/co/abortrl" reset -q --hard origin/main; age "$W/co/abortrl" 20
-# Reflogs that cannot be read, as a Dropbox placeholder that will not download
+# Reflogs that cannot be read, as a file with no read permission
 chmod 000 "$UNREAD_LOG" "$W/co/unreadrl/.git/logs" "$UNLIST_LOGS"
 IGNLOCKED="$W/rb/ignlocked/data/locked"; chmod 000 "$IGNLOCKED"
 
@@ -1000,15 +1000,16 @@ env -i HOME="$HOME" TMPDIR="$TMPDIR" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$G
   /bin/bash "$JOB" --dry-run >"$T/envi.out" 2>&1
 chk "a run with an empty environment works and finds git itself" "grep -q 'DONE    removed=' '$T/envi.out' && grep -q 'git=2' '$T/envi.out'"
 
-echo "== a repositories folder the job may not read, as when macOS denies /bin/bash"
+echo "== a repositories folder the job may not read"
 RMODE=$(stat -f %Lp "$R")
 chmod 000 "$R"
 /bin/bash "$JOB" >"$T/denied.out" 2>"$T/denied.err"
 echo "exit $?" >>"$T/denied.out"
 chmod "$RMODE" "$R"
 chk "the run stops with a nonzero exit" "grep -q '^exit 1$' '$T/denied.out'"
-chk "stderr says the folder cannot be read and what to do" "grep -Fq 'worktree-ttl: cannot read $R: Permission denied; give /bin/bash access to the Dropbox folder in Privacy & Security' '$T/denied.err'"
-chk "attention says so in one line" "grep -Fq '1 item(s) need a person' '$ATT' && grep -Fq '$R | cannot read the repositories folder (Permission denied), so no worktree was judged' '$ATT'"
+chk "stderr says the folder cannot be read and what to do" "grep -Fq 'worktree-ttl: cannot read $R: Permission denied; check its permissions' '$T/denied.err'"
+chk "attention says so in one line" "grep -Fq '1 item(s) need a person' '$ATT' && grep -Fq '$R | cannot read the repositories folder (Permission denied), so no worktree was judged; check its permissions' '$ATT'"
+chk "neither asks for a privacy grant" "! grep -Eq 'Privacy|Full Disk|/bin/bash access' '$T/denied.err' '$ATT'"
 chk "no worktree was judged" "! grep -Eq '^[^ ]+ (KEEP|REMOVED|WOULD|FAILED) ' '$T/denied.out'"
 chk "the log records the stop" "grep -Fq 'ABORT   cannot read $R: Permission denied' '$HOME/Library/Logs/worktree-ttl/worktree-ttl.log'"
 # A main checkout outside the repos folder, in a folder the job may not read.
@@ -1019,7 +1020,7 @@ chmod 000 "$T/outside"
 /bin/bash "$JOB" --dry-run >"$T/outside.out" 2>&1
 chmod "$OMODE" "$T/outside"
 expect "$T/outside.out" KEEP worktrees/x/wt "cannot read $T/outside/x/.git/worktrees/wt: Permission denied"
-chk "attention says it cannot read that worktree's admin dir, not that it is gone" "grep -Fq '$W/x/wt | cannot read $T/outside/x/.git/worktrees/wt: Permission denied' '$ATT' && ! grep -Fq '$W/x/wt | broken' '$ATT'"
+chk "attention says it cannot read that worktree's admin dir, not that it is gone" "grep -Fq '$W/x/wt | cannot read $T/outside/x/.git/worktrees/wt: Permission denied; check its permissions' '$ATT' && ! grep -Fq '$W/x/wt | broken' '$ATT'"
 
 echo "== real-world config: fsmonitor on, untracked files hidden"
 git config --global core.fsmonitor true
@@ -1073,7 +1074,7 @@ printf '#!/bin/bash\nexit 0\n' >"$LC/bin/sleep"
 chmod +x "$LC/bin/launchctl" "$LC/bin/sleep"
 RA="$LC/run_after.sh"
 if (. "$REPO/tests/lib.sh" && sandbox agent-mini >/dev/null 2>&1 &&
-  cz execute-template <"$REPO/home/.chezmoiscripts/run_after_59-worktree-ttl.sh.tmpl" >"$RA"
+  cz execute-template <"$REPO/home/.chezmoiscripts/run_after_59-launch-agents.sh.tmpl" >"$RA"
   rc=$?; cleanup_sandbox; exit $rc) && [ -s "$RA" ]; then
   ok "the apply script renders for the agent-mini"
 else

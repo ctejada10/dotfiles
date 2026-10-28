@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The mini's WorktreeCreate and WorktreeRemove hook, in a throwaway home and
 # repo: worktrees go outside the repo, their commits land in it, a name used
-# again reopens its worktree, removal never loses work, and a laptop repo gets
-# none, attended or not.
+# again reopens its worktree, removal never loses work, and a repo in Dropbox's
+# repositories folder gets none, attended or not.
 #
 #   bash tests/worktree.sh
 
@@ -261,43 +261,69 @@ refuses "whose dropped stash only a checkout of it names" "$p" "$(printf '%.10s'
 reach "$x" && pass "that stash is still there" || fail "that stash is still there"
 
 section "whose repo it is"
+# A home laid out like the mini's: the agents' repos cloned into a real ~/src,
+# and Dropbox's repositories folder, the repos' old home, with a repo still in
+# it. No FirstMate projects folder yet: where a repo is decides whose it is.
 box="$HOME/Library/CloudStorage/Dropbox/repositories"
-mkdir -p "$box" "$HOME/.local/share/firstmate/projects"
-ln -s "$box" "$HOME/src"
-clone_with_origin "$box/agentrepo"
-clone_with_origin "$box/laptoprepo"
+mkdir -p "$box" "$HOME/src"
+clone_with_origin "$HOME/src/agentrepo"
+clone_with_origin "$box/oldrepo"
 clone_with_origin "$HOME/.local/share/chezmoi"
-ln -s "$box/agentrepo" "$HOME/.local/share/firstmate/projects/agentrepo"
-rm -f "$box/laptoprepo/.git/FETCH_HEAD"
+# The old link into the repositories folder, which a Mac set up before the
+# move may still have.
+ln -s "$box" "$HOME/Repositories"
+rm -f "$box/oldrepo/.git/FETCH_HEAD"
 for attended in 0 1; do
-  if hookrun create probe "$box/laptoprepo" "" >/dev/null 2>&1; then
-    fail "refuses a laptop repo (attended=$attended)"
+  if hookrun create probe "$box/oldrepo" "" >/dev/null 2>&1; then
+    fail "refuses a repo in Dropbox (attended=$attended)"
   else
-    pass "refuses a laptop repo (attended=$attended)"
+    pass "refuses a repo in Dropbox (attended=$attended)"
   fi
 done
 attended=0
-if hookrun create probe "$HOME/src/laptoprepo" "" >/dev/null 2>&1; then
-  fail "refuses a laptop repo reached through ~/src"
+if hookrun create probe "$HOME/Repositories/oldrepo" "" >/dev/null 2>&1; then
+  fail "refuses a repo in Dropbox reached through a link"
 else
-  pass "refuses a laptop repo reached through ~/src"
+  pass "refuses a repo in Dropbox reached through a link"
 fi
-[ -z "$(git -C "$box/laptoprepo" branch --list worktree-probe)" ] && [ ! -e "$box/laptoprepo/.git/FETCH_HEAD" ] \
-  && [ ! -e "$HOME/worktrees/laptoprepo/probe" ] \
-  && pass "writes nothing to the laptop repo" || fail "writes nothing to the laptop repo"
+err=$(hookrun create probe "$box/oldrepo" "" 2>&1 >/dev/null)
+printf '%s\n' "$err" | grep -Fq "oldrepo is in Dropbox's repositories folder, the repos' old home" \
+  && pass "says the repo is in the repos' old home" || fail "says the repo is in the repos' old home" "$err"
+[ -z "$(git -C "$box/oldrepo" branch --list worktree-probe)" ] && [ ! -e "$box/oldrepo/.git/FETCH_HEAD" ] \
+  && [ ! -e "$HOME/worktrees/oldrepo/probe" ] \
+  && pass "writes nothing to the repo in Dropbox" || fail "writes nothing to the repo in Dropbox"
+before=$(ls -A "$HOME/src" "$HOME/src/agentrepo")
 out=$(hookrun create probe "$HOME/src/agentrepo" "" 2>/dev/null | tail -n 1)
 [ "$out" = "$HOME/worktrees/agentrepo/probe" ] && [ -d "$out" ] \
-  && pass "makes one for an agent repo reached through ~/src" || fail "makes one for an agent repo reached through ~/src" "$out"
+  && pass "makes one for an agent repo in ~/src, in ~/worktrees/<repo>" \
+  || fail "makes one for an agent repo in ~/src, in ~/worktrees/<repo>" "$out"
+[ "$(ls -A "$HOME/src" "$HOME/src/agentrepo")" = "$before" ] \
+  && pass "puts nothing in ~/src" || fail "puts nothing in ~/src" "$(ls -A "$HOME/src" "$HOME/src/agentrepo")"
+hookrun remove "" "" "$out" 2>/dev/null && [ ! -e "$out" ] \
+  && pass "removes an agent repo's worktree" || fail "removes an agent repo's worktree"
 out=$(hookrun create probe "$HOME/.local/share/chezmoi" "" 2>/dev/null | tail -n 1)
 [ "$out" = "$HOME/worktrees/dotfiles/probe" ] && [ -d "$out" ] \
   && pass "makes one for the dotfiles in ~/worktrees/dotfiles" || fail "makes one for the dotfiles in ~/worktrees/dotfiles" "$out"
-g -C "$box/laptoprepo" worktree add -q -b old "$HOME/worktrees/laptoprepo/old" 2>/dev/null
-if hookrun remove "" "" "$HOME/worktrees/laptoprepo/old" >/dev/null 2>&1; then
-  fail "refuses to remove a laptop repo's worktree"
+g -C "$box/oldrepo" worktree add -q -b old "$HOME/worktrees/oldrepo/old" 2>/dev/null
+if hookrun remove "" "" "$HOME/worktrees/oldrepo/old" >/dev/null 2>&1; then
+  fail "refuses to remove a worktree of a repo in Dropbox"
 else
-  pass "refuses to remove a laptop repo's worktree"
+  pass "refuses to remove a worktree of a repo in Dropbox"
 fi
-[ -d "$HOME/worktrees/laptoprepo/old" ] && pass "leaves it in place" || fail "leaves it in place"
+[ -d "$HOME/worktrees/oldrepo/old" ] && pass "leaves it in place" || fail "leaves it in place"
+# FirstMate's projects make no difference, even linking a repo in Dropbox as
+# they did before the move.
+mkdir -p "$HOME/.local/share/firstmate/projects"
+ln -s "$box/oldrepo" "$HOME/.local/share/firstmate/projects/oldrepo"
+if hookrun create probe2 "$box/oldrepo" "" >/dev/null 2>&1; then
+  fail "refuses a repo in Dropbox that FirstMate's projects link"
+else
+  pass "refuses a repo in Dropbox that FirstMate's projects link"
+fi
+out=$(hookrun create probe2 "$HOME/src/agentrepo" "" 2>/dev/null | tail -n 1)
+[ "$out" = "$HOME/worktrees/agentrepo/probe2" ] && [ -d "$out" ] \
+  && pass "makes one for an agent repo that FirstMate's projects don't link" \
+  || fail "makes one for an agent repo that FirstMate's projects don't link" "$out"
 
 section "the main checkout's untracked agent files"
 # As on the mini, the global excludes hide them.

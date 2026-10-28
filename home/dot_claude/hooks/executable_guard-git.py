@@ -9,17 +9,27 @@ master, or whatever the repo's origin says it is.
 t3-pstack's Shipping and Autopilot-full playbooks do several of these by
 default.
 
-Two kinds of checkout are only ever read here, attended or not: a laptop repo
-(one in Dropbox that isn't linked in FirstMate's projects), whose .git and
-working tree are the laptop's, and the dotfiles source's main checkout, which
-is this Mac's live config, chezmoi add and chezmoi git included. A laptop repo
-is changed in a clone from GitHub under ~/worktrees, the dotfiles in a
-worktree of them there, and both of those count as ordinary repos.
+A repo in Dropbox's repositories folder, the repos' old home, is online-only
+on this Mac and never used here, attended or not: no git command runs in it,
+not even to read, since a status or diff would rewrite its index, and no gh
+command runs there either, since gh reads the repo it runs in. It is read on
+GitHub, and changed in a clone from GitHub under ~/worktrees. The dotfiles
+source's main checkout, which is this Mac's live config, is only ever read
+here, attended or not, chezmoi add and chezmoi git included, and is changed in
+a worktree of it there. That clone and that worktree count as ordinary repos.
 
-An agent repo's main checkout in Dropbox keeps its HEAD, index and working
-tree as they are: no switch to another branch, commit, reset or restore there,
-and no merge but a fast-forward from origin. Fetching, pushing a branch and
-making a worktree outside Dropbox are fine; the work happens in that worktree.
+An agent repo is one of the clones chezmoi makes in ~/src. Its main checkout
+there keeps its HEAD, index and working tree as they are: no switch to another
+branch, commit, reset or restore there, and no merge but a fast-forward from
+origin. Fetching, pushing a branch and making a worktree outside ~/src are
+fine; the work happens in that worktree, and a worktree of an agent repo,
+wherever it is, counts as an ordinary repo. ~/src holds only those clones, so
+a clone, git init or worktree made there is blocked, as one made in Dropbox's
+repositories folder or the dotfiles checkout is.
+
+git gc, repack, prune, maintenance and worktree prune are blocked only in a
+repo under ~/Library/CloudStorage/Dropbox, which syncs its .git between the
+Macs.
 
 A git command is judged by every checkout it names: the folder it runs in,
 after cd, pushd, -C or env -C, and any repo, working tree or index that
@@ -28,9 +38,12 @@ point it at, whether set on the command, after env or by an export earlier.
 git run by xargs or find -exec is judged too, and since the words they hand
 it aren't known here, it may only read in those checkouts. A folder worked out
 only when the command runs, for those variables (from a substitution, read,
-printf -v or a for loop) or for what xargs and find hand over, may only be
-read. Commands run in zsh, as agents' commands do here, so the last command of
-a pipeline runs in the current shell; under bash -c or sh -c it doesn't.
+printf -v or a for loop) or for what xargs and find hand over, could be a repo
+in Dropbox, so no git or gh command runs there at all. Another repo that git
+clone, fetch, pull, push, ls-remote, archive, remote add or set-url, or
+submodule add names by its path counts as one the command names. Commands run
+in zsh, as agents' commands do here, so the last command of a pipeline runs in
+the current shell; under bash -c or sh -c it doesn't.
 
 It reads the command, so a determined script can get past it. The ruleset on
 each repo's default branch on GitHub is the lock; this catches the ordinary
@@ -115,9 +128,7 @@ UNKNOWN = "/guard-git/worked-out-at-run-time"
 GIT_DIRS = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY")
 GIT_VARS = GIT_DIRS + ("GIT_WORK_TREE",)
 
-# Git subcommands that only read, whatever their arguments: the same set the
-# laptop's git wrapper lets through in the mini's repos. describe --dirty is
-# the exception in a laptop repo; see rewrites_index().
+# Git subcommands that only read, whatever their arguments.
 READS = {"status", "log", "show", "diff", "blame", "annotate", "grep", "ls-files", "ls-tree", "rev-parse",
          "rev-list", "for-each-ref", "cat-file", "describe", "shortlog", "help", "version", "var",
          "check-ignore", "check-attr", "name-rev", "merge-base", "cherry", "range-diff", "whatchanged",
@@ -140,6 +151,9 @@ NEW_REPO_VALUES = {"-b", "--branch", "-o", "--origin", "-c", "--config", "-u", "
                    "--shallow-since", "--shallow-exclude", "--server-option", "--bundle-uri", "--filter",
                    "--initial-branch", "--object-format", "--ref-format", "--revision"}
 GH_READS = ("view", "list", "ls", "diff", "checks", "status", "")
+# A URL, an scp-style host:path or a refspec such as HEAD:main, rather than a
+# repo named by its path: a colon comes before any slash.
+URL = re.compile(r"^[^/]*:")
 # Git subcommands that move a checkout's HEAD, index or working tree, whatever
 # their arguments. check_git weighs switch, checkout, merge, pull, apply,
 # submodule, fetch and worktree add by their arguments.
@@ -172,7 +186,8 @@ DEFAULTS = {}
 # Each folder's owner, as owner_of() works it out.
 OWNERS = {}
 HOME = os.path.expanduser("~")
-PROJECTS = os.path.join(HOME, ".local/share/firstmate/projects")
+SRC = os.path.realpath(os.path.join(HOME, "src"))
+DROPBOX = os.path.realpath(os.path.join(HOME, "Library/CloudStorage/Dropbox"))
 DROPBOX_REPOS = os.path.realpath(os.path.join(HOME, "Library/CloudStorage/Dropbox/repositories"))
 DOTFILES = os.path.realpath(os.path.join(HOME, ".local/share/chezmoi"))
 
@@ -235,7 +250,7 @@ def resolve_dest(cwd, path, new=True):
     folder = resolve(cwd, head[:head.rfind("/") + 1] if "/" in head else ".")
     real = os.path.realpath(folder)
     if is_unknown(folder) or any(root == real or root.startswith(real.rstrip(os.sep) + os.sep)
-                                 for root in (DROPBOX_REPOS, DOTFILES)):
+                                 for root in (DROPBOX_REPOS, SRC, DOTFILES)):
         return UNKNOWN if new else cwd
     return folder
 
@@ -775,13 +790,18 @@ def previous_branch(directory):
 
 
 def owner_of(directory):
-    """Whose checkout this is, and its name: ("agent", name), ("laptop", name),
-    ("dotfiles", name), ("unknown", "") for a folder worked out only when the
-    command runs, or ("", "") for an ordinary repo or no repo at all.
+    """Whose checkout this is, and its name: ("agent", name) for a clone in
+    ~/src, ("dropbox", name) for a repo in Dropbox's repositories folder,
+    the repos' old home, ("dotfiles", name), ("unknown", "") for a
+    folder worked out only when the command runs, or ("", "") for an ordinary
+    repo or no repo at all.
 
-    Every worktree of a laptop repo shares its .git, so they all count. Only
-    the dotfiles' main checkout counts: a worktree of them elsewhere leaves the
-    live config's files alone. A repo's .git folder counts as its checkout."""
+    Every worktree of an agent repo counts, and so does a submodule inside
+    one; in_main_checkout() tells its main checkout from the rest. Every
+    worktree of a repo in Dropbox shares its .git there, so they all count.
+    Only the dotfiles' main checkout counts: a worktree of them elsewhere
+    leaves the live config's files alone. A repo's .git folder counts as its
+    checkout."""
     if is_unknown(directory):
         return ("unknown", "")
     key = os.path.realpath(directory)
@@ -794,22 +814,16 @@ def owner_of(directory):
             if here == DOTFILES or here.startswith(DOTFILES + os.sep):
                 OWNERS[key] = ("dotfiles", "dotfiles")
         elif top.startswith(DROPBOX_REPOS + os.sep):
-            name = os.path.relpath(top, DROPBOX_REPOS).split(os.sep)[0]
-            try:
-                agents = {os.path.realpath(os.path.join(PROJECTS, link)) for link in os.listdir(PROJECTS)}
-            except OSError:
-                # Before the first apply has linked the projects, there's no list
-                # to go by, so this check stands aside.
-                agents = None
+            OWNERS[key] = ("dropbox", os.path.relpath(top, DROPBOX_REPOS).split(os.sep)[0])
+        elif top.startswith(SRC + os.sep):
             # A submodule's git dir sits inside its superproject's .git/modules.
-            if agents is not None:
-                agent = any(top == a or top.startswith(a + os.sep) for a in agents)
-                OWNERS[key] = ("agent" if agent else "laptop", name)
+            OWNERS[key] = ("agent", os.path.relpath(top, SRC).split(os.sep)[0])
     return OWNERS[key]
 
 
 def lands_in(path):
-    """The owner of the checkout a new folder at path would be made in."""
+    """The owner of the checkout a new folder at path would be made in, or
+    ("src", "") for one in ~/src, which holds only the clones chezmoi makes."""
     if is_unknown(path):
         return ("unknown", "")
     real = os.path.realpath(path)
@@ -817,63 +831,78 @@ def lands_in(path):
     while not os.path.isdir(parent) and parent != os.path.dirname(parent):
         parent = os.path.dirname(parent)
     kind, name = owner_of(parent)
-    if not kind and real.startswith(DROPBOX_REPOS + os.sep):
-        # A new repo in Dropbox's repositories folder would be a laptop repo too.
-        kind, name = "laptop", os.path.relpath(real, DROPBOX_REPOS).split(os.sep)[0]
+    if kind in ("dropbox", "dotfiles"):
+        return kind, name
+    if real.startswith(DROPBOX_REPOS + os.sep):
+        # A new repo in Dropbox's repositories folder would be one of its repos too.
+        return "dropbox", os.path.relpath(real, DROPBOX_REPOS).split(os.sep)[0]
+    if real == SRC or real.startswith(SRC + os.sep):
+        return "src", ""
     return kind, name
 
 
 def unknown_place(what):
-    """Block a write to a folder worked out only when the command runs. what names the command."""
-    block(f"{what} would write a folder worked out only when the command runs, from a substitution, read, "
-          "a for loop, xargs or find, so there's no telling whether it is a laptop repo, an agent repo's main "
-          "checkout in Dropbox or the dotfiles checkout. Name the folder in the command, or run the command "
+    """Block any use of a folder worked out only when the command runs. what names the command."""
+    block(f"{what} would use a folder worked out only when the command runs, from a substitution, read, "
+          "a for loop, xargs or find, so there's no telling whether it is a repo in Dropbox, an agent repo's "
+          "main checkout in ~/src or the dotfiles checkout. Name the folder in the command, or run the command "
           "from inside it.")
 
 
 def never_written(kind, name, what):
-    """Block a write to a laptop repo, the dotfiles' main checkout or a folder
-    worked out at run time. what names the command."""
+    """Block any use of a repo in Dropbox or a folder worked out at run time, a
+    write to the dotfiles' main checkout, or a new folder in ~/src. what names
+    the command."""
     if kind == "unknown":
         unknown_place(what)
-    if kind == "laptop":
-        # Plain git status and git diff don't write here: .zshenv sets
-        # GIT_OPTIONAL_LOCKS=0 on this Mac, and the Dropbox include files turn
-        # off fsmonitor, the untracked cache and diff.autoRefreshIndex. git
-        # describe --dirty and --broken refresh the index whatever those say.
-        block(f"{what} would write {name}, a laptop repo. Its checkout and .git in Dropbox are the "
-              "laptop's, and nothing on this Mac writes them, attended or not. Reading is fine: status, diff, "
-              "log, show, and listing branches, tags, worktrees and config. git describe --dirty and --broken "
-              "rewrite its index, so run plain git describe, and git status --porcelain to see whether it has "
-              f"changes. To change it, clone it from GitHub into ~/worktrees/{name}/<branch> and work there.")
+    if kind == "dropbox":
+        block(f"{what} would use {name} in Dropbox's repositories folder, the repos' old home, which "
+              "nothing on this Mac uses, not even to read. Read it on GitHub, or "
+              f"clone it from GitHub into ~/worktrees/{name}/<branch>.")
     if kind == "dotfiles":
         block(f"{what} would write the dotfiles checkout, this Mac's live config, which is never "
               "changed in place, attended or not. Reading is fine, and so are git fetch, git remote set-head, "
               "git worktree add to a folder outside it, and git worktree lock or unlock. Make a worktree in "
               "~/worktrees/dotfiles/<branch> and work there.")
+    if kind == "src":
+        block(f"{what} would make a new repo or worktree in ~/src. That folder holds only the clones chezmoi "
+              "makes, and nothing here adds to it, attended or not. Clone a repo into ~/worktrees/<repo>/<branch> "
+              "instead, or for one of the clones in ~/src, make a worktree there: git fetch origin, then git "
+              "worktree add --no-track -b <branch> ~/worktrees/<repo>/<branch> origin/HEAD")
 
 
-def in_dropbox(directory):
-    """Whether directory is part of a main checkout in Dropbox: its working
-    tree, a submodule inside it, or its own .git folder, rather than a worktree
-    outside or that worktree's folder in .git/worktrees."""
-    top = git_out(directory, "rev-parse", "--show-toplevel")
-    if not top:
-        dirs = git_out(directory, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
-        dirs = dirs.splitlines()
-        if len(dirs) == 2 and dirs[0] != dirs[1]:
-            return False
-        top = directory
-    return os.path.realpath(top).startswith(DROPBOX_REPOS + os.sep)
+def in_main_checkout(directory, name):
+    """Whether directory is part of agent repo name's main checkout, its clone
+    in ~/src: its working tree, a submodule inside it, or its own .git folder,
+    rather than a worktree of it, wherever that is, or a worktree's folder in
+    .git/worktrees."""
+    dirs = git_out(directory, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+    dirs = dirs.splitlines()
+    if len(dirs) == 2 and dirs[0] != dirs[1]:
+        return False
+    top = os.path.realpath(git_out(directory, "rev-parse", "--show-toplevel") or directory)
+    root = os.path.join(SRC, name)
+    return top == root or top.startswith(root + os.sep)
+
+
+def under_dropbox(directory):
+    """Whether the repo at directory, or the .git it uses, is under Dropbox,
+    which syncs it between the Macs. A folder worked out only when the command
+    runs could be."""
+    if is_unknown(directory):
+        return True
+    common = git_out(directory, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    return any(os.path.realpath(p) == DROPBOX or os.path.realpath(p).startswith(DROPBOX + os.sep)
+               for p in (directory, common) if p)
 
 
 def in_place(name, what):
-    """Block a change to an agent repo's main checkout in Dropbox. what names the command."""
-    block(f"{what} would change {name}'s main checkout in Dropbox, whose branch, index and files the "
-          "laptop sees, and nothing here switches, commits or resets it, attended or not. Reading is fine, "
-          "and so are git fetch, pushing your own branch, git branch -d, git remote set-head and git worktree "
-          "add outside Dropbox. Work in a worktree outside it: git fetch origin, then git worktree add "
-          f"--no-track -b <branch> ~/worktrees/{name}/<branch> origin/HEAD")
+    """Block a change to an agent repo's main checkout in ~/src. what names the command."""
+    block(f"{what} would change {name}'s main checkout in ~/src, which T3's threads and FirstMate start "
+          "from, and nothing here switches, commits or resets it, attended or not. Reading is fine, and so "
+          "are git fetch, pushing your own branch, git branch -d, git remote set-head and git worktree add "
+          "outside ~/src. Work in a worktree: git fetch origin, then git worktree add --no-track -b <branch> "
+          f"~/worktrees/{name}/<branch> origin/HEAD")
 
 
 def moves_checkout(sub, args, repo, directory):
@@ -895,7 +924,7 @@ def moves_checkout(sub, args, repo, directory):
     if sub == "fetch":
         return any(a in ("-u", "--update-head-ok") for a in args)
     if sub == "worktree" and args[:1] == ["add"]:
-        return not makes_worktree(sub, args, directory, DROPBOX_REPOS)
+        return not makes_worktree(sub, args, directory, SRC)
     return False
 
 
@@ -914,7 +943,7 @@ def short_flags(flags):
 
 
 def only_reads(sub, args):
-    """Whether this git command only reads, as a laptop repo or the dotfiles checkout allows."""
+    """Whether this git command only reads, as the dotfiles checkout allows."""
     flags = [a.split("=", 1)[0] for a in args if a.startswith("-")]
     names = [a for a in args if not a.startswith("-")]
     if sub in READS:
@@ -952,11 +981,37 @@ def only_reads(sub, args):
     return False
 
 
-def rewrites_index(sub, args, blind=False):
-    """Whether a read still rewrites the index: git describe --dirty or --broken
-    refreshes it whatever GIT_OPTIONAL_LOCKS says, as the laptop's git wrapper
-    knows. Only those options start --di or --b, and xargs could add one."""
-    return sub == "describe" and (blind or any(a.startswith(("--di", "--b")) for a in args))
+def repo_paths(sub, args, directory):
+    """The folders a git clone, fetch, pull, push, ls-remote or archive, a git
+    remote add or set-url, or a git submodule add could take as the other repo
+    it reads or writes: each word but a flag, a URL, a refspec or a name worked
+    out when the command runs, and the value of each --option=value. A
+    file:// URL counts as its path, and what xargs or find hands over as a
+    folder that can't be told."""
+    if sub == "remote":
+        if args[:1] not in (["add"], ["set-url"]):
+            return []
+    elif sub == "submodule":
+        if args[:1] != ["add"]:
+            return []
+    elif sub not in ("clone", "fetch", "pull", "push", "ls-remote", "archive"):
+        return []
+    paths = []
+    for arg in args:
+        if arg.startswith("--") and "=" in arg:
+            arg = arg.split("=", 1)[1]
+        elif arg.startswith("-"):
+            continue
+        if arg.startswith("file://"):
+            arg = arg[len("file://"):]
+        elif URL.match(arg):
+            continue
+        if XARGS not in arg:
+            arg = os.path.expanduser(os.path.expandvars(arg))
+            if "$" in arg or "`" in arg:
+                continue
+        paths.append(resolve(directory, arg))
+    return paths
 
 
 def worktree_dest(args, directory):
@@ -1074,6 +1129,13 @@ def check_git(words, cwd, env=None, blind=False):
     repo = gitdirs[len(dirs) - 1] if dirs else place(directory, env["GIT_DIR"]) if named else directory
     places = [repo] + gitdirs + worktrees + ([directory] if named and not worktrees else [])
 
+    # Another repo it reads or writes by its path, such as a clone's source or
+    # what fetch and push take, is never one in Dropbox either, nor one that
+    # can't be told.
+    for path in repo_paths(sub, args, directory):
+        kind, name = lands_in(path)
+        if kind in ("dropbox", "unknown"):
+            never_written(kind, name, f"`git {sub}`")
     if sub in ("clone", "init"):
         # These write a new folder, not the repo they run in, and init
         # writes the one GIT_DIR names.
@@ -1086,21 +1148,27 @@ def check_git(words, cwd, env=None, blind=False):
     reads = sub in READS if blind else only_reads(sub, args)
     for where in places:
         kind, name = owner_of(where)
-        if kind == "unknown" and not reads:
-            unknown_place(what)
-        if kind == "laptop" and (not reads or rewrites_index(sub, args, blind)):
+        if kind in ("unknown", "dropbox"):
+            # Not even a read: a folder that can't be told could be in Dropbox.
             never_written(kind, name, what)
         if kind == "dotfiles" and not (reads or (not blind and (makes_worktree(sub, args, directory)
                                                               or keeps_worktree(sub, args)))):
             never_written(kind, name, what)
-        if kind == "agent" and in_dropbox(where) and (
+        if kind == "agent" and in_main_checkout(where, name) and (
                 not reads if blind else moves_checkout(sub, args, repo, directory)):
             in_place(name, what)
-    if sub == "worktree" and args[:1] == ["add"] and is_unknown(worktree_dest(args, directory) or ""):
-        unknown_place("`git worktree add`")
+    dest = worktree_dest(args, directory) if sub == "worktree" and args[:1] == ["add"] else None
+    if dest is not None:
+        # A new worktree goes nowhere a clone may not: not in ~/src, Dropbox's
+        # repositories folder or the dotfiles checkout.
+        never_written(*lands_in(dest), "`git worktree add`")
 
     if sub in ("gc", "repack", "prune", "maintenance") or (sub == "worktree" and args[:1] == ["prune"]):
-        block(f"`git {sub}` rewrites the object store, and every repo here shares its .git with Dropbox.")
+        if any(under_dropbox(where) for where in places):
+            label = "worktree prune" if sub == "worktree" else sub
+            block(f"`git {label}` rewrites the repo's .git, and this repo is under ~/Library/CloudStorage/Dropbox, "
+                  "which syncs it between the Macs; an object store there has already been destroyed once. It "
+                  "runs as usual outside Dropbox, as in the clones in ~/src.")
     if sub == "worktree" and args[:1] == ["remove"] and any(a in ("--force", "-f") for a in args):
         block("`git worktree remove --force` throws away uncommitted work. Commit it, or leave the worktree.")
     if sub == "stash" and args[:1] not in (["list"], ["show"]):
@@ -1203,8 +1271,13 @@ def check_gh(words, cwd, blind=False):
     action = after[0] if after else ""
     if blind and XARGS in ((rest or [XARGS])[0] + action):
         block("a gh command whose action xargs or find supplies when it runs. Name the action.")
+    kind, name = owner_of(cwd)
+    if kind in ("dropbox", "unknown") and (group, action) != ("repo", "clone"):
+        # gh reads the repo it runs in, through git, to know which repo and
+        # branch it works on. gh repo clone takes its repo as an argument.
+        never_written(kind, name, f"`gh {group} {action}`" if group else "`gh`")
     if group in ("pr", "issue") and action not in GH_READS:
-        never_written(*owner_of(cwd), f"`gh {group} {action}`")
+        never_written(kind, name, f"`gh {group} {action}`")
     if group == "repo" and action == "clone":
         tail = words[words.index("clone") + 1:]
         tail = tail[:tail.index("--")] if "--" in tail else tail
@@ -1221,8 +1294,7 @@ def check_gh(words, cwd, blind=False):
             block(f"`gh pr {action}` without --draft. Open it again with --draft, even "
                   "where a playbook says to open it ready.")
         if action == "checkout":
-            kind, name = owner_of(cwd)
-            if kind == "agent" and in_dropbox(cwd):
+            if kind == "agent" and in_main_checkout(cwd, name):
                 in_place(name, "`gh pr checkout`")
             # It switches to the PR's branch: the one -b names, none with
             # --detach, or one named after the PR's head, never the default.
@@ -1341,7 +1413,8 @@ def check_unparsed(command, cwd):
 
     The pieces are judged from the folder a literal cd at the start of the
     command moves to, before any quote opens, and by every folder a cd, pushd
-    or git -C anywhere in it names."""
+    or git -C anywhere in it names. A git or gh command in it may not name a
+    repo in Dropbox anywhere at all."""
     why = "couldn't parse this command, and it"
     where, masked = cwd, mask_quotes(command)
     for piece in re.finditer(r"[^;&|\n]+", masked):
@@ -1358,14 +1431,28 @@ def check_unparsed(command, cwd):
             and BUILT_CREDIT.search(re.sub(r"\\+n", "\n", command))):
         block(f"{why} credits an AI. Nothing here is credited to an AI agent: drop the line and try again.")
     subs = re.findall(r"\bgit\s+(?:(?:-C|-c|--git-dir|--work-tree)\s+\S+\s+|-\S+\s+)*([A-Za-z][\w-]*)", command)
+    uses_repo = subs or re.search(r"\bgh\b", command)
+    if uses_repo:
+        # A repo in Dropbox named anywhere in it, as --git-dir, GIT_DIR or a
+        # clone's source would name it, is never used.
+        for path in re.findall(r"(?<![^\s=:'\"])(?:~|\$HOME|\$\{HOME\}|/)[^\s;&|()'\"`<>]*", command):
+            kind, name = lands_in(resolve(where, path))
+            if kind == "dropbox":
+                never_written(kind, name, "This command, which couldn't be parsed,")
     for directory in places:
         kind, name = owner_of(directory)
-        if kind in ("laptop", "dotfiles"):
+        if kind in ("dropbox", "unknown") and uses_repo:
+            never_written(kind, name, "This command, which couldn't be parsed,")
+        if kind == "dotfiles":
             actions = re.findall(r"\bgh\b.*?\b(?:pr|issue)\s+([a-z-]+)", command)
             if any(s not in READS for s in subs) or any(a not in GH_READS for a in actions):
                 never_written(kind, name, "This command, which couldn't be parsed,")
-        if kind == "agent" and any(s in MOVES or s in ("switch", "checkout") for s in subs) and in_dropbox(directory):
+        if (kind == "agent" and any(s in MOVES or s in ("switch", "checkout") for s in subs)
+                and in_main_checkout(directory, name)):
             in_place(name, "This command, which couldn't be parsed,")
+        if (any(s in ("gc", "repack", "prune", "maintenance") for s in subs)
+                or re.search(r"\bgit\b.*\bworktree\s+prune\b", command)) and under_dropbox(directory):
+            block(f"{why} looks like a git gc, repack, prune or maintenance in a repo under Dropbox.")
     for piece in re.split(r"&&|\|\||[;&|\n]", command):
         if re.search(r"\bpush\b.*(--force|--mirror|--all|\s-[A-Za-z]*f[A-Za-z]*\b|\s\+)", piece):
             block(f"{why} looks like a force-push.")
