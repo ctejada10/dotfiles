@@ -68,9 +68,17 @@ jobs:
       - name: Scan the history for secrets
         run: gitleaks git --redact --no-banner .
 
+      # Galaxy now and then resets the connection, so three tries. A failed
+      # try's collections go, or the next would skip a missing dependency.
       - name: Install the playbook's collections
         working-directory: ansible
-        run: uv run --locked ansible-galaxy collection install -r requirements.yml
+        run: |
+          for try in 1 2 3; do
+            [ "$try" = 1 ] || sleep 10
+            uv run --locked ansible-galaxy collection install -r requirements.yml && exit 0
+            rm -rf collections
+          done
+          exit 1
 
       - name: Run the tests
         run: bash tests/run.sh
@@ -95,9 +103,17 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
 
+      # Galaxy now and then resets the connection, so three tries. A failed
+      # try's collections go, or the next would skip a missing dependency.
       - name: Install the playbook's collections
         working-directory: ansible
-        run: uv run --locked ansible-galaxy collection install -r requirements.yml
+        run: |
+          for try in 1 2 3; do
+            [ "$try" = 1 ] || sleep 10
+            uv run --locked ansible-galaxy collection install -r requirements.yml && exit 0
+            rm -rf collections
+          done
+          exit 1
 
       - name: Run the server playbook here and check the result
         run: bash tests/server-playbook.sh
@@ -123,9 +139,17 @@ jobs:
       - name: Install chezmoi, shellcheck and the shell's tools
         run: brew install chezmoi shellcheck fzf eza bat
 
+      # Galaxy now and then resets the connection, so three tries. A failed
+      # try's collections go, or the next would skip a missing dependency.
       - name: Install the playbook's collections
         working-directory: ansible
-        run: uv run --locked ansible-galaxy collection install -r requirements.yml
+        run: |
+          for try in 1 2 3; do
+            [ "$try" = 1 ] || sleep 10
+            uv run --locked ansible-galaxy collection install -r requirements.yml && exit 0
+            rm -rf collections
+          done
+          exit 1
 
       - name: Run the tests
         run: bash tests/run.sh
