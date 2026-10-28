@@ -1044,7 +1044,9 @@ Any other repo and this dotfiles source change only for a task you typed, and
 never in place: `~/.local/share/chezmoi` is the mini's live config. An agent
 clones another repo from GitHub into `~/worktrees/<repo>/<branch>`, or makes a
 worktree of the dotfiles repo in `~/worktrees/dotfiles/<branch>`, and ends
-with a draft PR you merge or drop. The hooks block the in-place forms, and
+with a draft PR you merge or drop. Once you merge a dotfiles PR,
+`chezmoi update --init` in a terminal of your own makes it live; agents can't
+run it. The hooks block the in-place forms, and
 refuse every git and gh command in Dropbox's `repositories` folder, the repos'
 old home, reads included: those repos are read on GitHub.
 Codex has none of those hooks yet. A ruleset on each repo's default branch

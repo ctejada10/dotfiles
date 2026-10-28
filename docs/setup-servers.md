@@ -318,10 +318,10 @@ private half never leaves the device.
 2. Put it in `home/.chezmoidata/keys.yaml` under `ssh.devices`, on that
    device's line (`iphone`, `ipad`, or a new name), and push it like any other
    change.
-3. On the laptop, `chezmoi update`, then from `ansible/`, one server at a
+3. On the laptop, `chezmoi update --init`, then from `ansible/`, one server at a
    time, `uv run ansible-playbook site.yml -e target=<name> -K`: `-K` asks
    once and gives every server in the run the same sudo password. On the
-   mini, `chezmoi update` writes its `authorized_keys`.
+   mini, `chezmoi update --init` writes its `authorized_keys`.
 4. From the device, log in to each server and to the mini. For the mini, and
    for esgaroth, the device needs Tailscale and a host in Blink, as
    [SSH from the iPhone and iPad](setup-mini.md#ssh-from-the-iphone-and-ipad)

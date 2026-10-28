@@ -82,3 +82,11 @@
   exclude = ["scripts"]
 [verify]
   exclude = ["scripts"]
+
+# `chezmoi update --init` pulls, rebuilds this file from its template and
+# applies. Its pull is fast-forward only, not chezmoi's own
+# `git pull --autostash --rebase`: a checkout with commits of its own stops
+# the update instead of being rebased, and local edits are never stashed.
+[update]
+  command = "git"
+  args = ["pull", "--ff-only"]
