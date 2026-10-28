@@ -315,6 +315,15 @@ sheet="$REPO/home/dot_claude/pstack-models.md"
 grep -qx 'session hook: off' "$sheet" && pass "says session hook: off" || fail "says session hook: off"
 grep -qi 'fable' "$sheet" && fail "has no fable line" "$(grep -i fable "$sheet")" || pass "has no fable line"
 
+section "chezmoi update pulls fast-forward only"
+for role in "${roles[@]}"; do
+  sandbox "$role" >/dev/null 2>&1
+  update=$(cz dump-config --format json 2>/dev/null | jq -c '.update | [.command, .args]')
+  cleanup_sandbox
+  [ "$update" = '["git",["pull","--ff-only"]]' ] \
+    && pass "$role runs git pull --ff-only" || fail "$role runs git pull --ff-only" "$update"
+done
+
 section "the CLAUDE.md include"
 for role in "${roles[@]}"; do
   sandbox "$role" >/dev/null 2>&1

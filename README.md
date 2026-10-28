@@ -48,9 +48,14 @@ chezmoi init --apply --promptChoice role=server \
 
 ## Day to day
 
+- After a PR merges, `chezmoi update --init` makes it live on a Mac in one
+  go: it pulls this repo, rebuilds chezmoi's config from its template and
+  applies. The pull is fast-forward only, so a checkout with commits of its
+  own stops it instead of being rebased. To look first, run it with
+  `--apply=false`, read `chezmoi diff`, then `chezmoi apply`. On the mini, run
+  it in a terminal of your own: agents can't.
 - Edit this repo on the mini, like every other repo. The laptop only pulls,
-  with `chezmoi update`, and has neither gitleaks nor shellcheck for the hook
-  and the tests.
+  and has neither gitleaks nor shellcheck for the hook and the tests.
 - `chezmoi diff` shows what an apply would change. Read it before applying.
 - `chezmoi apply` applies it, and `chezmoi verify` exits 0 when the machine
   matches the repo.
