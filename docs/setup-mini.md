@@ -453,8 +453,8 @@ Settings → Providers.
 
 The attended instance is for design conversations. On it, agents stop and ask
 you; on the default instance they run unattended, and `hooks/agent-gate.sh`
-turns anything they'd ask into a Ruling under *Decisions for Carlos* in the
-draft PR. `~/.claude/attended.md` is the prompt the repo keeps for it.
+has them decide anything they'd ask and carry on. `~/.claude/attended.md` is
+the prompt the repo keeps for it.
 
 ### Settings
 
@@ -650,8 +650,8 @@ yours sprawls, keep it for bigger work only.
   superpowers:brainstorming: it writes a spec and carries on without asking.
 - On Claude (attended), type `/superpowers:brainstorming`: you get an
   ask-for-input card.
-- Let one default run finish: a draft PR with *Decisions for Carlos* at the
-  top, and no menu.
+- Let one default run finish: a draft PR whose body lists the work, and no
+  menu.
 - Before an agent's first push, its thread shows `rules: mini <date>` on a
   line of its own, which says the rules file loaded.
 - The first transcript shows t3-pstack's and Ponytail's session text and no
@@ -1020,9 +1020,9 @@ Every agent there, Claude Code and Codex alike, reads one file:
 `home/dot_codex/AGENTS.md` in this repo, which becomes `~/.codex/AGENTS.md`.
 Codex reads it directly; the mini's `~/.claude/CLAUDE.md` is the one line
 `@~/.codex/AGENTS.md`. Edit that file, nothing else: no other rules file loads
-on the mini. It keeps runs from waiting on you (decisions go in the draft PR,
-under *Decisions for Carlos*, and only a real stop asks), and its first rule
-is absolute: a commit is never co-authored by an AI agent. Claude Code's own
+on the mini. It keeps runs from waiting on you (agents decide and carry on,
+and only a real stop asks), and its first rule is absolute: a commit is never
+co-authored by an AI agent. Claude Code's own
 attribution is switched off in its settings on every Mac. Hermes has its own
 rules, in `~/.hermes/SOUL.md`.
 
@@ -1032,6 +1032,13 @@ Agents commit, push and open draft PRs on their own branches without asking;
 never on the default branch, never a force-push, a merge or a PR opened ready.
 Claude Code's `hooks/guard-git.py` blocks the ordinary forms of each, and
 refuses a commit or PR that credits an AI.
+
+A draft PR's body lists the work, one line per change, plus the `STOP:` text
+when a run stopped and a line for each gate that failed or was skipped. In a
+repo whose default branch's ruleset has Copilot's review, which is scripts for
+now, Copilot reviews the draft when it opens and on every push. The agent
+waits for each review, fixes what holds up and pushes, then replies in each
+thread and resolves it, for at most three rounds.
 
 Any other repo and this dotfiles source change only for a task you typed, and
 never in place: `~/.local/share/chezmoi` is the mini's live config. An agent
@@ -1113,10 +1120,9 @@ Desktop on either Mac.
   hook with one that does nothing, so it never competes with t3-pstack.
   `hooks/agent-gate.sh` keeps it from waiting on you when you aren't there:
   unattended, brainstorming is refused, a question reaches you only when it
-  starts with `STOP:`, and every other ask becomes a Ruling under *Decisions
-  for Carlos* at the top of the draft PR. Specs and plans go in
-  `~/agent-drafts/<repo>/<branch>/`. Its finishing menu never runs: a branch
-  always ends pushed, with a draft PR.
+  starts with `STOP:`, and the agent decides every other ask and carries on.
+  Specs and plans go in `~/agent-drafts/<repo>/<branch>/`. Its finishing menu
+  never runs: a branch always ends pushed, with a draft PR.
 - **Design conversations, when you want one:** in T3, open a thread on the
   "Claude (attended)" instance and type `/superpowers:brainstorming` with the
   idea or an issue. Its questions arrive as T3's ask-for-input cards and wait
@@ -1192,7 +1198,7 @@ Code loads none of the account's claude.ai connectors or synced plugins.
   delegation.
 - **Claude threads fail with an auth error:** `claude auth login`, then
   `t3 service restart`.
-- **A question that should reach you becomes a Ruling:** the thread isn't
+- **An agent decides a question that should reach you:** the thread isn't
   attended. Check `AGENT_ATTENDED` (see [Providers](#providers)), and start a
   new thread after fixing it.
 - **poteto-mode starts dozens of threads:** stop the parent and keep
