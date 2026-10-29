@@ -409,7 +409,7 @@ case $why in
   '') ;;
   *'No such file or directory'*)
     STOP="${STOP:+$STOP; }$BACKUPS is not there"
-    attention "$BACKUPS | not there, so no repo was snapshotted; tick it in Dropbox's Preferences > Sync, under Select folders to sync to this Mac, rather than making it by hand, which would give a conflicting copy"
+    attention "$BACKUPS | not there, so no repo was snapshotted; in Dropbox's Preferences > Sync, under Select folders to sync to this Mac, open it and tick only repositories inside it, rather than making it by hand, which would give a conflicting copy"
     ;;
   *'Operation not permitted'*)
     STOP="${STOP:+$STOP; }macOS kept the job out of $BACKUPS"
