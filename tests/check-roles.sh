@@ -444,13 +444,32 @@ if [ "$(uname)" = Darwin ]; then
   grep -q '^Library/CloudStorage/Dropbox' <<< "$list" && fail "writes nothing into Dropbox yet" || pass "writes nothing into Dropbox yet"
   cleanup_sandbox
 
-  # Dropbox has synced, but ~/.config is still the real folder init wrote.
+  # Dropbox has synced, but ~/.config is still the real folder init wrote,
+  # with what a wiped laptop has there: chezmoi's config, which replaces an
+  # earlier install's, gh's folder from logging in, which config-files
+  # already holds, op's socket, and a tool's folder config-files doesn't
+  # have yet. The preflight links it, and nothing is lost: what config-files
+  # already had stays, and the duplicates go to the Trash.
   sandbox laptop arnor arnor >/dev/null 2>&1
-  mkdir -p "$SANDBOX/home/.config/chezmoi" && touch "$SANDBOX/home/.config/chezmoi/chezmoi.toml"
   cz execute-template < "$REPO/home/.chezmoiscripts/run_before_00-preflight.sh.tmpl" > "$SANDBOX/preflight.sh"
-  HOME="$SANDBOX/home" bash "$SANDBOX/preflight.sh" >/dev/null 2>&1 \
-    && fail "the preflight stops before a real ~/.config is replaced" || pass "the preflight stops before a real ~/.config is replaced"
-  [ -f "$SANDBOX/home/.config/chezmoi/chezmoi.toml" ] && pass "and leaves it as it was" || fail "and leaves it as it was"
+  dropbox="$SANDBOX/home/Library/CloudStorage/Dropbox/config-files"
+  config="$SANDBOX/home/.config"
+  mkdir -p "$config/chezmoi" "$config/gh" "$config/op" "$config/newtool" "$dropbox/gh" "$dropbox/chezmoi" "$SANDBOX/home/.Trash"
+  touch "$config/chezmoi/chezmoi.toml" "$config/gh/hosts.yml" "$config/op/op-daemon.sock" "$config/newtool/settings" \
+    "$dropbox/chezmoi/old-state.boltdb" "$dropbox/gh/config.yml"
+  # A stand-in for macOS's trash, into the sandbox's Trash.
+  printf '#!/bin/sh\nmv "$1" "%s/home/.Trash/"\n' "$SANDBOX" > "$SANDBOX/stub/trash" && chmod +x "$SANDBOX/stub/trash"
+  out=$(HOME="$SANDBOX/home" PATH="$SANDBOX/stub:$PATH" bash "$SANDBOX/preflight.sh" 2>&1)
+  [ $? = 0 ] && [ -L "$config" ] && [ "$(cd "$config" && pwd -P)" = "$(cd "$dropbox" && pwd -P)" ] \
+    && pass "the preflight links a real ~/.config into Dropbox and lets the apply go on" \
+    || fail "the preflight links a real ~/.config into Dropbox and lets the apply go on" "$out"
+  [ -f "$dropbox/chezmoi/chezmoi.toml" ] && [ ! -e "$dropbox/chezmoi/old-state.boltdb" ] && [ -f "$dropbox/newtool/settings" ] \
+    && [ -f "$dropbox/gh/config.yml" ] && [ ! -e "$dropbox/gh/hosts.yml" ] && [ ! -e "$dropbox/op" ] \
+    && pass "chezmoi's config and a new tool's move there, and config-files keeps its own copies" \
+    || fail "chezmoi's config and a new tool's move there, and config-files keeps its own copies" "$(ls -R "$dropbox")"
+  [ -f "$SANDBOX/home/.Trash/gh/hosts.yml" ] && [ -f "$SANDBOX/home/.Trash/chezmoi/old-state.boltdb" ] \
+    && pass "and the copies it replaced are in the Trash" || fail "and the copies it replaced are in the Trash" "$(ls -R "$SANDBOX/home/.Trash")"
+  rm -rf "$dropbox/chezmoi" "$dropbox/newtool" "$dropbox/gh"
   rm -rf "$SANDBOX/home/.config"
   mkdir -p "$SANDBOX/home/src/cv"
   HOME="$SANDBOX/home" bash "$SANDBOX/preflight.sh" >/dev/null 2>&1 \
