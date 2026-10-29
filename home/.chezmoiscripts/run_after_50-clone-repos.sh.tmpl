@@ -6,13 +6,16 @@
 {{- end -}}
 {{- if or .isAgent $repos -}}
 #!/bin/bash
-# Clones each repo into ~/src when it's missing, over HTTPS, and never pulls.
+# Clones each repo into ~/src when it's missing, and never pulls.
 # ~/src is a real folder on this Mac alone; work reaches the other Mac through
 # GitHub.
 {{- if .isAgent }}
 # Agents work in these checkouts on their own branches, and a pull from here
-# would land in the middle of their work. gh's token authenticates.
+# would land in the middle of their work. They clone over HTTPS, and gh's
+# token authenticates.
 {{- else }}
+# The laptop's Git has no credential helper, so it clones over SSH: 1Password's
+# agent holds the key and asks on this screen.
 # ai-job-search takes its releases through Git, merged into the local commits
 # that hold the profile, and cv is pulled by hand. Their personal files never
 # leave this Mac through Git; personal-backup keeps an encrypted copy of them
@@ -36,6 +39,11 @@ mkdir -p "$HOME/src"
 # asks at the terminal: GitHub takes no password there, and an attended apply
 # would stop twice for every private repo.
 export GIT_TERMINAL_PROMPT=0
+{{- if .isAgent }}
+github=https://github.com/
+{{- else }}
+github=git@github.com:
+{{- end }}
 gh_ok=1
 {{- if .isAgent }}
 # Without gh's login the private repos can't clone, and the public ones still
@@ -52,7 +60,7 @@ clone() {
   local dest="$HOME/src/$1"
   [ -e "$dest" ] && return 0
   if [ "$gh_ok" = 1 ]; then
-    if git clone --quiet "https://github.com/$2.git" "$dest"; then
+    if git clone --quiet "$github$2.git" "$dest"; then
       say "cloned $2 into ~/src/$1"
 {{- if eq .role "laptop" }}
       cloned="$cloned $1"
@@ -60,7 +68,7 @@ clone() {
     else
       warn "couldn't clone $2; the next apply tries again"
     fi
-  elif git clone --quiet "https://github.com/$2.git" "$dest" 2>/dev/null; then
+  elif git clone --quiet "$github$2.git" "$dest" 2>/dev/null; then
     say "cloned $2 into ~/src/$1"
 {{- if eq .role "laptop" }}
     cloned="$cloned $1"

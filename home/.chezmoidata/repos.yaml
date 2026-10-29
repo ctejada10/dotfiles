@@ -8,7 +8,7 @@
 #   weekly backup. career-ops isn't here: it's a Claude Code plugin. Of the
 #   mini's repos only scripts is cloned here, because Raycast and Hazel run
 #   it; it's pulled by hand and still developed on the mini. Read the others
-#   on GitHub.
+#   on GitHub. The laptop clones over SSH through 1Password's agent.
 # agent-mini: the development repos. All development happens on the mini,
 #   where agents work in them on their own branches and worktrees. The mini
 #   clones them over HTTPS through gh.
