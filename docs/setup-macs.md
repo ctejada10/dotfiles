@@ -66,9 +66,9 @@ A second `chezmoi apply` changes nothing, `chezmoi diff` is empty and
 
 **Dropbox.** On a wiped Mac, Dropbox is installed during that first apply, so
 anything that lives in Dropbox waits for it: sign in to Dropbox, let it finish,
-then run `chezmoi apply` once more. That second apply writes 1Password's
-`agent.toml` into `config-files`. It also stops once, because `~/.config` is
-still the real folder `init` made; [`~/.config`](#config) says what to do. The
+then run `chezmoi apply` once more. That second apply turns `~/.config` into
+the link into Dropbox ([`~/.config`](#config) says how) and writes 1Password's
+`agent.toml` into `config-files`. The
 repos don't wait for Dropbox: the first apply already cloned them into `~/src`
 from GitHub.
 
@@ -158,14 +158,15 @@ rclone, Raycast and the rest keep syncing their settings as they always have.
 chezmoi keeps its own config and state there too, in `config-files/chezmoi`.
 The link is made only once Dropbox has brought `config-files` down. Until
 then, and on a wiped laptop, `init` writes a real `~/.config/chezmoi`, and the
-next apply stops rather than replace that folder. Move `~/.config/chezmoi`
-into `config-files`, replacing any `chezmoi` folder an earlier install left
-there (its state would stop setup scripts from running again), then make the
-link yourself, since chezmoi can't find its config until it exists:
-`rmdir ~/.config && ln -s ~/Library/CloudStorage/Dropbox/config-files ~/.config && chezmoi apply`.
-On a wiped laptop the first apply's 1Password check also leaves
-`~/.config/op` holding only op's socket; remove it first (`rm -r ~/.config/op`),
-or `rmdir` refuses. The preflight's message says so. It also stops while
+first apply after Dropbox has synced empties that folder and makes the link
+itself, before anything else. `~/.config/chezmoi` moves into `config-files`,
+and any `chezmoi` folder an earlier install left there goes to the Trash (its
+state would stop setup scripts from running again). A folder `config-files`
+already has, such as `gh` after you logged in to gh, keeps the synced copy,
+and the one from this install goes to the Trash. `op` holding only the socket
+the first apply's 1Password check made is removed, and anything else moves
+into `config-files`. If a move fails, the apply stops and says what's left.
+The preflight also stops the apply while
 `~/src` is still a link into Dropbox from before the repos moved out;
 `unlink ~/src` removes just the link, never what it points to.
 
