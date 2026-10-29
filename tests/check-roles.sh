@@ -347,7 +347,10 @@ section "the mini's Git config"
 if [ "$(uname)" = Darwin ]; then
   sandbox agent-mini >/dev/null 2>&1
   gitconfig=$(cz cat "$SANDBOX/home/.gitconfig" 2>/dev/null)
+  clone=$(cz execute-template < "$REPO/home/.chezmoiscripts/run_after_50-clone-repos.sh.tmpl" 2>/dev/null)
   cleanup_sandbox
+  grep -qx 'github=https://github.com/' <<< "$clone" && grep -qF '"$github$2.git"' <<< "$clone" \
+    && pass "clones over HTTPS, through gh" || fail "clones over HTTPS, through gh"
   # `gh auth setup-git` writes an empty helper as "helper = " with a trailing
   # space. If the template loses it, every apply after gh runs shows a diff.
   [ "$(grep -c $'^\thelper = $' <<< "$gitconfig")" = 2 ] \
@@ -381,6 +384,22 @@ if [ "$(uname)" = Darwin ]; then
     && pass "the mini's ~/src and ~/Repositories aren't links chezmoi makes" || fail "the mini's ~/src and ~/Repositories aren't links chezmoi makes"
 fi
 
+section "the laptop's Tailscale name"
+if [ "$(uname)" = Darwin ]; then
+  sandbox laptop arnor arnor >/dev/null 2>&1
+  script=$(cz execute-template < "$REPO/home/.chezmoiscripts/run_before_10-machine-name.sh.tmpl" 2>/dev/null)
+  # Only the helpers and the Tailscale part: the rest would rename this Mac.
+  # The stand-in tailscale keeps arnor-1, as Tailscale does while another
+  # machine on the tailnet holds the name.
+  ts=$(awk '/^smb=/ {skip=1} /^ts=""/ {skip=0} !skip' <<< "$script")
+  printf '#!/bin/sh\n[ "$1" = status ] && echo %s\nexit 0\n' "'{\"Self\":{\"DNSName\":\"arnor-1.example.ts.net.\"}}'" > "$SANDBOX/stub/tailscale"
+  chmod +x "$SANDBOX/stub/tailscale"
+  out=$(PATH="$SANDBOX/stub:$PATH" bash -c "$ts" 2>&1)
+  cleanup_sandbox
+  ! grep -q "set the Tailscale name to arnor" <<< "$out" && grep -q "another machine on the tailnet holds arnor" <<< "$out" \
+    && pass "says when another machine holds the Tailscale name" || fail "says when another machine holds the Tailscale name" "$out"
+fi
+
 section "the laptop's repos and personal files"
 if [ "$(uname)" = Darwin ]; then
   sandbox laptop arnor arnor >/dev/null 2>&1
@@ -409,6 +428,10 @@ if [ "$(uname)" = Darwin ]; then
   lacks "$list" "src" && pass "chezmoi no longer links ~/src into Dropbox" || fail "chezmoi no longer links ~/src into Dropbox"
   grep -q "ctejada10/cv" <<< "$clone" && grep -q "ctejada10/scripts" <<< "$clone" && ! grep -q "ctejada10/hurin" <<< "$clone" \
     && pass "it clones cv and scripts, and none of the mini's other repos" || fail "it clones cv and scripts, and none of the mini's other repos"
+  # The laptop's Git has no credential helper: scripts is private, and only
+  # SSH through 1Password's agent gets it.
+  grep -qx 'github=git@github.com:' <<< "$clone" && grep -qF '"$github$2.git"' <<< "$clone" \
+    && pass "it clones over SSH, through 1Password's agent" || fail "it clones over SSH, through 1Password's agent"
   jq -e '.permissions.allow | index("Bash(git fetch:*)")' <<< "$settings" >/dev/null \
     && pass "Claude Code may fetch, with no .git shared through Dropbox" || fail "Claude Code may fetch, with no .git shared through Dropbox"
 fi

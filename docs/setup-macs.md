@@ -20,8 +20,26 @@ still the live setup on arnor, and nothing here has been applied to it.
    to show your keys, choose **Use Key Names**: it stores only the items'
    titles, "SSH login key" and "SSH signing key", and its approval prompt then
    names the key it's about to use, so you can tell a login from a commit
-   signature.
-3. Sign in to the App Store, so the Mac App Store apps can install.
+   signature. Keep 1Password open and unlocked from here on. Check that the
+   agent is running:
+
+   ```sh
+   export SSH_AUTH_SOCK=~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agent.sock
+   ssh-add -l
+   ```
+
+   It lists "SSH login key" and "SSH signing key". `Error connecting to agent`
+   means **Use the SSH agent** is off or 1Password is closed.
+3. Put both keys on GitHub, once per key: the apply clones the private
+   `scripts` over SSH, and GitHub refuses a key it doesn't have. Check which
+   are there already by comparing `curl -fsS https://github.com/ctejada10.keys | ssh-keygen -lf -`
+   with `ssh-add -l`; that list holds login keys only. For each one missing,
+   copy it with `ssh-add -L | grep 'SSH login key' | pbcopy` (or
+   `'SSH signing key'`), then on GitHub go to Settings → SSH and GPG keys →
+   New SSH key, title it `arnor`, and choose **Authentication Key** for the
+   login key and **Signing Key** for the signing key. In the same shell,
+   `ssh -T git@github.com` then greets you by name.
+4. Sign in to the App Store, so the Mac App Store apps can install.
 
 ## The one-liner
 
@@ -60,7 +78,11 @@ time zone turned on, which no script can do.
 
 **Tailscale.** Open it, allow its system extension and VPN configuration, and
 sign in. After a clean install the laptop is a new machine on the tailnet with
-a new address: update the Tailscale policy as the
+a new address, and the old install still holds the name `arnor`, so Tailscale
+calls the new one `arnor-1`. In the admin console, under Machines, remove the
+old `arnor`, the one shown offline, then run `chezmoi apply`: it renames the
+new one to `arnor`, and says so while the old one is still there. Then update
+the Tailscale policy as the
 [mini's guide](setup-mini.md#the-tailscale-admin-console) says.
 
 **First launches.** The first time you open Ghostty, or any other app the
@@ -73,8 +95,9 @@ macOS calls it `arnor-2` there (Bonjour, `arnor.local`, and SMB). The apply says
 so and leaves it; once the old one is off or renamed, `chezmoi apply` sets the
 name.
 
-**Checks.** `ssh -T git@github.com` works through 1Password's agent, and a new
-commit shows `G` in `git log --format=%G? -1`.
+**Checks.** `ssh -T git@github.com` and `ssh amon-sul true` work through
+1Password's agent, `~/src/scripts` exists, and a new commit shows `G` in
+`git log --format=%G? -1`.
 
 ## Reaching the mini and the servers
 
