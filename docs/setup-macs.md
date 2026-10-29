@@ -89,6 +89,15 @@ the Tailscale policy as the
 Brewfile installed, macOS asks whether to open an app downloaded from the
 internet: open it.
 
+**1Password in each terminal.** On macOS 27, a terminal can't reach the
+1Password app until you allow it, and until then `op` says "No accounts
+configured for use with 1Password CLI" even with the CLI integration on. The
+first time a terminal runs `op`, macOS asks whether it may use data shared by
+1Password: allow it. If that was declined, or never asked, turn it on under
+System Settings → Privacy & Security → Files & Folders → Ghostty, in the entry
+that starts with "Data shared by 1Password", then quit and reopen Ghostty. Each
+terminal needs its own: Terminal for the one-liner, Ghostty after it.
+
 **A name still in use.** A new Mac given the name of one still on the network,
 as a new laptop is while the old arnor is on, can't have it on the network:
 macOS calls it `arnor-2` there (Bonjour, `arnor.local`, and SMB). The apply says
@@ -145,11 +154,15 @@ talks, as they were.
 
 Of the repos the mini's agents work in, the laptop clones only `scripts`, and
 only to run it: develop it on the mini, and `git pull` here to update. Set it
-up as its README says (pre-commit, `scripts secrets pull`, then
+up as its README says (pre-commit, `uv run scripts secrets pull`, then
 `uv tool install --editable .`), and point Raycast's script commands at
 `~/src/scripts/interfaces/raycast` and Hazel's rules at
-`~/src/scripts/interfaces/hazel`. Read the other repos on GitHub, or on the
-mini through T3.
+`~/src/scripts/interfaces/hazel`. The bare `scripts` command exists only once
+`uv tool install` has put it in `~/.local/bin`; until then every Raycast
+command fails with `~/.local/bin/scripts: No such file or directory`. The
+pull needs [1Password in the terminal](#after-the-first-apply) allowed first.
+`scripts doctor` then shows `secrets readable  yes`. Read the other repos on
+GitHub, or on the mini through T3.
 
 ### `~/.config`
 
