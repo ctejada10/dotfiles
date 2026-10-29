@@ -2,11 +2,13 @@
 # missing. Work moves between the Macs through GitHub, not Dropbox, and
 # nothing here pulls them.
 #
-# laptop: personal work and job hunting. The job-search tools update
-#   themselves, and cv's applications live in git-ignored folders of its
-#   checkout. Of the mini's repos only scripts is cloned here, because Raycast
-#   and Hazel run it; it's pulled by hand and still developed on the mini.
-#   Read the others on GitHub.
+# laptop: personal work and job hunting. ai-job-search updates through Git
+#   and keeps its profile in local commits, and cv's applications live in
+#   git-ignored folders of its checkout; personal.yaml lists both for the
+#   weekly backup. career-ops isn't here: it's a Claude Code plugin. Of the
+#   mini's repos only scripts is cloned here, because Raycast and Hazel run
+#   it; it's pulled by hand and still developed on the mini. Read the others
+#   on GitHub.
 # agent-mini: the development repos. All development happens on the mini,
 #   where agents work in them on their own branches and worktrees. The mini
 #   clones them over HTTPS through gh.
@@ -16,7 +18,6 @@
 # repo: structure and CI/CD*.
 repos:
   laptop:
-    career-ops: career-ops-hq/career-ops
     ai-job-search: ai-job-search-dev/ai-job-search
     cv: ctejada10/cv
     scripts: ctejada10/scripts

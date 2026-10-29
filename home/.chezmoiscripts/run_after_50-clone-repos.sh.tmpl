@@ -13,9 +13,10 @@
 # Agents work in these checkouts on their own branches, and a pull from here
 # would land in the middle of their work. gh's token authenticates.
 {{- else }}
-# The job-search tools update themselves, so a pull from here would fight them,
-# and cv is pulled by hand. Their personal data stays inside each checkout,
-# untracked.
+# ai-job-search takes its releases through Git, merged into the local commits
+# that hold the profile, and cv is pulled by hand. Their personal files never
+# leave this Mac through Git; personal-backup keeps an encrypted copy of them
+# in Dropbox.
 {{- end }}
 
 set -uo pipefail
@@ -43,6 +44,9 @@ gh_ok=1
 timeout_run 15 gh auth status >/dev/null 2>&1 || gh_ok=0
 {{- end }}
 waiting=""
+{{- if eq .role "laptop" }}
+cloned=""
+{{- end }}
 
 clone() {
   local dest="$HOME/src/$1"
@@ -50,11 +54,17 @@ clone() {
   if [ "$gh_ok" = 1 ]; then
     if git clone --quiet "https://github.com/$2.git" "$dest"; then
       say "cloned $2 into ~/src/$1"
+{{- if eq .role "laptop" }}
+      cloned="$cloned $1"
+{{- end }}
     else
       warn "couldn't clone $2; the next apply tries again"
     fi
   elif git clone --quiet "https://github.com/$2.git" "$dest" 2>/dev/null; then
     say "cloned $2 into ~/src/$1"
+{{- if eq .role "laptop" }}
+    cloned="$cloned $1"
+{{- end }}
   else
     waiting="$waiting $2"
   fi
@@ -67,34 +77,63 @@ if [ -n "$waiting" ]; then
 fi
 {{- if eq .role "laptop" }}
 
-# The job-search tools hold a CV, salary expectations and application history.
-# Their personal files must never leave this Mac through Git, so their push URL
-# goes nowhere. ai-job-search's setup writes the profile into files Git
-# tracks, which no .gitignore can hide, so it also gets a pre-push hook that
-# refuses. Both are checked on every apply.
-for repo in career-ops ai-job-search; do
-  dest="$HOME/src/$repo"
-  [ -d "$dest/.git" ] || continue
+# ai-job-search holds a CV, salary expectations and application history, and
+# its setup writes the profile into files Git tracks, kept as local commits.
+# None of it may leave this Mac through Git, so its push URL goes nowhere and
+# a pre-push hook refuses. Both are checked on every apply.
+dest="$HOME/src/ai-job-search"
+if [ -d "$dest/.git" ]; then
   if [ "$(git -C "$dest" remote get-url --push origin 2>/dev/null)" != no-push ]; then
-    git -C "$dest" remote set-url --push origin no-push && say "turned off pushing from ~/src/$repo"
+    git -C "$dest" remote set-url --push origin no-push && say "turned off pushing from ~/src/ai-job-search"
   fi
-done
-hook="$HOME/src/ai-job-search/.git/hooks/pre-push"
-if [ -d "$HOME/src/ai-job-search/.git" ] && [ ! -x "$hook" ]; then
-  printf '%s\n' '#!/bin/sh' 'echo "ai-job-search holds personal data and is never pushed." >&2' 'exit 1' > "$hook"
-  chmod +x "$hook" && say "added a pre-push hook that refuses in ~/src/ai-job-search"
+  hook="$dest/.git/hooks/pre-push"
+  if [ ! -x "$hook" ]; then
+    printf '%s\n' '#!/bin/sh' 'echo "ai-job-search holds personal data and is never pushed." >&2' 'exit 1' > "$hook"
+    chmod +x "$hook" && say "added a pre-push hook that refuses in ~/src/ai-job-search"
+  fi
 fi
 
-# career-ops installs its own dependencies once, after the first clone.
-# Playwright's browser waits until career-ops first makes a PDF.
-ops="$HOME/src/career-ops"
-if [ -d "$ops" ] && [ ! -d "$ops/node_modules" ] && command -v npm >/dev/null 2>&1; then
-  if (cd "$ops" && npm install --no-fund --no-audit >/dev/null); then
-    say "installed career-ops's dependencies"
-  else
-    warn "npm install failed in $ops"
-  fi
+# Personal files come back from the newest archive in Dropbox, once: for a
+# repo in personal.yaml cloned just now, and for a data folder that isn't
+# there yet. The restore asks 1Password for the personal age key. The data
+# folders are made either way, so a restore that couldn't run isn't tried on
+# every apply; the warning says how to run it by hand.
+personal_repos={{ .personal.repos | join " " | squote }}
+data_tools={{ .personal.data | join " " | squote }}
+restore=""
+for repo in $personal_repos; do
+  case " $cloned " in *" $repo "*) restore="$restore $repo" ;; esac
+done
+for tool in $data_tools; do
+  [ -e "$HOME/.local/share/$tool" ] || restore="$restore $tool"
+done
+if [ -n "$restore" ]; then
+  # shellcheck disable=SC2086 # one word per name
+  out=$("$HOME/.local/bin/personal-backup" restore $restore 2>&1)
+  case $? in
+    0) say "restored the personal files of$restore from Dropbox" ;;
+    3) warn "no personal backup in Dropbox yet, so nothing was restored. Once Dropbox has synced backups/personal, run: personal-backup restore$restore" ;;
+    4) warn "1Password didn't hand over the personal age key, so nothing was restored. Unlock 1Password with its CLI integration on, then run: personal-backup restore$restore" ;;
+    *) warn "the restore of$restore didn't finish: $(printf '%s\n' "$out" | tail -n 1). See ~/Library/Logs/personal-backup/attention.txt" ;;
+  esac
+  for tool in $data_tools; do
+    mkdir -p "$HOME/.local/share/$tool" && chmod 700 "$HOME/.local/share/$tool"
+  done
 fi
+
+# ai-job-search's portal tools install their packages with Bun, once, after
+# the first clone and after its restore, which refuses a clone that already
+# has files of its own; `python3 tools/install_portal_clis.py` there does it
+# again.
+case " $cloned " in
+  *" ai-job-search "*)
+    if command -v bun >/dev/null 2>&1 && (cd "$HOME/src/ai-job-search" && python3 tools/install_portal_clis.py >/dev/null 2>&1); then
+      say "installed ai-job-search's portal tools"
+    else
+      warn "couldn't install ai-job-search's portal tools; run python3 tools/install_portal_clis.py in ~/src/ai-job-search"
+    fi
+    ;;
+esac
 {{- end }}
 exit 0
 {{ end -}}

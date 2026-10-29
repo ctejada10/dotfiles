@@ -77,7 +77,8 @@ a line that only adds it can go.
 ### Everything else, by guide
 
 - **[Personal Macs](docs/setup-macs.md):** bootstrap, Dropbox and `~/.config`,
-  the repos the laptop clones, Claude Code there, fonts,
+  the repos the laptop clones and the weekly backup of its personal files,
+  Claude Code there, fonts,
   renaming a Mac, and cutting arnor over from the old tilde.
 - **[The mini](docs/setup-mini.md):** bootstrap and macOS, Dropbox, T3 Code and
   T3 Connect, t3-pstack, Hermes, scheduled jobs, the final checks, how the

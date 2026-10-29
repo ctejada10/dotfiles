@@ -160,8 +160,14 @@
 {{- $s = setValueAtPath (list "permissions" "allow") $allow $s -}}
 {{- $s = setValueAtPath (list "permissions" "deny") $deny $s -}}
 {{- $s = setValueAtPath (list "permissions" "ask") $ask $s -}}
+{{- /* The laptop: the vault, and the data folder of each tool in
+       personal.yaml, so Claude Code reads and edits them from any folder. */ -}}
 {{- if $laptop -}}
-{{-   $s = setValueAtPath (list "permissions" "additionalDirectories") (list (printf "%s/Documents/armenelos" $home)) $s -}}
+{{-   $dirs := list (printf "%s/Documents/armenelos" $home) -}}
+{{-   range $tool := .personal.data -}}
+{{-     $dirs = append $dirs (printf "%s/.local/share/%s" $home $tool) -}}
+{{-   end -}}
+{{-   $s = setValueAtPath (list "permissions" "additionalDirectories") $dirs $s -}}
 {{- end -}}
 
 {{- /* Hooks. Only the ones this repo ships are managed: each apply takes
@@ -240,6 +246,17 @@
 {{- /* freehire's hosted, read-only job search. No token, no account writes. */ -}}
 {{-   $_ := set $marketplaces "freehire" "strelov1/freehire-mcp" -}}
 {{-   $_ := set $plugins "freehire@freehire" true -}}
+{{- /* career-ops, the job-search pipeline: Claude Code keeps and updates its
+       code under ~/.claude/plugins, and its CV, profile, tracker and reports
+       stay in the data folder CAREER_OPS_ROOT names, which personal-backup
+       keeps (personal.yaml). Its session hook installs its Node packages. */ -}}
+{{-   $_ := set $marketplaces "career-ops" "career-ops-hq/career-ops" -}}
+{{-   $_ := set $plugins "career-ops@career-ops" true -}}
+{{-   $_ := set $env "CAREER_OPS_ROOT" (printf "%s/.local/share/career-ops" $home) -}}
+{{- /* career-ops scans portals and checks every posting through Playwright's
+       MCP server; this is the official catalog's copy, which Claude Code
+       knows without a declaration. */ -}}
+{{-   $_ := set $plugins "playwright@claude-plugins-official" true -}}
 {{- /* Development plugins the old setup enabled here, switched off. */ -}}
 {{-   $_ := set $plugins "ty-python-lsp@claude-community" false -}}
 {{- end -}}

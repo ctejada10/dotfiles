@@ -1,0 +1,59 @@
+{{- if eq .role "laptop" -}}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.carlosetejada.personal-backup</string>
+
+	<!-- Archives the personal job-search files, the clones' local-only state
+	     and the tools' data folders, encrypted with age, into Dropbox's
+	     backups/personal when they changed since the last archive. What it
+	     keeps, the key it encrypts to and how many archives it keeps are in
+	     ~/.local/share/dotfiles/personal-backup.conf. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>{{ .chezmoi.homeDir }}/.local/bin/personal-backup</string>
+	</array>
+
+	<!-- Sundays at 03:47. A run missed during sleep starts on wake; one
+	     missed while the Mac was off waits for the next Sunday. -->
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>0</integer>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>47</integer>
+	</dict>
+
+	<!-- The script also sets its own PATH, system tools first, and finds
+	     git and age in /opt/homebrew/bin by absolute path. -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>{{ .chezmoi.homeDir }}</string>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin</string>
+	</dict>
+
+	<key>WorkingDirectory</key>
+	<string>{{ .chezmoi.homeDir }}</string>
+
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityIO</key>
+	<true/>
+
+	<!-- The script writes its own log and attention file under
+	     ~/Library/Logs/personal-backup/, and keeps file names out of both
+	     and out of stderr. -->
+	<key>StandardOutPath</key>
+	<string>/dev/null</string>
+	<key>StandardErrorPath</key>
+	<string>{{ .chezmoi.homeDir }}/Library/Logs/personal-backup.stderr.log</string>
+</dict>
+</plist>
+{{ end -}}

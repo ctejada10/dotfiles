@@ -307,6 +307,13 @@ online-only placeholders. Then sync that one folder:
    laptop, and it holds the old `tilde` checkout with arnor's old SSH private
    keys. Never open `tilde` on the mini.
 3. `ls ~/Library/CloudStorage/Dropbox` shows `backups` and no `repositories`.
+4. Once the laptop has made its first personal backup, which creates
+   `backups/personal`, come back here, open **backups** and untick
+   **personal**. Those are the laptop's encrypted archives, and the laptop
+   restores the newest one it finds there, so nothing on the mini may be able
+   to add one. Dropbox syncs a new subfolder by default, so it takes this
+   untick; `ls ~/Library/CloudStorage/Dropbox/backups` then shows no
+   `personal`.
 
 ### The snapshot job's access
 

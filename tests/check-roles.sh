@@ -180,8 +180,14 @@ for role in "${roles[@]}"; do
         && fail "laptop has no snapshot job" || pass "laptop has no snapshot job"
       grep -qE '^\.local/bin/git$|read-only-hooks|agent-owned' <<< "$list" \
         && fail "laptop has no read-only guard left" || pass "laptop has no read-only guard left"
-      [ "$plugins" = "freehire@freehire humanizer@humanizer obsidian@obsidian-skills" ] \
+      [ "$plugins" = "career-ops@career-ops freehire@freehire humanizer@humanizer obsidian@obsidian-skills playwright@claude-plugins-official" ] \
         && pass "laptop enables only job-hunting and personal plugins" || fail "laptop enables only job-hunting and personal plugins" "$plugins"
+      [ "$(jq -r '.extraKnownMarketplaces["career-ops"].source.repo' <<< "$settings")" = career-ops-hq/career-ops ] \
+        && pass "career-ops comes from its own marketplace" || fail "career-ops comes from its own marketplace"
+      jq -e '.env.CAREER_OPS_ROOT | endswith("/.local/share/career-ops")' <<< "$settings" >/dev/null \
+        && pass "career-ops keeps its files in ~/.local/share/career-ops" || fail "career-ops keeps its files in ~/.local/share/career-ops" "$(jq -c '.env' <<< "$settings")"
+      jq -e '[.permissions.additionalDirectories[] | select(endswith("/.local/share/career-ops"))] | length == 1' <<< "$settings" >/dev/null \
+        && pass "Claude Code may read and edit that folder from anywhere" || fail "Claude Code may read and edit that folder from anywhere" "$(jq -c '.permissions.additionalDirectories' <<< "$settings")"
       ;;
     agent-mini)
       on=$(jq -r '(.enabledPlugins // {}) | to_entries | map(select(.value == true) .key) | join(" ")' <<< "$settings")
@@ -246,6 +252,8 @@ for role in "${roles[@]}"; do
         && pass "the mini has the worktree cleanup job" || fail "the mini has the worktree cleanup job"
       has "$list" ".local/bin/repo-snapshots" && has "$list" "Library/LaunchAgents/com.carlosetejada.repo-snapshots.plist" \
         && pass "the mini has the snapshot job" || fail "the mini has the snapshot job"
+      grep -qE 'personal-backup' <<< "$list" && fail "the mini has no personal backup" "$(grep personal-backup <<< "$list")" || pass "the mini has no personal backup"
+      jq -e '.env.CAREER_OPS_ROOT' <<< "$settings" >/dev/null && fail "nor career-ops" || pass "nor career-ops"
       dbx="$HOME/Library/CloudStorage/Dropbox/repositories"
       gp "$dbx/career-ops/x.md" 0 && fail "the mini never edits a repo in Dropbox's old repositories folder" || pass "the mini never edits a repo in Dropbox's old repositories folder"
       gp "${dbx/CloudStorage/cloudstorage}/career-ops/x.md" 0 && fail "nor through a differently cased path there" || pass "nor through a differently cased path there"
@@ -373,13 +381,31 @@ if [ "$(uname)" = Darwin ]; then
     && pass "the mini's ~/src and ~/Repositories aren't links chezmoi makes" || fail "the mini's ~/src and ~/Repositories aren't links chezmoi makes"
 fi
 
-section "the laptop's repos"
+section "the laptop's repos and personal files"
 if [ "$(uname)" = Darwin ]; then
   sandbox laptop arnor arnor >/dev/null 2>&1
   list=$(cz managed --include=all --path-style=relative 2>/dev/null)
   settings=$(cz cat "$SANDBOX/home/.claude/settings.json" 2>/dev/null)
   clone=$(cz execute-template < "$REPO/home/.chezmoiscripts/run_after_50-clone-repos.sh.tmpl" 2>/dev/null)
+  conf=$(cz cat "$SANDBOX/home/.local/share/dotfiles/personal-backup.conf" 2>/dev/null)
+  loader=$(cz execute-template < "$REPO/home/.chezmoiscripts/run_after_59-launch-agents.sh.tmpl" 2>/dev/null)
   cleanup_sandbox
+  ! grep -q "career-ops-hq/career-ops" <<< "$clone" \
+    && pass "career-ops isn't cloned: it's a plugin" || fail "career-ops isn't cloned: it's a plugin"
+  grep -q 'personal-backup" restore' <<< "$clone" \
+    && pass "a fresh clone gets its personal files back from the newest backup" || fail "a fresh clone gets its personal files back from the newest backup"
+  has "$list" ".local/bin/personal-backup" && has "$list" "Library/LaunchAgents/com.carlosetejada.personal-backup.plist" \
+    && has "$list" ".local/share/dotfiles/personal-backup.conf" \
+    && pass "the laptop has the weekly personal backup" || fail "the laptop has the weekly personal backup"
+  grep -qx 'jobs="personal-backup"' <<< "$loader" \
+    && pass "and loads it, and nothing of the mini's" || fail "and loads it, and nothing of the mini's" "$(grep '^jobs=' <<< "$loader")"
+  age_pub=$(sed -n '/^age:/,/^[^ ]/s/^  public: "\(.*\)"$/\1/p' "$REPO/home/.chezmoidata/keys.yaml")
+  grep -qx 'REPOS=ai-job-search cv' <<< "$conf" && grep -qx 'DATA=career-ops' <<< "$conf" \
+    && pass "its settings list what personal.yaml does" || fail "its settings list what personal.yaml does" "$conf"
+  [ -n "$age_pub" ] && grep -qx "RECIPIENT=$age_pub" <<< "$conf" \
+    && grep -qx 'KEY_ITEM=dotfiles age key' <<< "$conf" && grep -qx 'KEY_VAULT=Private' <<< "$conf" \
+    && grep -qx 'KEY_FIELD=password' <<< "$conf" \
+    && pass "it encrypts to the personal age key and restores with its 1Password item" || fail "it encrypts to the personal age key and restores with its 1Password item" "$conf"
   lacks "$list" "src" && pass "chezmoi no longer links ~/src into Dropbox" || fail "chezmoi no longer links ~/src into Dropbox"
   grep -q "ctejada10/cv" <<< "$clone" && grep -q "ctejada10/scripts" <<< "$clone" && ! grep -q "ctejada10/hurin" <<< "$clone" \
     && pass "it clones cv and scripts, and none of the mini's other repos" || fail "it clones cv and scripts, and none of the mini's other repos"

@@ -113,7 +113,8 @@ servers. Beeper doesn't show Telegram's approval buttons; type `/approve` or
 
 Each Mac clones its own repos from GitHub into a real `~/src`, once, when
 they're missing; the lists are in `home/.chezmoidata/repos.yaml`. On the laptop
-that's the job-search tools, `cv`, and `scripts`, which Raycast and Hazel run.
+that's ai-job-search, `cv`, and `scripts`, which Raycast and Hazel run;
+career-ops is a Claude Code plugin instead.
 Work moves between the Macs through GitHub, not Dropbox, and nothing pulls the
 clones for you. Dropbox's `repositories` folder is the repos' old home: it
 keeps the ones no Mac clones, such as the research code, the thesis and the
@@ -153,20 +154,61 @@ The personal age key is on no Mac at all (see
 
 ### Job-search tools and cv
 
-The job-search tools, career-ops and ai-job-search, are cloned once into
-`~/src` and keep your CV, salary expectations and applications inside their
-checkouts. Neither can ever push: their push URL goes nowhere, and
-ai-job-search, whose setup writes your profile into files Git tracks, also has
-a pre-push hook that refuses. Personal edits stay uncommitted. `cv` is cloned
-there too, and its applications live in git-ignored folders of its checkout.
-`~/src` isn't in Dropbox, so none of that personal data syncs anywhere.
+career-ops is a Claude Code plugin, not a clone: run `/career-ops:career-ops`
+from any folder. Its CV, profile, tracker and reports live in
+`~/.local/share/career-ops`, which `CAREER_OPS_ROOT` in Claude Code's settings
+names, and plugin updates never touch them. ai-job-search and `cv` are cloned
+into `~/src`. ai-job-search's setup writes your profile into files Git tracks:
+commit them on its own branch, and take its releases by merging them, as its
+`SETUP.md` says. It can never push: its push URL goes nowhere and a pre-push
+hook refuses. `cv`'s applications live in git-ignored folders of its
+checkout.
+
+First use:
+- **career-ops:** run `/career-ops:career-ops` in any session; its onboarding
+  asks about you and writes everything into its data folder. It scans
+  portals and checks postings through Playwright's plugin, which the laptop
+  enables too. Its PDFs need Chromium, which the plugin doesn't download:
+  after its first session, run `npx playwright install chromium` in its
+  plugin folder, `~/.claude/plugins/cache/career-ops/career-ops/<version>`,
+  where `node doctor.mjs` lists anything else missing.
+- **ai-job-search:** the apply installs its portal tools with Bun, and
+  MacTeX, Bun and Poppler come from the Brewfile. Run `claude` in
+  `~/src/ai-job-search`, trust the folder, run `/setup` once, and commit what
+  it writes.
+
+`home/.chezmoidata/personal.yaml` lists all three. Every Sunday at 03:47
+`~/.local/bin/personal-backup` archives their personal files: career-ops'
+data folder, and each clone's untracked and ignored files, edits, and
+commits on no remote. It encrypts the archive to the personal age key's
+public half, writes it to `backups/personal/<date>.tar.age` in Dropbox and
+keeps the newest eight; a week with no change writes nothing. Only the
+private half, which is only in 1Password, opens them. The mini syncs
+`backups` for its own snapshots but not `backups/personal`
+([its Dropbox steps](setup-mini.md#3-dropbox-and-the-repos)): a restore takes the newest archive it
+finds, so only the laptop may write one. A restore also refuses an archive
+that holds anything a backup never writes, or that is dated in the future. Its report is `~/Library/Logs/personal-backup/attention.txt`. Like
+the mini's snapshot job it writes into Dropbox from launchd, so `/bin/bash`
+needs Full Disk Access: System Settings → Privacy & Security → **Full Disk
+Access** → **+**, Cmd-Shift-G, `/bin/bash`.
+
+The first apply on a fresh laptop restores them from the newest archive, into
+a clone that apply made and a data folder that isn't there yet. It asks
+1Password once for the private half, which never touches the disk. If Dropbox
+hasn't synced `backups/personal` yet, or 1Password's CLI isn't set up, the
+apply says so; run `personal-backup restore` once it is. A restore never
+overwrites: it skips a clone that already has local files and a data folder
+that isn't empty.
 
 ## Claude Code on the laptop
 
 Each role's plugins are declared in `home/dot_claude/modify_settings.json`;
 Claude Code downloads them in the background once a session has started, so
-`claude plugin list` shows nothing until then. The laptop gets freehire
-(read-only job search), humanizer (for cover letters) and Obsidian's skills,
+`claude plugin list` shows nothing until then. The laptop gets career-ops
+(the job-search pipeline; its session hook installs its Node packages),
+Playwright's browser tools (which career-ops scans with), freehire
+(read-only job search), humanizer (for cover letters) and Obsidian's
+skills,
 plus your own skills and rules: email replies, Todoist triage, the vault
 researcher and `rules/job-search.md`. Claude Code's own commit attribution is
 switched off on every Mac.
@@ -216,10 +258,15 @@ folder of fresh clones.
 3. Create the new login and signing keys in 1Password and put their public
    halves in `home/.chezmoidata/keys.yaml`. Register both with GitHub. (Done on
    25 Oct 2026.)
-4. Commit and push any work still open in the laptop's own repos: career-ops,
-   ai-job-search and cv. After the apply, `~/src` holds fresh clones of them,
-   and the old checkouts stay in Dropbox's `repositories` folder, where step 7
-   copies their personal files from.
+4. Make the first personal backup, from the old checkouts in Dropbox's
+   `repositories` folder, which `~/src` still links to. With this repo's clone
+   in `~/.local/share/chezmoi` on `main` and pulled:
+   `bash ~/.local/share/chezmoi/home/dot_local/bin/executable_personal-backup --root ~/src --repos "career-ops ai-job-search cv" --data "" --recipient age1fkegjycfqp4ktjn5zrzv2mjj04rxexnmsh7rmwvg09hs0cumy5cs0a75pn`.
+   It writes `backups/personal/<date>.tar.age`, and its report,
+   `~/Library/Logs/personal-backup/attention.txt`, says `0 item(s) need a
+   person`. On the mini, untick `backups/personal` in Dropbox's sync
+   settings ([step 4 there](setup-mini.md#3-dropbox-and-the-repos)). Commit and push any work still
+   open in cv.
 5. `chezmoi init ctejada10`, answering `laptop`, `arnor`, and the display name.
 6. Read what the apply would change. `chezmoi diff` shows the files; it leaves
    out the setup scripts, which run on every apply. For the macOS settings,
@@ -228,12 +275,14 @@ folder of fresh clones.
    `HOMEBREW_TILDE_ROLE=laptop brew bundle check --no-upgrade --verbose --file=~/.local/share/chezmoi/Brewfile`
    lists what it would install.
 7. `unlink ~/src && DOTFILES_CUTOVER=1 chezmoi apply`. `unlink` removes only
-   the link, never the Dropbox folder it points to, and the apply clones
-   career-ops, ai-job-search, cv and scripts into a new `~/src`. Then copy each one's
-   personal files over from its old checkout in
-   `~/Library/CloudStorage/Dropbox/repositories`: the job-search tools'
-   untracked files and cv's application folders. `~/Repositories` still links
-   to that folder; remove it with `unlink ~/Repositories` once nothing uses it.
+   the link, never the Dropbox folder it points to. The apply clones
+   ai-job-search, cv and scripts into a new `~/src` and restores step 4's
+   archive: ai-job-search's and cv's files into their clones, and career-ops'
+   into `~/.local/share/career-ops`, where the plugin reads them. 1Password
+   asks once for the personal age key. Then commit ai-job-search's profile on
+   its own branch: `git -C ~/src/ai-job-search commit -am "My profile"`.
+   `~/Repositories` still links to the old folder; remove it with
+   `unlink ~/Repositories` once nothing uses it.
 8. Save anything running in tmux, run `tmux kill-server` (it closes every pane),
    quit Ghostty with Cmd-Q and open it again. Every Ghostty window reattaches
    to the running tmux session, so without this the next step checks the old
@@ -285,8 +334,10 @@ folder of fresh clones.
     checkout* is done. Then `rm -rf ~/src/tilde`.
 
 **A clean install instead.** Before wiping, do step 4 and let Dropbox finish
-uploading. After the setup, copy the personal files into the new clones as
-step 7 says. Note the fingerprints step 12 needs (`ssh-keygen -lf ~/.ssh/arnor.pub`
+uploading `backups/personal`. The first apply on the wiped laptop restores
+the personal files from it, as in step 7, once Dropbox and 1Password are set
+up; if either isn't yet, it says so, and `personal-backup restore` does it
+later. Then commit ai-job-search's profile as step 7 says. Note the fingerprints step 12 needs (`ssh-keygen -lf ~/.ssh/arnor.pub`
 and `ssh-keygen -lf ~/.ssh/arnor_signing.pub`), since the wipe takes those
 files. Then set the laptop up from the top of this guide, as a wiped Mac, and
 do steps 9, 12 and 13 afterwards. Steps 6 to 8, 10 and 11 clean up an old

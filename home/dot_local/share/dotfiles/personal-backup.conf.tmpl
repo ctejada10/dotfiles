@@ -1,0 +1,13 @@
+{{- if eq .role "laptop" -}}
+# personal-backup's settings, written by chezmoi from home/.chezmoidata
+# (personal.yaml for what it keeps, keys.yaml for the key). RECIPIENT is the
+# personal age key's public half; the private half stays in 1Password, where
+# a restore reads it.
+REPOS={{ .personal.repos | join " " }}
+DATA={{ .personal.data | join " " }}
+RECIPIENT={{ .age.public }}
+KEY_ITEM={{ .age.item }}
+KEY_VAULT={{ .age.vault }}
+KEY_FIELD={{ .age.field }}
+KEEP=8
+{{ end -}}

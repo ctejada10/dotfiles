@@ -1,0 +1,21 @@
+# The laptop's personal files that never reach GitHub: a CV, salary
+# expectations, applications. Each Sunday ~/.local/bin/personal-backup
+# archives them, encrypted to the personal age key, into Dropbox's
+# backups/personal, and the first setup on a fresh laptop restores them from
+# the newest archive.
+#
+# repos: clones in ~/src (from repos.yaml) whose local-only state counts:
+#   untracked and ignored files, edits to tracked files and commits on no
+#   remote.
+# data: tools that keep their files in ~/.local/share/<name>, outside any
+#   checkout. career-ops is a Claude Code plugin, pointed there by
+#   CAREER_OPS_ROOT in modify_settings.json.
+#
+# A new tool is one line here. A data tool also needs its pointer in
+# modify_settings.json.
+personal:
+  repos:
+    - ai-job-search
+    - cv
+  data:
+    - career-ops
