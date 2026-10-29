@@ -100,15 +100,17 @@ Carlos answers a Claude Code question in T3, and the run continues from that ans
 
 ## The PR body
 
-Keep it current as you work. It lists the work and nothing more, in this order:
+Write it for a reviewer who was not in the thread, after Google's guide to change descriptions: the title says what the change does, and the body says why. Keep it current as you work, so it matches the final diff. The title is one short imperative sentence that stands on its own in the history, such as "Clone the laptop's repos over SSH", never "Fix bug" or "Phase 2"; follow the repo's title convention where it has one. The body, in this order:
 
 1. Only when the run stopped: the `STOP:` text.
-2. One line per change: what changed and, in a few words, why.
-3. Only when a gate failed or was skipped: one line each, with the reason. Quote the failing output.
+2. `## Why`: a short paragraph on the problem as someone hit it, the symptom and where, and its cause. Link the issue, and still say enough that the PR reads without opening it.
+3. `## What changed`: one bullet per change, what changed and in a few words why. Name every change to a test or CI file here.
+4. `## Testing`: the commands run and their results, with counts, and what was not tested and why, such as a step that runs only on another machine. Quote the failing output of a gate that failed or was skipped.
+5. Only when there is one: `## Risks`, what could break for a user and how to undo it.
 
-No other headings or parts: no decisions, rulings, verification log or notes. Anything else for Carlos goes in your final message.
+No other headings or parts: no decisions, rulings, verification narrative or notes. Anything else for Carlos goes in your final message.
 
-Just before you push for the PR, write `rules: mini 2026-10-28b` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
+Just before you push for the PR, write `rules: mini 2026-10-29a` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
 
 Base every claim on a tool result from this run.
 
