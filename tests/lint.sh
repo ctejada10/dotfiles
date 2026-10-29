@@ -40,7 +40,8 @@ section "repo scripts"
 for file in "$REPO"/tests/*.sh "$REPO"/.githooks/pre-commit \
             "$REPO"/home/dot_claude/hooks/*.sh "$REPO"/home/executable_dot_tmux-window-name.sh \
             "$REPO"/home/dot_local/bin/executable_worktree-ttl \
-            "$REPO"/home/dot_local/bin/executable_repo-snapshots; do
+            "$REPO"/home/dot_local/bin/executable_repo-snapshots \
+            "$REPO"/home/dot_local/bin/executable_personal-backup; do
   name="${file#"$REPO"/}"
   if out=$(shellcheck -S warning -x "$file" 2>&1); then pass "$name"; else fail "$name" "$out"; fi
 done

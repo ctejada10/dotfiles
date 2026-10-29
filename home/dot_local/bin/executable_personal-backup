@@ -1,0 +1,1418 @@
+#!/bin/bash
+#
+# personal-backup: keep an encrypted copy of the laptop's personal
+# job-search files, a CV, salary expectations and applications, in Dropbox.
+# None of them may ever reach GitHub.
+#
+# Two kinds of thing are kept, both named in its settings file. A clone in
+# ~/src (REPOS) counts for what only this Mac has of it: every untracked
+# file, ignored or not, every tracked file whose content differs from HEAD,
+# the commits on no remote, as a git bundle, and the name of the branch HEAD
+# is on. A tool's data folder, ~/.local/share/<name> (DATA), counts whole.
+# Caches that an install makes again, such as node_modules and .venv, are
+# left out of a clone's files, and .DS_Store out of everything.
+#
+# The backup, the default command, copies all of that into a private folder
+# under $TMPDIR and takes a fingerprint of what it copied. When that changed
+# since the last archive, it tars the folder, checks the tar, and encrypts
+# it with age to RECIPIENT, the personal age key's public half, into
+# backups/personal/<YYYY-MM-DD>.tar.age in Dropbox. The archive is written
+# under a temporary name, and renamed and its fingerprint recorded only once
+# it has passed its check. The job keeps the newest KEEP archives and
+# deletes no other file. The fingerprint stays on this Mac, under
+# ~/Library/Logs/personal-backup/state, so deciding never downloads an
+# archive.
+#
+# The restore decrypts the newest archive with the private half, which op
+# reads from 1Password into a shell variable, so the key never touches the
+# disk. It puts each name's files back into a clone that has no local state
+# of its own, and into a data folder that is missing or empty, and refuses
+# anything else rather than overwrite it. The public key is public, so
+# anyone can make an archive: the restore passes over one named for a day
+# after tomorrow, and refuses whole one that holds anything a backup never
+# writes, such as a .git, a link that leads out of its files, or a name the
+# settings don't list. A backup leaves the same things out, so its own
+# archives always pass.
+#
+# Plaintext only ever sits in that private folder, which a trap removes on
+# every exit. The log, the attention file and anything printed when no one
+# is at a terminal give counts per name, never a file's path or contents,
+# since a report's file name can name a company. Every git call runs with
+# GIT_OPTIONAL_LOCKS=0 and with auto maintenance, fsmonitor and hooks
+# switched off for that one command, and the backup never writes a repo.
+#
+# It writes nowhere in Dropbox but backups/personal, and nothing there at
+# all when backups is not there: a backups folder made here while Dropbox is
+# not syncing it would come back as a conflicting copy.
+#
+# Usage: personal-backup [backup] [options]
+#        personal-backup restore [options] [NAME...]
+
+set -u
+# The umask the job was started with. What a restore writes into a clone is
+# written under it, so the files git and tar put back get the modes a
+# clone's files have. Everything else is private.
+USER_UMASK=$(umask)
+umask 077
+
+PROG=personal-backup
+LABEL=com.carlosetejada.personal-backup
+CONFIG="$HOME/.local/share/dotfiles/personal-backup.conf"
+ROOT="$HOME/src"
+DATA_ROOT="$HOME/.local/share"
+DEST="$HOME/Library/CloudStorage/Dropbox/backups/personal"
+STATE_DIR="$HOME/Library/Logs/personal-backup"
+PRINTS="$STATE_DIR/state"
+LOG_FILE="$STATE_DIR/personal-backup.log"
+ATTENTION_FILE="$STATE_DIR/attention.txt"
+LOG_MAX_LINES=20000
+REPOS="" DATA="" RECIPIENT="" KEY_ITEM="" KEY_VAULT="" KEY_FIELD="" KEEP=8
+# Caches that an install or a test run makes again. They stay out of a
+# clone's files, and a clone whose only untracked files are these counts as
+# having no local state.
+CACHES='node_modules .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox *.pyc .DS_Store'
+# Said wherever tar fails in a backup, since its own errors never reach the
+# log.
+TAR_HINT="run personal-backup from a terminal to see tar's own errors, which name files and so are never logged"
+# Said for each archive the restore will not trust.
+TRUST="check where the file came from, and restore with --from an archive you trust"
+
+# System tools come first, as in repo-snapshots, so a Homebrew tool can
+# never shadow one; tar must be macOS's own bsdtar. git, age and op are found
+# by absolute path.
+PATH=${PERSONAL_BACKUP_PATH:-/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin}
+# first_of NAME DIR...: the first DIR/NAME that can run, or nothing.
+first_of() {
+  local name=$1 d
+  shift
+  for d in "$@"; do
+    if [ -x "$d/$name" ]; then
+      printf '%s\n' "$d/$name"
+      return
+    fi
+  done
+}
+GIT=${PERSONAL_BACKUP_GIT:-$(first_of git /opt/homebrew/bin /usr/local/bin /usr/bin)}
+AGE=${PERSONAL_BACKUP_AGE:-$(first_of age /opt/homebrew/bin /usr/local/bin)}
+# The tests point this at a stand-in, so they never reach 1Password.
+OP=${PERSONAL_BACKUP_OP:-$(first_of op /opt/homebrew/bin /usr/local/bin)}
+LC_ALL=C
+GIT_OPTIONAL_LOCKS=0
+GIT_TERMINAL_PROMPT=0
+export PATH LC_ALL GIT_OPTIONAL_LOCKS GIT_TERMINAL_PROMPT
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+# The day a new archive is named for. The tests set it to stand for later runs.
+TODAY=${PERSONAL_BACKUP_TODAY:-$(date +%Y-%m-%d)}
+
+# The caches as exclude options, which git ls-files and tar both take.
+EXCLUDES=()
+set -f
+for c in $CACHES; do EXCLUDES+=("--exclude=$c"); done
+set +f
+
+usage() {
+  cat <<'EOF'
+Usage: personal-backup [backup] [options]
+       personal-backup restore [options] [NAME...]
+
+The backup, the default, archives the personal files of each repo in REPOS
+and each data folder in DATA into DEST/<YYYY-MM-DD>.tar.age, encrypted to
+RECIPIENT, when they changed since the last archive. The restore puts them
+back from the newest archive: for each NAME given, or for all of them. It
+passes over an archive named for a day after tomorrow, and refuses one that
+holds anything a backup never writes.
+
+  --config FILE      KEY=value lines that set REPOS, DATA, RECIPIENT, KEY_ITEM,
+                     KEY_VAULT, KEY_FIELD and KEEP; the options below win over
+                     it. Default: ~/.local/share/dotfiles/personal-backup.conf.
+  --root DIR         Where the repos are, as DIR/<name>. Default: ~/src.
+  --data-root DIR    Where the data folders are, as DIR/<name>.
+                     Default: ~/.local/share.
+  --dest DIR         Where the archives are. Default:
+                     ~/Library/CloudStorage/Dropbox/backups/personal. The
+                     folder above it, backups, must exist: the backup makes
+                     DIR, never that one.
+  --repos "A B"      The repos, REPOS.
+  --data "A B"       The data folders, DATA. It may be "".
+  --recipient KEY    The age public key the backup encrypts to, RECIPIENT.
+  --keep N           Archives the backup keeps, the newest (KEEP, default 8).
+  --key-item ITEM    The 1Password item that holds the age key (KEY_ITEM).
+  --key-vault VAULT  The vault the item is in (KEY_VAULT).
+  --key-field FIELD  The item's field that holds the key (KEY_FIELD).
+  --from FILE        The archive a restore reads. Default: the newest in DEST.
+  --identity-file F  The age key a restore decrypts with, for the tests.
+                     Default: read with op from that 1Password item.
+  -n, --dry-run      Decide and print, but write nothing: no archive, no
+                     fingerprint, no restored file, no log and no attention
+                     file.
+  -h, --help         Show this help.
+
+It logs to ~/Library/Logs/personal-backup/personal-backup.log, and rewrites
+attention.txt there on every run with what needs a person. It exits 0 when
+done or when nothing changed, 1 when anything failed or was refused, 2 on
+bad usage, 3 when there is no archive to restore, and 4 when 1Password
+didn't hand over the key.
+EOF
+}
+
+bad() {
+  printf '%s: %s\n' "$PROG" "$1" >&2
+  exit 2
+}
+
+CMD=backup
+case ${1:-} in
+  backup) shift ;;
+  restore) CMD=restore; shift ;;
+esac
+DRY_RUN=0 FROM="" IDENTITY="" NAMES="" GIVEN=" "
+# The options are held apart until the settings file is read, since they
+# win over it.
+O_ROOT="" O_DATA_ROOT="" O_DEST="" O_REPOS="" O_DATA="" O_RECIPIENT="" O_KEEP=""
+O_KEY_ITEM="" O_KEY_VAULT="" O_KEY_FIELD=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    -n | --dry-run) DRY_RUN=1 ;;
+    -h | --help) usage; exit 0 ;;
+    --*=*) set -- "${1%%=*}" "${1#*=}" "${@:2}"; continue ;;
+    --config | --root | --data-root | --dest | --repos | --data | --recipient | --keep | --from | --identity-file | \
+      --key-item | --key-vault | --key-field)
+      [ $# -ge 2 ] || bad "$1 needs a value"
+      case $1 in
+        --config) CONFIG=$2 ;;
+        --root) O_ROOT=$2 ;;
+        --data-root) O_DATA_ROOT=$2 ;;
+        --dest) O_DEST=$2 ;;
+        --repos) O_REPOS=$2 ;;
+        --data) O_DATA=$2 ;;
+        --recipient) O_RECIPIENT=$2 ;;
+        --keep) O_KEEP=$2 ;;
+        --from) FROM=$2 ;;
+        --identity-file) IDENTITY=$2 ;;
+        --key-item) O_KEY_ITEM=$2 ;;
+        --key-vault) O_KEY_VAULT=$2 ;;
+        --key-field) O_KEY_FIELD=$2 ;;
+      esac
+      GIVEN="$GIVEN${1#--} "
+      shift
+      ;;
+    -*) printf '%s: unknown option: %s\n' "$PROG" "$1" >&2; usage >&2; exit 2 ;;
+    *)
+      [ "$CMD" = restore ] || bad "unknown argument: $1"
+      NAMES="$NAMES $1"
+      ;;
+  esac
+  shift
+done
+given() { case $GIVEN in *" $1 "*) return 0 ;; esac; return 1; }
+
+# trim TEXT: TEXT without the blanks at either end.
+trim() {
+  local s=$1
+  s=${s#"${s%%[![:space:]]*}"}
+  printf '%s' "${s%"${s##*[![:space:]]}"}"
+}
+
+# read_config FILE: KEY=value lines, with no quotes; blank lines and lines
+# that start with # are skipped. The file is parsed line by line, never
+# sourced or eval'ed, so all it can do is set these seven keys.
+read_config() {
+  local n=0 line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    line=$(trim "$line")
+    case $line in '' | '#'*) continue ;; esac
+    case $line in *=*) ;; *) bad "$1, line $n: not a KEY=value line" ;; esac
+    key=$(trim "${line%%=*}")
+    value=$(trim "${line#*=}")
+    case $value in *\"* | *\'*) bad "$1, line $n: values take no quotes" ;; esac
+    case $key in
+      REPOS) REPOS=$value ;;
+      DATA) DATA=$value ;;
+      RECIPIENT) RECIPIENT=$value ;;
+      KEY_ITEM) KEY_ITEM=$value ;;
+      KEY_VAULT) KEY_VAULT=$value ;;
+      KEY_FIELD) KEY_FIELD=$value ;;
+      KEEP) KEEP=$value ;;
+      *) bad "$1, line $n: unknown key ${key:-(none)}" ;;
+    esac
+  done <"$1"
+}
+
+# The file is optional, unless --config names one.
+if [ -e "$CONFIG" ] || given config; then
+  [ -f "$CONFIG" ] && [ -r "$CONFIG" ] || bad "cannot read the settings file $CONFIG"
+  read_config "$CONFIG"
+fi
+if given root; then ROOT=$O_ROOT; fi
+if given data-root; then DATA_ROOT=$O_DATA_ROOT; fi
+if given dest; then DEST=$O_DEST; fi
+if given repos; then REPOS=$O_REPOS; fi
+if given data; then DATA=$O_DATA; fi
+if given recipient; then RECIPIENT=$O_RECIPIENT; fi
+if given keep; then KEEP=$O_KEEP; fi
+if given key-item; then KEY_ITEM=$O_KEY_ITEM; fi
+if given key-vault; then KEY_VAULT=$O_KEY_VAULT; fi
+if given key-field; then KEY_FIELD=$O_KEY_FIELD; fi
+
+case $KEEP in
+  '' | *[!0-9]*) bad "--keep, or KEEP, needs a whole number" ;;
+esac
+KEEP=$((10#$KEEP))
+[ "$KEEP" -ge 1 ] || bad "--keep, or KEEP, must be at least 1"
+case $TODAY in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+  *) bad "$TODAY is not a date in the form YYYY-MM-DD" ;;
+esac
+ROOT=${ROOT%/} DATA_ROOT=${DATA_ROOT%/} DEST=${DEST%/}
+[ -n "$ROOT" ] && [ -n "$DATA_ROOT" ] && [ -n "$DEST" ] || bad "--root, --data-root or --dest is empty"
+
+# names WHAT LIST: LIST's words, each once and in order. Each is a folder
+# directly under a root: no slash, no dot or dash first, and nothing a glob
+# would read.
+names() {
+  local w out=""
+  case $2 in *[!A-Za-z0-9._[:space:]-]*) bad "$1 holds something other than folder names: $2" ;; esac
+  for w in $2; do
+    case $w in [!A-Za-z0-9]*) bad "$1 holds $w, which is not a folder name" ;; esac
+    case " $out " in *" $w "*) ;; *) out="$out${out:+ }$w" ;; esac
+  done
+  printf '%s' "$out"
+}
+REPOS=$(names REPOS "$REPOS") || exit 2
+DATA=$(names DATA "$DATA") || exit 2
+for w in $REPOS; do
+  case " $DATA " in *" $w "*) bad "$w is in both REPOS and DATA" ;; esac
+done
+
+if [ "$CMD" = restore ]; then
+  if given recipient || given keep; then bad "--recipient and --keep are for the backup"; fi
+  ASKED=$(names "the names to restore" "$NAMES") || exit 2
+  NAMES=$ASKED
+  [ -n "$NAMES" ] || NAMES=$(trim "$REPOS $DATA")
+  [ -n "$NAMES" ] || bad "nothing to restore: REPOS and DATA are both empty"
+  for w in $NAMES; do
+    case " $REPOS $DATA " in *" $w "*) ;; *) bad "$w is in neither REPOS nor DATA" ;; esac
+  done
+  if given from && [ -z "$FROM" ]; then bad "--from needs a file"; fi
+  if given identity-file; then
+    [ -f "$IDENTITY" ] && [ -r "$IDENTITY" ] || bad "cannot read the identity file $IDENTITY"
+  else
+    # Where op finds the age key: an item, the vault it is in, and the field
+    # that holds the key. Each is printed in what a person reads, so none
+    # may carry a control character.
+    key_part() {
+      case $2 in
+        '') bad "no $1, $3" ;;
+        *[[:cntrl:]]*) bad "$1 holds a control character" ;;
+      esac
+    }
+    key_part KEY_ITEM "$KEY_ITEM" "the 1Password item that holds the age key"
+    key_part KEY_VAULT "$KEY_VAULT" "the 1Password vault that item is in"
+    key_part KEY_FIELD "$KEY_FIELD" "the field of that item that holds the key"
+    KEY_NAME="1Password item \"$KEY_ITEM\" in $KEY_VAULT"
+  fi
+  # How a person runs this restore again.
+  RERUN="personal-backup restore${ASKED:+ $ASKED}"
+  # No backup made by now is named for a day after tomorrow. Tomorrow still
+  # counts, as a clock or a time zone a day ahead could name one so.
+  TOMORROW=$(date -j -v+1d -f %Y-%m-%d "$TODAY" +%Y-%m-%d 2>/dev/null)
+  [ -n "$TOMORROW" ] || bad "$TODAY is not a real date"
+else
+  if given from || given identity-file || given key-item || given key-vault || given key-field; then
+    bad "--from, --identity-file and the --key options are for the restore"
+  fi
+  [ -n "$REPOS$DATA" ] || bad "nothing to back up: REPOS and DATA are both empty"
+  case $RECIPIENT in
+    '') bad "no RECIPIENT, the age public key to encrypt to" ;;
+    age1 | age1*[!a-z0-9]*) bad "RECIPIENT is not an age public key: $RECIPIENT" ;;
+    age1*) ;;
+    *) bad "RECIPIENT is not an age public key: $RECIPIENT" ;;
+  esac
+fi
+
+# ---------------------------------------------------------------- helpers
+
+ts() { date '+%Y-%m-%dT%H:%M:%S%z'; }
+
+# A dry run prints its log lines and writes them nowhere.
+log() {
+  local line
+  line="$(ts) $*"
+  [ "$DRY_RUN" = 1 ] || printf '%s\n' "$line" >>"$LOG_FILE"
+  printf '%s\n' "$line"
+}
+
+# git with the guards this job relies on: no automatic gc or maintenance, no
+# fsmonitor daemon and no hooks, for this one command.
+g() {
+  "$GIT" -c maintenance.auto=false -c gc.auto=0 -c core.fsmonitor=false \
+    -c core.hooksPath=/dev/null "$@" </dev/null
+}
+
+WROTE=0 SAME=0 STAGED=0 REPOS_N=0 DATA_N=0 SKIPPED=0 FAILED=0 ATTN=0
+RESTORED=0 NOTHING=0 REFUSED=0
+NOTES="" ERR=""
+
+attention() {
+  ATTN=$((ATTN + 1))
+  NOTES="$NOTES$*
+"
+}
+
+# The attention file is rewritten on every run, backup or restore. A dry run
+# prints it instead.
+write_attention() {
+  local text who=$PROG
+  if [ "$CMD" = restore ]; then who="$PROG restore"; fi
+  text="$(ts) $who: $ATTN item(s) need a person
+$NOTES"
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '%s' "$text"
+    return
+  fi
+  printf '%s' "$text" >"$ATTENTION_FILE.tmp" && mv -- "$ATTENTION_FILE.tmp" "$ATTENTION_FILE"
+}
+
+one_line() { printf '%s' "$1" | tr '\n' ' ' | sed 's/ *$//'; }
+
+# macOS answers "Operation not permitted" when it keeps a job out of a
+# folder, as it keeps one out of Dropbox's until /bin/bash has Full Disk
+# Access. age, written in Go, says it in lower case.
+denied() {
+  case $1 in *'Operation not permitted'* | *'operation not permitted'*) return 0 ;; esac
+  return 1
+}
+
+# refusal PATH: the attention line for a folder in Dropbox that macOS kept
+# this run out of. From launchd the job is /bin/bash, and Full Disk Access
+# for it is the one grant that lets it in; macOS never asks a background
+# job. A restore runs from a terminal, which is what needs the access then.
+refusal() {
+  if [ "$CMD" = restore ]; then
+    printf '%s\n' "$1 | macOS hasn't let this run into Dropbox's folder (Operation not permitted), so nothing was restored; give the app you ran it from, such as your terminal, Full Disk Access in System Settings > Privacy & Security, then run $RERUN"
+  else
+    printf '%s\n' "$1 | macOS hasn't let the job into Dropbox's folder (Operation not permitted), so the run stopped; give /bin/bash Full Disk Access in System Settings > Privacy & Security, then run launchctl kickstart gui/\$(id -u)/$LABEL"
+  fi
+}
+
+# Why a folder or file cannot be listed, or nothing when it can.
+cannot_list() {
+  local err
+  err=$(ls -- "$1" 2>&1 >/dev/null) && return 0
+  err=$(printf '%s\n' "$err" | head -n 1)
+  err=${err##*: }
+  printf '%s\n' "${err:-ls failed}"
+}
+
+# make_dir DIR: one folder, never its parents, so a folder above it that is
+# missing, such as backups, is never made by accident. Sets ERR.
+make_dir() {
+  [ -d "$1" ] && return 0
+  ERR=$(mkdir -- "$1" 2>&1) && return 0
+  ERR="could not make $1: ${ERR##*: }"
+  return 1
+}
+
+# name_failed NAME LOG NOTE: a repo or data folder that did not go as it
+# should, with LOG for the log and NOTE for the attention file.
+name_failed() {
+  FAILED=$((FAILED + 1))
+  log "FAILED  $1 | $2"
+  attention "$3"
+}
+
+# count0: how many NUL-terminated names stdin holds.
+count0() { tr -cd '\000' | wc -c | tr -d ' '; }
+
+# count_files DIR: how many files and links are under DIR.
+count_files() { find "$1" ! -type d -print0 2>/dev/null | count0; }
+
+# cached PATH: PATH is one of the caches, or inside one.
+cached() {
+  local c
+  set -f
+  for c in $CACHES; do
+    # shellcheck disable=SC2254 # $c is a pattern, such as *.pyc
+    case /$1/ in */$c/*) set +f; return 0 ;; esac
+  done
+  set +f
+  return 1
+}
+
+# show_errors: tar's own errors name files, so they never reach the log, the
+# attention file, or launchd's stderr file. Someone at a terminal sees them,
+# less any control character, so a name in a planted archive cannot drive
+# the terminal.
+show_errors() {
+  if [ -t 2 ] && [ -s "$STAGE/err" ]; then
+    tr -d '\000-\010\013-\037\177' <"$STAGE/err" | sed 's/^/    /' >&2
+  fi
+  : >"$STAGE/err"
+}
+
+# copy_list FROM TO LIST: the paths LIST names, NUL-separated and relative to
+# FROM, into TO through a pair of tars, which keep each path, mode and time.
+# A folder in LIST, as git names a repo nested in an untracked folder, comes
+# whole, less its caches and its .git: that repo's history is not personal
+# data, and a restore refuses an archive that holds a .git.
+copy_list() {
+  : >"$STAGE/err"
+  (cd "$1" && tar -c -f - --null -T "$3" "${EXCLUDES[@]}" --exclude=.git) 2>>"$STAGE/err" |
+    (cd "$2" && tar -x -p --no-fflags -f -) 2>>"$STAGE/err"
+  [ "${PIPESTATUS[0]}${PIPESTATUS[1]}" = 00 ]
+}
+
+# copy_tree FROM TO [FIND-EXPRESSION...]: what find lists under FROM, FROM
+# itself aside, into TO in the same way. Each entry goes once, without
+# recursion, so only what find lists goes, and TO keeps its own mode.
+copy_tree() {
+  local from=$1 to=$2
+  shift 2
+  : >"$STAGE/err"
+  (set -o pipefail; cd "$from" && find . -mindepth 1 "$@" -print0 | tar -c -f - --null -n -T -) 2>>"$STAGE/err" |
+    (cd "$to" && tar -x -p --no-fflags -f -) 2>>"$STAGE/err"
+  [ "${PIPESTATUS[0]}${PIPESTATUS[1]}" = 00 ]
+}
+
+# as_user COMMAND...: COMMAND under the umask the job was started with.
+as_user() { (umask "$USER_UMASK" && "$@"); }
+
+# remove_stage PATH: a file or folder of plaintext, gone. A folder copied in
+# read-only, or a file locked with chflags, would stop rm, so both are
+# opened up first.
+remove_stage() {
+  chflags -R nouchg "$1" 2>/dev/null
+  chmod -R u+rwX "$1" 2>/dev/null
+  rm -rf -- "$1" 2>/dev/null
+}
+
+# with LIST WORD: LIST with WORD added, once.
+with() {
+  case " $1 " in
+    *" $2 "*) printf '%s' "$1" ;;
+    *) printf '%s' "$1${1:+ }$2" ;;
+  esac
+}
+
+# inside LINK ROOT: LINK, a link somewhere under the folder ROOT, leads only
+# into ROOT. Its target is relative, never climbs above ROOT on the way, and
+# runs through no other link, which could lead anywhere. A backup stages
+# links as links, never what they point to, so a link like this is one it
+# can write; any other, a restore could leave pointing out of the clone.
+inside() {
+  local target rest part path
+  target=$(readlink -- "$1") || return 1
+  case $target in '' | /*) return 1 ;; esac
+  path=${1#"$2"/}
+  case $path in */*) path=${path%/*} ;; *) path="" ;; esac
+  rest=$target
+  while [ -n "$rest" ]; do
+    part=${rest%%/*}
+    case $rest in */*) rest=${rest#*/} ;; *) rest="" ;; esac
+    case $part in
+      '' | .) ;;
+      ..)
+        [ -n "$path" ] || return 1
+        case $path in */*) path=${path%/*} ;; *) path="" ;; esac
+        ;;
+      *)
+        path=${path:+$path/}$part
+        if [ -n "$rest" ] && [ -L "$2/$path" ]; then return 1; fi
+        ;;
+    esac
+  done
+  return 0
+}
+
+# strip ROOT: takes out of a name's files in the stage what a restore
+# refuses, so no archive of this job's trips its checks: every .git of any
+# case, file or folder, and every link that leads out of ROOT. Only the link
+# goes, as only the link was ever kept. Sets LINKS to how many links went.
+strip() {
+  local l
+  LINKS=0
+  find "$1" -iname .git -prune -print0 >"$STAGE/found" 2>/dev/null
+  while IFS= read -r -d '' l; do
+    remove_stage "$l"
+  done <"$STAGE/found"
+  # Every link is judged first, with all the others still there.
+  find "$1" -type l -print0 >"$STAGE/found" 2>/dev/null
+  : >"$STAGE/drop"
+  while IFS= read -r -d '' l; do
+    inside "$l" "$1" || printf '%s\0' "$l" >>"$STAGE/drop"
+  done <"$STAGE/found"
+  while IFS= read -r -d '' l; do
+    LINKS=$((LINKS + 1))
+    rm -f -- "$l"
+  done <"$STAGE/drop"
+}
+
+# left_out GITS LINKS: what a backup left out of a name's files, for the end
+# of its log line, or nothing.
+left_out() {
+  local s=""
+  if [ "$1" -gt 0 ]; then s="$1 .git"; fi
+  if [ "$2" -gt 0 ]; then s="${s:+$s and }$2 link(s) leading out"; fi
+  if [ -n "$s" ]; then printf '; left out %s' "$s"; fi
+}
+
+# ---------------------------------------------------------------- backup
+
+# stage_repo NAME: the clone's local-only state, gathered into NAME/ in the
+# stage: checkout/ with every untracked file, ignored or not, and every
+# tracked file whose content differs from HEAD, less the caches;
+# local.bundle with the commits on no remote, when there are any; and HEAD,
+# the name of the branch HEAD is on. The clone itself is only read.
+stage_repo() {
+  local name=$1 dir out p others changed gits commits branch err problem=""
+  dir="$ROOT/$name"
+  out="$STAGE/tree/$name"
+  if [ ! -d "$dir" ]; then
+    name_failed "$name" "$dir is not there" "$dir | not there, so it was left out of the archive; chezmoi apply clones it"
+    return
+  fi
+  if [ ! -e "$dir/.git" ]; then
+    name_failed "$name" "$dir is not a git clone" "$dir | not a git clone, so it was left out of the archive"
+    return
+  fi
+  if ! g -C "$dir" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    name_failed "$name" "git cannot read HEAD in $dir" "$dir | git cannot read its HEAD, so it was left out of the archive"
+    return
+  fi
+  # Untracked files, ignored or not: with no --exclude-standard, no
+  # .gitignore hides one. Then the tracked files that differ from HEAD,
+  # staged or not, less any deleted one, of which there is nothing to copy.
+  if ! g -C "$dir" ls-files --others -z "${EXCLUDES[@]}" >"$STAGE/others" 2>/dev/null ||
+    ! g -C "$dir" diff --name-only -z --diff-filter=d --ignore-submodules=all HEAD >"$STAGE/diff" 2>/dev/null; then
+    name_failed "$name" "git could not list its files" "$dir | git could not list its files, so it was left out of the archive; the next run tries again"
+    return
+  fi
+  : >"$STAGE/changed"
+  while IFS= read -r -d '' p; do
+    cached "$p" || printf '%s\0' "$p" >>"$STAGE/changed"
+  done <"$STAGE/diff"
+  others=$(count0 <"$STAGE/others")
+  changed=$(count0 <"$STAGE/changed")
+  # git names a repo nested in an untracked folder as that folder, with a
+  # slash at the end. Its .git, and any inside it, stay out.
+  gits=0
+  while IFS= read -r -d '' p; do
+    case $p in */) gits=$((gits + $(find "$dir/$p" -iname .git -prune -print0 2>/dev/null | count0))) ;; esac
+  done <"$STAGE/others"
+  mkdir -p -- "$out/checkout"
+  STAGED=$((STAGED + 1))
+  cat "$STAGE/others" "$STAGE/changed" >"$STAGE/list"
+  if [ -s "$STAGE/list" ] && ! copy_list "$dir" "$out/checkout" "$STAGE/list"; then
+    show_errors
+    problem="tar could not copy all of its files, so the archive may lack some of them; $TAR_HINT"
+  fi
+  # A .git that tar's exclude, which minds case, let through, and the links
+  # a restore would refuse.
+  strip "$out/checkout"
+  # The commits on no remote. git refuses to make an empty bundle, which only
+  # means there are none.
+  commits=$(g -C "$dir" rev-list --count --branches --not --remotes 2>/dev/null) || commits=0
+  if ! err=$(g -C "$dir" bundle create --quiet "$out/local.bundle" --branches --not --remotes 2>&1); then
+    rm -f -- "$out/local.bundle"
+    case $err in
+      *'Refusing to create empty bundle'*) ;;
+      *) problem="${problem:+$problem; }git bundle create failed ($(one_line "$err")), so the archive lacks its commits on no remote; the next run tries again" ;;
+    esac
+  elif ! err=$(g -C "$dir" bundle verify --quiet "$out/local.bundle" 2>&1); then
+    rm -f -- "$out/local.bundle"
+    problem="${problem:+$problem; }its bundle failed git bundle verify ($(one_line "$err")), so the archive lacks its commits on no remote; the next run tries again"
+  fi
+  branch=$(g -C "$dir" symbolic-ref --short -q HEAD 2>/dev/null)
+  printf '%s\n' "$branch" >"$out/HEAD"
+  if [ -n "$problem" ]; then
+    name_failed "$name" "$problem" "$dir | $problem"
+    return
+  fi
+  REPOS_N=$((REPOS_N + 1))
+  log "STAGED  $name | $others untracked or ignored, $changed changed, $commits commit(s) on no remote$(left_out "$gits" "$LINKS")"
+}
+
+# stage_data NAME: the tool's data folder, whole but for .DS_Store, any .git
+# and any link that leads out of it, into NAME/data/ in the stage. A folder
+# that isn't there yet is skipped: the tool may not have made it.
+stage_data() {
+  local name=$1 dir out gits status
+  dir="$DATA_ROOT/$name"
+  out="$STAGE/tree/$name/data"
+  if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then
+    SKIPPED=$((SKIPPED + 1))
+    log "SKIP    $name | no data folder at $dir"
+    return
+  fi
+  if [ ! -d "$dir" ]; then
+    name_failed "$name" "$dir is not a folder" "$dir | not a folder, so it was left out of the archive"
+    return
+  fi
+  mkdir -p -- "$out"
+  STAGED=$((STAGED + 1))
+  gits=$(find "$dir" -iname .git -prune -print0 2>/dev/null | count0)
+  copy_tree "$dir" "$out" \( -iname .git -prune \) -o ! -name .DS_Store
+  status=$?
+  # Even after a copy that failed partway, since what it did copy goes in.
+  strip "$out"
+  if [ "$status" != 0 ]; then
+    show_errors
+    name_failed "$name" "tar could not copy all of its files" "$dir | tar could not copy all of its files, so the archive may lack some of them; $TAR_HINT"
+    return
+  fi
+  DATA_N=$((DATA_N + 1))
+  log "STAGED  $name | $(count_files "$out") file(s) from its data folder$(left_out "$gits" "$LINKS")"
+}
+
+# fingerprint: one SHA-256 over every path gathered, each file's size and
+# SHA-256, each link's target, each HEAD, and the heads of each bundle. A
+# bundle's own bytes can differ between two runs over the same commits, so
+# its heads stand for it. Nothing but the hash is kept, so the record names
+# no file.
+fingerprint() {
+  (
+    set -o pipefail
+    cd "$STAGE/tree" || exit 1
+    {
+      find . -type d | sed 's/^/dir /' || exit 1
+      find . -type l -exec stat -f 'link %N%SY' {} + || exit 1
+      find . -mindepth 3 -type f -exec stat -f 'size %z %N' {} + || exit 1
+      find . -mindepth 3 -type f -exec shasum -a 256 {} + || exit 1
+      for f in */HEAD; do
+        if [ -f "$f" ]; then printf 'head %s %s\n' "$f" "$(cat "$f")"; fi
+      done
+      for f in */local.bundle; do
+        [ -f "$f" ] || continue
+        printf 'bundle %s\n' "$f"
+        g bundle list-heads "$f" || exit 1
+      done
+    } | sort | shasum -a 256 | cut -d ' ' -f 1
+  )
+}
+
+# record PRINT: the fingerprint of the archive just written, with that
+# archive's name on the first line, kept on this Mac.
+record() {
+  mkdir -p -- "$PRINTS" &&
+    printf '%s\n%s\n' "$TODAY.tar.age" "$1" >"$PRINTS/fingerprint.tmp" &&
+    mv -- "$PRINTS/fingerprint.tmp" "$PRINTS/fingerprint"
+}
+
+# is_age FILE: FILE holds something, and starts as age's format does.
+is_age() {
+  local line
+  [ -s "$1" ] && IFS= read -r line <"$1" && [ "$line" = age-encryption.org/v1 ]
+}
+
+# write_failed WHAT ERROR: an archive that was not written, or not kept.
+# Every write after a refusal would be refused too, so that one says what a
+# person does about it.
+write_failed() {
+  local err
+  err=$(one_line "$2")
+  FAILED=$((FAILED + 1))
+  if denied "$err"; then
+    log "ABORT   $DEST | macOS refused the write (Operation not permitted)"
+    attention "$(refusal "$DEST")"
+    return
+  fi
+  log "FAILED  $DEST | $1${err:+: $err}"
+  attention "$DEST | no archive was written: $1${err:+: $err}; the older archives are as they were, and the next run tries again"
+}
+
+# prune: keeps the newest KEEP archives, the one this run is for among them.
+# Only regular files named as the job names its archives count or go, so
+# nothing else in the folder is ever deleted, and neither is the archive
+# this run is for, whatever the others are dated.
+prune() {
+  local f drop err
+  set --
+  for f in "$DEST"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar.age; do
+    if [ ! -f "$f" ] || [ -L "$f" ] || [ "${f##*/}" = "$TODAY.tar.age" ]; then
+      continue
+    fi
+    set -- "$@" "$f"
+  done
+  # A glob comes back sorted by name, which for these names is by date.
+  drop=$(($# - KEEP + 1))
+  for f in "$@"; do
+    [ "$drop" -gt 0 ] || break
+    drop=$((drop - 1))
+    if [ "$DRY_RUN" = 1 ]; then
+      log "WOULD   $f | would delete it, as older than the newest $KEEP"
+      continue
+    fi
+    # -f so a run from a terminal never stops to ask about a read-only file.
+    if err=$(rm -f -- "$f" 2>&1); then
+      log "DELETED $f | older than the newest $KEEP"
+    elif denied "$err"; then
+      FAILED=$((FAILED + 1))
+      log "ABORT   $f | macOS refused the write (Operation not permitted)"
+      attention "$(refusal "$f")"
+      return
+    else
+      err=${err##*: }
+      FAILED=$((FAILED + 1))
+      log "FAILED  $f | could not delete it: $err"
+      attention "$f | could not delete this old archive: $err"
+    fi
+  done
+}
+
+# write_archive: decides from this Mac's own record whether what was gathered
+# changed since the last archive, and if so writes a new one. The one look
+# into Dropbox is whether the last archive's name is still listed, which
+# downloads nothing.
+write_archive() {
+  local print prev last reason final tmp err
+  print=$(fingerprint) || print=""
+  prev="$PRINTS/fingerprint"
+  last=$(head -n 1 "$prev" 2>/dev/null)
+  case $last in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar.age) ;; *) last="" ;; esac
+  if [ -z "$print" ]; then
+    reason="no fingerprint could be taken"
+  elif [ -z "$last" ]; then
+    reason="first archive"
+  elif [ "$print" != "$(sed -n 2p "$prev" 2>/dev/null)" ]; then
+    reason="changed since $last"
+  elif [ ! -f "$DEST/$last" ]; then
+    reason="unchanged, but $last is gone"
+  else
+    SAME=1
+    log "SAME    unchanged since $last"
+    return
+  fi
+  final="$DEST/$TODAY.tar.age"
+  if [ "$DRY_RUN" = 1 ]; then
+    WROTE=1
+    log "WOULD   $reason | would write $final"
+    prune
+    return
+  fi
+  # The tar is made and checked before anything is written in Dropbox.
+  : >"$STAGE/err"
+  if ! (cd "$STAGE/tree" && tar -c -f "$STAGE/plain.tar" .) 2>>"$STAGE/err" ||
+    ! tar -t -f "$STAGE/plain.tar" >/dev/null 2>>"$STAGE/err"; then
+    show_errors
+    FAILED=$((FAILED + 1))
+    log "FAILED  tar could not pack what was gathered, or the tar failed its check"
+    attention "$DEST | no archive was written: tar could not pack what was gathered, or the tar failed its check; $TAR_HINT"
+    return
+  fi
+  if ! make_dir "$DEST"; then
+    write_failed "no folder for the archives" "$ERR"
+    return
+  fi
+  # Written under a name Dropbox leaves alone as a temporary file, and only
+  # renamed to the real one once it has passed its check.
+  tmp="$DEST/.~$TODAY.tar.age.$$"
+  if ! err=$("$AGE" -r "$RECIPIENT" -o "$tmp" "$STAGE/plain.tar" 2>&1); then
+    rm -f -- "$tmp"
+    write_failed "age could not encrypt it" "$(printf '%s\n' "$err" | head -n 1)"
+    return
+  fi
+  rm -f -- "$STAGE/plain.tar"
+  if ! is_age "$tmp"; then
+    rm -f -- "$tmp"
+    write_failed "what age wrote is empty, or does not start as age's format does" ""
+    return
+  fi
+  if ! err=$(mv -f -- "$tmp" "$final" 2>&1); then
+    rm -f -- "$tmp"
+    write_failed "could not rename it to $final" "$err"
+    return
+  fi
+  WROTE=1
+  log "WROTE   $final | $reason | $(wc -c <"$final" | tr -d ' ') bytes"
+  if [ -n "$print" ] && ! record "$print"; then
+    FAILED=$((FAILED + 1))
+    log "FAILED  could not record the fingerprint in $PRINTS"
+    attention "$PRINTS | could not record the fingerprint, so the next run writes another archive; check that folder's permissions"
+  fi
+  prune
+}
+
+backup() {
+  local stop="" why f name summary versions=""
+  [ -x "$GIT" ] && versions=" git=$(g --version 2>/dev/null | cut -d' ' -f3)"
+  [ -x "$AGE" ] && versions="$versions age=$("$AGE" --version 2>/dev/null)"
+  log "START   backup root=$ROOT data_root=$DATA_ROOT dest=$DEST repos=\"$REPOS\" data=\"$DATA\" keep=$KEEP dry_run=$DRY_RUN$versions"
+  # Nothing is gathered unless git and age are there, and backups is, each
+  # said where a person will see it.
+  if [ -n "$REPOS" ] && [ ! -x "$GIT" ]; then
+    stop="git is not installed"
+    attention "git | not installed, so nothing was archived; run brew install git"
+  fi
+  if [ ! -x "$AGE" ]; then
+    stop="${stop:+$stop; }age is not installed"
+    attention "age | not installed, so nothing was archived; run brew install age"
+  fi
+  BACKUPS=$(dirname -- "$DEST")
+  why=$(cannot_list "$BACKUPS")
+  if [ -z "$why" ] && [ ! -d "$BACKUPS" ]; then why="not a folder"; fi
+  case $why in
+    '') ;;
+    *'No such file or directory'*)
+      stop="${stop:+$stop; }$BACKUPS is not there"
+      attention "$BACKUPS | not there, so nothing was archived; tick it in Dropbox's Preferences > Sync, under Select folders to sync to this Mac, rather than making it by hand, which would give a conflicting copy"
+      ;;
+    *'Operation not permitted'*)
+      stop="${stop:+$stop; }macOS kept the job out of $BACKUPS"
+      attention "$(refusal "$BACKUPS")"
+      ;;
+    *)
+      stop="${stop:+$stop; }cannot read $BACKUPS: $why"
+      attention "$BACKUPS | cannot read it ($why), so nothing was archived; check its permissions"
+      ;;
+  esac
+  if [ -n "$stop" ]; then
+    write_attention
+    log "ABORT   $stop"
+    [ "$DRY_RUN" = 1 ] || logger -t "$PROG" "aborted: $stop" 2>/dev/null
+    exit 1
+  fi
+  # A temporary archive that a run stopped partway through, as by a restart,
+  # left behind. It is not the job's to delete.
+  for f in "$DEST"/.~*; do
+    if [ -e "$f" ] || [ -L "$f" ]; then
+      attention "$f | left by a run that stopped while writing an archive; delete it"
+    fi
+  done
+  for name in $REPOS; do stage_repo "$name"; done
+  for name in $DATA; do stage_data "$name"; done
+  if [ "$STAGED" = 0 ]; then
+    log "NOTHING nothing was gathered, so no archive was written"
+  else
+    write_archive
+  fi
+  write_attention
+  summary="backup wrote=$WROTE unchanged=$SAME repos=$REPOS_N data=$DATA_N skipped=$SKIPPED failed=$FAILED attention=$ATTN dry_run=$DRY_RUN"
+  log "DONE    $summary"
+  [ "$DRY_RUN" = 1 ] || logger -t "$PROG" "$summary" 2>/dev/null
+  [ "$FAILED" -eq 0 ] && exit 0
+  exit 1
+}
+
+# --------------------------------------------------------------- restore
+
+# stop_restore STATUS NOTE: the restore ends here, with NOTE for a person.
+stop_restore() {
+  attention "$2"
+  write_attention
+  log "ABORT   $2"
+  [ "$DRY_RUN" = 1 ] || logger -t "$PROG" "restore aborted: ${2#* | }" 2>/dev/null
+  exit "$1"
+}
+
+# late FILE: FILE is named for a day after tomorrow, as no backup made by
+# now can be.
+late() {
+  local d=${1##*/}
+  case $d in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar.age) ;; *) return 1 ;; esac
+  d=${d%.tar.age}
+  [ "${d//-/}" -gt "${TOMORROW//-/}" ]
+}
+
+# pick_newest: sets ARCHIVE to the newest archive in DEST by its name, or to
+# nothing, and LATE to those it passed over, one a line, for being named for
+# a day after tomorrow.
+pick_newest() {
+  local f
+  ARCHIVE="" LATE=""
+  for f in "$DEST"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar.age; do
+    if [ ! -f "$f" ] || [ -L "$f" ]; then continue; fi
+    if late "$f"; then
+      LATE="$LATE$f
+"
+      continue
+    fi
+    ARCHIVE=$f
+  done
+}
+
+# branch_ok FILE: FILE, a name's HEAD, holds a branch name git takes, or
+# nothing, as a backup writes it. Without git there is no repo to restore,
+# and it is never read.
+branch_ok() {
+  local b
+  [ -x "$GIT" ] || return 0
+  [ "$(wc -c <"$1" | tr -d ' ')" -le 4096 ] || return 1
+  b=$(cat "$1")
+  # No branch name holds a blank or a control character, so one that does
+  # never reaches git.
+  case $b in *[[:space:][:cntrl:]]*) return 1 ;; esac
+  [ -z "$b" ] || g check-ref-format "refs/heads/$b" >/dev/null 2>&1
+}
+
+# heads_ok BUNDLE: git reads the bundle, and every head in it is a branch
+# with a name git takes, as in a bundle a backup makes.
+heads_ok() {
+  local out oid ref
+  [ -x "$GIT" ] || return 0
+  out=$(g bundle list-heads "$1" 2>/dev/null) && [ -n "$out" ] || return 1
+  while read -r oid ref; do
+    case $oid in '' | *[!0-9a-f]*) return 1 ;; esac
+    case $ref in refs/heads/?*) ;; *) return 1 ;; esac
+    case $ref in *[[:space:][:cntrl:]]*) return 1 ;; esac
+    g check-ref-format "$ref" >/dev/null 2>&1 || return 1
+  done <<<"$out"
+}
+
+# untrusted ARCHIVE WHAT [MORE]: the archive holds WHAT, which no backup
+# writes, so it is refused whole. MORE adds to what a person does.
+untrusted() {
+  log "REFUSED $1 | $2"
+  attention "$1 | $2, so the archive was refused and nothing was restored; $TRUST${3:+; $3}"
+}
+
+# check_tree ARCHIVE: what ARCHIVE unpacked to holds only what a backup
+# writes: at its top, a folder for each of some names in REPOS or DATA; in
+# each, no more than checkout/, data/, local.bundle and HEAD, with HEAD a
+# branch name and the bundle's heads branches; and in checkout/ and data/,
+# no .git of any case and no link that leads out of them. APFS minds no case,
+# so a .GIT copied into a clone would land in its .git. Anyone with the
+# public key can make an archive, so one that holds anything else is refused
+# whole, before any of it is copied. Each kind of thing found gets its own
+# attention line, which names no file in the archive.
+check_tree() {
+  local tree="$STAGE/tree" e f l name top=0 odd=0 unknown="" inner="" gits="" outside="" unread=""
+  # The stage is this run's own, and every folder in it must be read.
+  chmod -R u+rX "$tree" 2>/dev/null
+  for e in "$tree"/* "$tree"/.[!.]* "$tree"/..?*; do
+    if [ ! -e "$e" ] && [ ! -L "$e" ]; then continue; fi
+    name=${e##*/}
+    if [ -L "$e" ] || [ ! -d "$e" ]; then
+      top=1
+      continue
+    fi
+    case " $REPOS $DATA " in
+      *" $name "*) ;;
+      *)
+        # A name is printed only when it could be one, so a planted archive
+        # cannot put its own text in the attention file.
+        case $name in
+          [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*) odd=1 ;;
+          *) unknown=$(with "$unknown" "$name") ;;
+        esac
+        continue
+        ;;
+    esac
+    for f in "$e"/* "$e"/.[!.]* "$e"/..?*; do
+      if [ ! -e "$f" ] && [ ! -L "$f" ]; then continue; fi
+      if [ ! -L "$f" ]; then
+        case ${f##*/} in
+          checkout | data) [ -d "$f" ] && continue ;;
+          HEAD) [ -f "$f" ] && branch_ok "$f" && continue ;;
+          local.bundle) [ -f "$f" ] && heads_ok "$f" && continue ;;
+        esac
+      fi
+      inner=$(with "$inner" "$name")
+      break
+    done
+    for f in "$e/checkout" "$e/data"; do
+      if [ ! -d "$f" ] || [ -L "$f" ]; then continue; fi
+      if ! find "$f" -iname .git -print0 >"$STAGE/found" 2>/dev/null; then
+        unread=$(with "$unread" "$name")
+        continue
+      fi
+      if [ -s "$STAGE/found" ]; then gits=$(with "$gits" "$name"); fi
+      if ! find "$f" -type l -print0 >"$STAGE/found" 2>/dev/null; then
+        unread=$(with "$unread" "$name")
+        continue
+      fi
+      while IFS= read -r -d '' l; do
+        if ! inside "$l" "$f"; then
+          outside=$(with "$outside" "$name")
+          break
+        fi
+      done <"$STAGE/found"
+    done
+  done
+  if [ "$top$odd" = 00 ] && [ -z "$unknown$inner$gits$outside$unread" ]; then return 0; fi
+  if [ "$top" = 1 ]; then
+    untrusted "$1" "holds a file or link at its top, where a backup writes only a folder for each name in REPOS and DATA"
+  fi
+  if [ "$odd" = 1 ]; then
+    untrusted "$1" "holds a folder at its top whose name is not one a backup uses"
+  fi
+  for name in $unknown; do
+    untrusted "$1" "holds $name, which is in neither REPOS nor DATA" "if $name left the settings after this archive was made, name it with --repos or --data for this restore"
+  done
+  for name in $inner; do
+    untrusted "$1" "holds something in $name/ that no backup writes"
+  done
+  for name in $gits; do
+    untrusted "$1" "holds a .git in the files of $name, which no backup writes and which could plant git hooks or settings"
+  done
+  for name in $outside; do
+    untrusted "$1" "holds a link in the files of $name that leads out of them, which no backup writes"
+  done
+  for name in $unread; do
+    untrusted "$1" "holds a folder in the files of $name that the restore cannot read"
+  done
+  return 1
+}
+
+# refuse NAME DIR WHY FIX: a name the restore will not write into, with why,
+# and what a person does about it.
+refuse() {
+  REFUSED=$((REFUSED + 1))
+  log "REFUSED $1 | $3"
+  attention "$2 | $3, so nothing was restored into it; $4"
+}
+
+# local_state DIR: what the clone has of its own that a restore could
+# overwrite or mix with, or nothing when it has none: commits on no remote,
+# changes to tracked files, and untracked or ignored files but the caches.
+local_state() {
+  local commits changed others what=""
+  if ! commits=$(g -C "$1" rev-list --count HEAD --branches --not --remotes 2>/dev/null) ||
+    ! changed=$(set -o pipefail; g -C "$1" diff --name-only -z HEAD 2>/dev/null | count0) ||
+    ! others=$(set -o pipefail; g -C "$1" ls-files --others -z "${EXCLUDES[@]}" 2>/dev/null | count0); then
+    printf 'a state git cannot read'
+    return
+  fi
+  [ "$commits" = 0 ] || what="$commits commit(s) on no remote"
+  [ "$changed" = 0 ] || what="${what:+$what, }$changed changed file(s)"
+  [ "$others" = 0 ] || what="${what:+$what, }$others untracked or ignored file(s)"
+  printf '%s' "$what"
+}
+
+# empty_dir DIR: nothing in DIR but, perhaps, the .DS_Store Finder leaves.
+empty_dir() {
+  local f
+  [ -r "$1" ] && [ -x "$1" ] || return 1
+  for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    if [ ! -e "$f" ] && [ ! -L "$f" ]; then continue; fi
+    [ "${f##*/}" = .DS_Store ] && continue
+    return 1
+  done
+  return 0
+}
+
+# restore_repo NAME: the clone's files and commits, back from the archive.
+# Only a clone with no local state of its own takes them, and only on the
+# branch they were archived from, so nothing is overwritten or mixed. Its
+# branch is reset to the archive's commits, which is safe only because the
+# clone has nothing of its own; each other branch of the archive's is made
+# or moved forward; and the files are copied over the clone.
+restore_repo() {
+  local name=$1 dir src files=0 bundle="" recorded="" branch heads oid ref b
+  local reset="" others="" what err ok=1
+  dir="$ROOT/$name"
+  src="$STAGE/tree/$name"
+  if [ -d "$src/checkout" ]; then files=$(count_files "$src/checkout"); fi
+  if [ -f "$src/local.bundle" ]; then bundle="$src/local.bundle"; fi
+  if [ "$files" = 0 ] && [ -z "$bundle" ]; then
+    NOTHING=$((NOTHING + 1))
+    log "NOTHING $name | the archive holds nothing for it"
+    return
+  fi
+  if [ ! -d "$dir" ] || [ ! -e "$dir/.git" ]; then
+    refuse "$name" "$dir" "not a clone" "chezmoi apply clones it, then run personal-backup restore $name"
+    return
+  fi
+  what=$(local_state "$dir")
+  if [ -n "$what" ]; then
+    refuse "$name" "$dir" "has $what of its own" "move the clone aside, run chezmoi apply to clone it again, then run personal-backup restore $name"
+    return
+  fi
+  if [ -n "$bundle" ]; then
+    recorded=$(cat "$src/HEAD" 2>/dev/null)
+    branch=$(g -C "$dir" symbolic-ref --short -q HEAD 2>/dev/null)
+    if [ "$branch" != "$recorded" ]; then
+      refuse "$name" "$dir" "on ${branch:-a detached HEAD}, but the archive's commits are on ${recorded:-a detached HEAD}" "switch it to ${recorded:-that} with git switch, adding -c if no such branch is there, then run personal-backup restore $name"
+      return
+    fi
+    if ! heads=$(g bundle list-heads "$bundle" 2>/dev/null); then
+      name_failed "$name" "git cannot read the archive's bundle for it" "$dir | git cannot read the archive's bundle for it, so nothing was restored into it"
+      return
+    fi
+    while read -r oid ref; do
+      b=${ref#refs/heads/}
+      if [ -z "$oid" ] || [ "$b" = "$ref" ]; then continue; fi
+      if [ "$b" = "$recorded" ]; then reset=$b; else others="$others${others:+ }$b"; fi
+    done <<<"$heads"
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    RESTORED=$((RESTORED + 1))
+    what=""
+    if [ -n "$reset" ]; then what="reset $reset to the archive's commits, "; fi
+    if [ -n "$others" ]; then what="${what}make or move forward $others from them, "; fi
+    log "WOULD   $name | would ${what}copy $files file(s) into $dir"
+    return
+  fi
+  # Everything written into the clone is written as the clone's own files
+  # are, under the umask the job was started with. git checks every object
+  # it fetches, so a planted commit that holds a .git, or another path git
+  # would not check out, never gets into the clone.
+  if [ -n "$reset" ]; then
+    if ! err=$(as_user g -c fetch.fsckObjects=true -C "$dir" fetch --quiet --no-tags "$bundle" "refs/heads/$reset" 2>&1); then
+      name_failed "$name" "git could not fetch the archive's commits" "$dir | git could not fetch the archive's commits ($(one_line "$err")), so nothing was restored into it"
+      return
+    fi
+    : >"$STAGE/err"
+    if ! as_user g -C "$dir" reset --quiet --hard FETCH_HEAD >/dev/null 2>>"$STAGE/err"; then
+      show_errors
+      name_failed "$name" "git reset --hard to the archive's commits failed" "$dir | git reset --hard to the archive's commits failed, so its files were not copied in; see git -C $dir status"
+      return
+    fi
+    log "RESET   $name | $reset to the archive's commits"
+  fi
+  for b in $others; do
+    # Not forced: git makes the branch, or moves it forward, and refuses
+    # anything else.
+    if ! err=$(as_user g -c fetch.fsckObjects=true -C "$dir" fetch --quiet --no-tags "$bundle" "refs/heads/$b:refs/heads/$b" 2>&1); then
+      ok=0
+      name_failed "$name" "git could not make or move forward $b" "$dir | git could not make or move forward branch $b from the archive's commits ($(one_line "$err")); the archive still holds them"
+      continue
+    fi
+    log "BRANCH  $name | $b, from the archive's commits"
+  done
+  if [ "$files" -gt 0 ]; then
+    if ! as_user copy_tree "$src/checkout" "$dir" ! -type d; then
+      show_errors
+      name_failed "$name" "tar could not copy all of its files in" "$dir | tar could not copy all of the archive's files into it, so some may be missing; move the clone aside, run chezmoi apply to clone it again, then run personal-backup restore $name from a terminal, which shows tar's own errors"
+      return
+    fi
+    log "COPIED  $name | $files file(s) into $dir"
+  fi
+  if [ "$ok" = 1 ]; then RESTORED=$((RESTORED + 1)); fi
+}
+
+# restore_data NAME: a tool's data folder, back from the archive, into a
+# folder that is missing or empty. An archive made while the tool was still a
+# clone has its files under NAME/checkout instead, at the same paths relative
+# to the folder, and those come back in their place.
+restore_data() {
+  local name=$1 dir src files=0 legacy="" err
+  dir="$DATA_ROOT/$name"
+  src="$STAGE/tree/$name/data"
+  if [ ! -d "$src" ] && [ -d "$STAGE/tree/$name/checkout" ]; then
+    src="$STAGE/tree/$name/checkout"
+    legacy=", from the checkout the archive kept while it was a clone"
+  fi
+  if [ -d "$src" ]; then files=$(count_files "$src"); fi
+  if [ "$files" = 0 ]; then
+    NOTHING=$((NOTHING + 1))
+    log "NOTHING $name | the archive holds nothing for it"
+    return
+  fi
+  if [ -e "$dir" ] || [ -L "$dir" ]; then
+    if [ ! -d "$dir" ]; then
+      refuse "$name" "$dir" "not a folder" "move it aside, then run personal-backup restore $name"
+      return
+    fi
+    if ! empty_dir "$dir"; then
+      refuse "$name" "$dir" "not empty" "move it aside, then run personal-backup restore $name"
+      return
+    fi
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    RESTORED=$((RESTORED + 1))
+    log "WOULD   $name | would copy $files file(s) into $dir$legacy"
+    return
+  fi
+  if [ ! -d "$dir" ] && ! err=$(mkdir -m 700 -- "$dir" 2>&1); then
+    name_failed "$name" "could not make $dir" "$dir | could not make it (${err##*: }), so nothing was restored"
+    return
+  fi
+  if ! copy_tree "$src" "$dir"; then
+    show_errors
+    name_failed "$name" "tar could not copy all of its files in" "$dir | tar could not copy all of the archive's files into it, so some may be missing; move it aside, then run personal-backup restore $name from a terminal, which shows tar's own errors"
+    return
+  fi
+  log "COPIED  $name | $files file(s) into $dir$legacy"
+  if [ -n "$legacy" ] && [ -f "$STAGE/tree/$name/local.bundle" ]; then
+    attention "$dir | the archive also holds the commits $name had on no remote while it was a clone; a data folder has no place for them, so they stay in the archive"
+  fi
+  RESTORED=$((RESTORED + 1))
+}
+
+restore() {
+  local why archive key="" status err f name summary needs_git=""
+  if [ -n "$FROM" ]; then why="from=$FROM"; else why="dest=$DEST"; fi
+  log "START   restore names=\"$NAMES\" root=$ROOT data_root=$DATA_ROOT $why dry_run=$DRY_RUN"
+  for name in $NAMES; do
+    case " $REPOS " in *" $name "*) needs_git=1 ;; esac
+  done
+  if [ ! -x "$AGE" ]; then
+    stop_restore 1 "age | not installed, so nothing was restored; run brew install age, then $RERUN"
+  fi
+  if [ -n "$needs_git" ] && [ ! -x "$GIT" ]; then
+    stop_restore 1 "git | not installed, so nothing was restored; run brew install git, then $RERUN"
+  fi
+  # The archive: --from, or the newest in DEST.
+  if [ -n "$FROM" ]; then
+    why=$(cannot_list "$FROM")
+    case $why in
+      '') ;;
+      *'No such file or directory'*) stop_restore 3 "$FROM | not there, so nothing was restored" ;;
+      *'Operation not permitted'*) stop_restore 1 "$(refusal "$FROM")" ;;
+      *) stop_restore 1 "$FROM | cannot read it ($why), so nothing was restored" ;;
+    esac
+    [ -f "$FROM" ] || stop_restore 1 "$FROM | not a file, so nothing was restored"
+    if late "$FROM"; then
+      stop_restore 1 "$FROM | named for a day after tomorrow ($TOMORROW), which no backup made by now can be, so it was refused and nothing was restored; $TRUST"
+    fi
+    archive=$FROM
+  else
+    why=$(cannot_list "$DEST")
+    ARCHIVE="" LATE=""
+    case $why in
+      '') pick_newest ;;
+      *'No such file or directory'*) ;;
+      *'Operation not permitted'*) stop_restore 1 "$(refusal "$DEST")" ;;
+      *) stop_restore 1 "$DEST | cannot read it ($why), so nothing was restored" ;;
+    esac
+    archive=$ARCHIVE
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      log "IGNORED $f | named for a day after tomorrow ($TOMORROW), so it was passed over"
+      if [ -n "$archive" ]; then
+        attention "$f | named for a day after tomorrow ($TOMORROW), which no backup made by now can be, so the restore passed it over for ${archive##*/}; check where the file came from"
+      fi
+    done <<<"$LATE"
+    if [ -z "$archive" ] && [ -n "$LATE" ]; then
+      stop_restore 1 "$DEST | holds only archives named for a day after tomorrow ($TOMORROW), which no backup made by now can be, so nothing was restored; check where they came from, and restore with --from an archive you trust"
+    fi
+    if [ -z "$archive" ]; then
+      stop_restore 3 "$DEST | no archive there, so nothing was restored; run $RERUN once Dropbox has synced it"
+    fi
+  fi
+  # The key: from 1Password into this variable, never a file. stdin is
+  # /dev/null so that op, when it finds no account, fails rather than wait at
+  # a terminal for an answer. op ends the field with one newline, which goes;
+  # the x keeps any others, which $( ) would take off too.
+  if [ -z "$IDENTITY" ]; then
+    if [ -z "$OP" ] || [ ! -x "$OP" ]; then
+      stop_restore 4 "$KEY_NAME | op, 1Password's CLI, is not installed, so nothing was restored; run brew install --cask 1password-cli, unlock 1Password with its CLI integration turned on, then run $RERUN"
+    fi
+    if key=$("$OP" item get "$KEY_ITEM" --vault "$KEY_VAULT" --fields "label=$KEY_FIELD" --reveal </dev/null 2>"$STAGE/op.err" && printf x); then
+      key=${key%x}
+      key=${key%$'\n'}
+    else
+      key=""
+    fi
+    if [ -z "$key" ]; then
+      err=$(one_line "$(head -n 1 "$STAGE/op.err")")
+      stop_restore 4 "$KEY_NAME | 1Password didn't hand over its key${err:+ ($err)}, so nothing was restored; unlock 1Password with its CLI integration turned on, then run $RERUN"
+    fi
+  fi
+  # Decrypted into the private stage. Without --identity-file the key reaches
+  # age through a pipe.
+  if [ -n "$IDENTITY" ]; then
+    "$AGE" -d -i "$IDENTITY" -o "$STAGE/plain.tar" "$archive" 2>"$STAGE/age.err"
+  else
+    "$AGE" -d -i <(printf '%s\n' "$key") -o "$STAGE/plain.tar" "$archive" 2>"$STAGE/age.err"
+  fi
+  status=$?
+  key=""
+  if [ "$status" != 0 ]; then
+    err=$(one_line "$(head -n 1 "$STAGE/age.err")")
+    if denied "$err"; then stop_restore 1 "$(refusal "$archive")"; fi
+    stop_restore 1 "$archive | age could not decrypt it ($err), so nothing was restored; $TRUST"
+  fi
+  # tar, without -P, strips a leading / and refuses .. and writing through a
+  # link, so nothing lands outside the stage.
+  : >"$STAGE/err"
+  if ! tar -t -f "$STAGE/plain.tar" >/dev/null 2>>"$STAGE/err" ||
+    ! tar -x -p --no-fflags -f "$STAGE/plain.tar" -C "$STAGE/tree" 2>>"$STAGE/err"; then
+    show_errors
+    stop_restore 1 "$archive | what it decrypts to is not a tar that unpacks safely, so the archive was refused and nothing was restored; $TRUST"
+  fi
+  rm -f -- "$STAGE/plain.tar"
+  # Checked whole before any of it is copied out.
+  if ! check_tree "$archive"; then
+    write_attention
+    log "ABORT   $archive | it holds what no backup writes, so nothing was restored"
+    [ "$DRY_RUN" = 1 ] || logger -t "$PROG" "restore aborted: $archive holds what no backup writes" 2>/dev/null
+    exit 1
+  fi
+  log "OPENED  $archive"
+  for name in $NAMES; do
+    case " $REPOS " in
+      *" $name "*) restore_repo "$name" ;;
+      *) restore_data "$name" ;;
+    esac
+  done
+  write_attention
+  summary="restore restored=$RESTORED nothing=$NOTHING refused=$REFUSED failed=$FAILED attention=$ATTN dry_run=$DRY_RUN"
+  log "DONE    $summary"
+  [ "$DRY_RUN" = 1 ] || logger -t "$PROG" "$summary" 2>/dev/null
+  [ $((REFUSED + FAILED)) -eq 0 ] && exit 0
+  exit 1
+}
+
+# ------------------------------------------------------------------ main
+
+LOCK_DIR="$STATE_DIR/run.lock"
+LOCKED=0 STAGE=""
+
+cleanup() {
+  if [ -n "$STAGE" ] && [ -d "$STAGE" ]; then remove_stage "$STAGE"; fi
+  if [ "$LOCKED" = 1 ]; then
+    rm -f -- "$LOCK_DIR/pid" "$LOCK_DIR/stage" 2>/dev/null
+    rmdir -- "$LOCK_DIR" 2>/dev/null
+  fi
+}
+trap cleanup EXIT
+# A signal ends the run through exit, so the trap above still runs.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [ "$DRY_RUN" != 1 ]; then
+  mkdir -p -- "$STATE_DIR" || exit 1
+  if [ -f "$LOG_FILE" ] && [ "$(wc -l <"$LOG_FILE")" -gt "$LOG_MAX_LINES" ]; then
+    tail -n $((LOG_MAX_LINES / 2)) "$LOG_FILE" >"$LOG_FILE.tmp" && mv -- "$LOG_FILE.tmp" "$LOG_FILE"
+  fi
+  if ! mkdir -- "$LOCK_DIR" 2>/dev/null; then
+    old=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+    if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+      if [ "$CMD" = restore ]; then
+        log "ABORT   another run (pid $old) is still going; run $RERUN again once it is done"
+        exit 1
+      fi
+      log "SKIP    another run (pid $old) is still going"
+      exit 0
+    fi
+    # A run that was killed left its lock, and perhaps its plaintext, which
+    # goes now.
+    left=$(cat "$LOCK_DIR/stage" 2>/dev/null)
+    case $left in
+      /*/"$PROG".??????)
+        if [ -d "$left" ]; then
+          remove_stage "$left"
+          log "CLEANED the private folder a stopped run (pid ${old:-unknown}) left"
+        fi
+        ;;
+    esac
+    rm -f -- "$LOCK_DIR/pid" "$LOCK_DIR/stage"
+    rmdir -- "$LOCK_DIR" 2>/dev/null
+    mkdir -- "$LOCK_DIR" || exit 1
+  fi
+  LOCKED=1
+  echo $$ >"$LOCK_DIR/pid"
+fi
+
+# The private folder for the plaintext: under $TMPDIR, or the per-user
+# temporary folder macOS gives when launchd sets no TMPDIR.
+TMP_BASE=${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)}
+TMP_BASE=${TMP_BASE%/}
+[ -d "$TMP_BASE" ] || TMP_BASE=/tmp
+if ! STAGE=$(mktemp -d "$TMP_BASE/$PROG.XXXXXX"); then
+  STAGE=""
+  log "ABORT   could not make a private folder under $TMP_BASE to work in"
+  exit 1
+fi
+if [ "$LOCKED" = 1 ]; then echo "$STAGE" >"$LOCK_DIR/stage"; fi
+mkdir -- "$STAGE/tree" || exit 1
+: >"$STAGE/err"
+
+if [ "$CMD" = restore ]; then
+  restore
+else
+  backup
+fi

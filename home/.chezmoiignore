@@ -79,6 +79,9 @@ Library
 .claude/skills/draft-email-reply
 .claude/skills/todoist-triage
 Library/CloudStorage/Dropbox
+.local/bin/personal-backup
+.local/share/dotfiles/personal-backup.conf
+Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 {{- end }}
 
 {{- /* The mini: where all development happens. */}}

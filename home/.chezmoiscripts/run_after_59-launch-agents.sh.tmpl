@@ -1,10 +1,11 @@
-{{- if .isAgent -}}
+{{- if or .isAgent (eq .role "laptop") -}}
 #!/bin/bash
-# Keeps the mini's LaunchAgents loaded: the worktree cleanup job and the
-# repos' snapshot job. Each is reloaded when its own plist changes, judged
-# against its own marker, so a change to one never reloads the other. Over
-# SSH, with no one logged in at the mini, launchd has no GUI session to load
-# them into; the next apply from the Mac's own session does.
+# Keeps this Mac's LaunchAgents loaded: on the mini, the worktree cleanup job
+# and the repos' snapshot job; on the laptop, the personal backup. Each is
+# reloaded when its own plist changes, judged against its own marker, so a
+# change to one never reloads another. Over SSH, with no one logged in at the
+# Mac, launchd has no GUI session to load them into; the next apply from the
+# Mac's own session does.
 
 set -uo pipefail
 SCRIPT=launch-agents
@@ -43,15 +44,28 @@ load() {
 }
 
 plists=0
-for name in worktree-ttl repo-snapshots; do
+{{- if .isAgent }}
+jobs="worktree-ttl repo-snapshots"
+{{- else }}
+jobs="personal-backup"
+{{- end }}
+for name in $jobs; do
   [ -f "$HOME/Library/LaunchAgents/com.carlosetejada.$name.plist" ] && plists=$((plists + 1))
 done
 [ "$plists" -gt 0 ] || exit 0
 if ! launchctl print "$domain" >/dev/null 2>&1; then
+{{- if .isAgent }}
   warn "no login session to load the cleanup and snapshot jobs into; the next apply at the mini's own session loads them"
+{{- else }}
+  warn "no login session to load the personal backup into; the next apply at the laptop's own session loads it"
+{{- end }}
   exit 0
 fi
+{{- if .isAgent }}
 load worktree-ttl "worktree cleanup job" "daily at 04:17" "nothing is cleaned"
 load repo-snapshots "snapshot job" "Sundays at 03:47" "no snapshot is taken"
+{{- else }}
+load personal-backup "personal backup" "Sundays at 03:47" "no backup is made"
+{{- end }}
 exit 0
 {{ end -}}
