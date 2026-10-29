@@ -59,8 +59,9 @@ chezmoi init --apply --promptChoice role=server \
 - `chezmoi diff` shows what an apply would change. Read it before applying.
 - `chezmoi apply` applies it, and `chezmoi verify` exits 0 when the machine
   matches the repo.
-- `brew bundle --file=~/.local/share/chezmoi/Brewfile` installs anything that
-  failed, such as an App Store app before signing in. The shell sets
+- Every `chezmoi apply` installs a Brewfile entry that's missing, such as a
+  cask whose download failed. `brew bundle --file=~/.local/share/chezmoi/Brewfile`
+  does it by hand, App Store apps included. The shell sets
   `HOMEBREW_TILDE_ROLE`, which picks this Mac's part of the shared Brewfile.
 - `DOTFILES_CHECK=1 chezmoi apply` dry-runs the macOS settings and applies
   everything else. To change nothing at all, run the rendered script on its
