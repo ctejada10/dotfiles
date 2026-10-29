@@ -1143,6 +1143,10 @@ Desktop on either Mac.
   auditor, property-based-testing, mutation-testing and
   spec-to-code-compliance. No pstack. No claude.ai connectors or synced
   plugins.
+- **`/go <task>`:** your own command, from `home/dot_claude/skills/go`. It
+  runs one task from worktree to draft PR in a fixed order and names the one
+  skill or tool for each job, handing bigger work to poteto-mode. Type `/go`
+  alone to see the steps and the table. Claude never starts it on its own.
 - **Skills copied in under their licences:** a subset of Matt Pocock's
   (grill-me, to-spec and the architecture ones), HumanLayer's research, plan
   and implement set (`rpi-`), GitHub's Actions hardening review and
