@@ -31,7 +31,7 @@ for role in "${roles[@]}"; do
     laptop)
       lacks "$list" ".claude/pstack-models.md" && pass "has no pstack model sheet" || fail "has no pstack model sheet"
       has "$list" ".claude/rules/job-search.md" && pass "has the job-search rules" || fail "has the job-search rules"
-      bad=$(grep -E '^\.codex|^\.claude/(skills/(rpi-|grill|to-spec|i-have-adhd|github-actions|openscad|read-only-log|frontend-e2e|codebase-design|domain-modeling|improve-codebase|writing-for-agents)|agents/(rpi-|ecc-))|^\.local/share/(openscad|georgeskills|dotfiles/git/read)' <<< "$list" | grep -v '^\.local/share/dotfiles/git/read-only-hooks' || true)
+      bad=$(grep -E '^\.codex|^\.claude/(skills/(rpi-|grill|to-spec|i-have-adhd|github-actions|openscad|read-only-log|frontend-e2e|codebase-design|domain-modeling|improve-codebase|writing-for-agents|go/)|agents/(rpi-|ecc-))|^\.local/share/(openscad|georgeskills|dotfiles/git/read)' <<< "$list" | grep -v '^\.local/share/dotfiles/git/read-only-hooks' || true)
       [ -z "$bad" ] && pass "has no development rules, skills, agents or tools" || fail "has no development rules, skills, agents or tools" "$bad"
       has "$list" "Library/CloudStorage/Dropbox/config-files/1Password/ssh/agent.toml" \
         && pass "writes 1Password's agent.toml into Dropbox's config-files" || fail "writes 1Password's agent.toml into Dropbox's config-files"
@@ -64,7 +64,7 @@ for role in "${roles[@]}"; do
       lacks "$list" ".claude/rules/job-search.md" && pass "has no job-search rules" || fail "has no job-search rules"
       for path in .codex/AGENTS.md .claude/skills/rpi-create-plan/SKILL.md \
                   .claude/skills/grill-me/SKILL.md .claude/agents/ecc-python-reviewer.md \
-                  .claude/skills/github-actions-hardening/SKILL.md .claude/skills/openscad-bosl2 \
+                  .claude/skills/github-actions-hardening/SKILL.md .claude/skills/openscad-bosl2 .claude/skills/go/SKILL.md \
                   .local/share/openscad/libraries/BOSL2 .local/share/georgeskills; do
         has "$list" "$path" && pass "has $path" || fail "has $path"
       done
