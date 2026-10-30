@@ -44,7 +44,7 @@ still the live setup on arnor, and nothing here has been applied to it.
 ## The one-liner
 
 ```sh
-sh -c "$(curl -fsLS get.chezmoi.io)" -- init --apply ctejada10
+sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin" init --apply ctejada10
 ```
 
 It asks three questions: the role (`laptop`), the name (lowercase letters,

@@ -50,7 +50,7 @@ In this order:
 5. The one-liner, answering `agent-mini`, `amon-sul` and `Amon Sûl`:
 
    ```sh
-   sh -c "$(curl -fsLS get.chezmoi.io)" -- init --apply ctejada10
+   sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin" init --apply ctejada10
    ```
 
    Near the end it clones the mini's repos from GitHub into `~/src`. A clone
