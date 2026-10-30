@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
-sandbox laptop
+sandbox ci
 trap cleanup_sandbox EXIT
 script="$SANDBOX/migrate.sh"
-cz execute-template < "$REPO/home/.chezmoiscripts/run_before_05-migrate-bin.sh.tmpl" > "$script"
+# Render the Mac branch on every test host without initializing a Mac-only role.
+cz execute-template --override-data '{"isMac":true,"ci":false}' < "$REPO/home/.chezmoiscripts/run_before_05-migrate-bin.sh.tmpl" > "$script"
 mkdir -p "$SANDBOX/home/bin"
 printf binary > "$SANDBOX/home/bin/chezmoi"
 printf hidden > "$SANDBOX/home/bin/.hidden"
