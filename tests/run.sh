@@ -16,6 +16,7 @@ run() {
 printf '\n=== tests/check-secrets.sh\n'
 if sh tests/check-secrets.sh; then echo "  ok    no key material, fonts or 1Password templates"; else status=1; fi
 
+run tests/migrate-bin.sh
 run tests/lint.sh
 run tests/check-roles.sh
 run tests/guard-git.sh
