@@ -38,7 +38,7 @@ Stop only for one of these.
 
 To stop:
 
-1. Commit and push the reversible work done so far, and open or update the draft PR. With no commits yet, skip the PR. In a repo with Copilot's review, skip it until that section allows one. Never make an empty or placeholder commit.
+1. Commit and push the reversible work done so far, and open or update the draft PR. With no commits yet, skip the PR. In a repo with Copilot's review, skip it until that section allows one, and a stop may still commit on red. Never make an empty or placeholder commit.
 2. Write `STOP:` and the blocker on one line, then up to four numbered questions under it, each with the default you would take. For a remote host, give the one complete command for Carlos to run. When there is a PR, put this at the top of its body.
 3. Raise the same text. Claude Code raises it as its section below says. Codex never calls `request_user_input`: it puts the text first in its final message and ends the turn.
 
