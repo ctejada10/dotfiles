@@ -32,7 +32,7 @@ Calling a skill only loads its instructions. Subagents are what cost: each one r
 ## Both paths
 
 5. **Clean and review.** Call `t3-pstack:deslop` over the diff, then call `code-review` with level `low` on the small path or `medium` on the big path, never higher unless Carlos asks. Fix what holds up and rerun the tests.
-6. **Ship it.** Commit in the repo's style, push, open a draft PR, call T3's `link_pull_request`, answer Copilot's review where the repo has it, and write the final message as AGENTS.md says.
+6. **Ship it.** Commit in the repo's style and push. In a repo with Copilot's review, clear AGENTS.md's list of what comes before a PR, subagent reviews included, even on the small path. Open a draft PR, call T3's `link_pull_request`, answer Copilot's review where the repo has it, and write the final message as AGENTS.md says.
 
 ## Overrides
 
