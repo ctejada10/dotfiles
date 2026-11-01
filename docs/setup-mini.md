@@ -296,24 +296,28 @@ GitHub into a real `~/src` (the `agent-mini` list in
 Nothing pulls those clones: agents branch from `origin/HEAD` in worktrees, and
 FirstMate fast-forwards a clone once a PR merges.
 
-Dropbox on the mini holds only the repos' weekly snapshots, in `backups`. Sign
-in to Dropbox; on the mini it runs in File Provider mode, so files arrive as
+Dropbox on the mini holds only the repos' weekly snapshots, in
+`backups/repositories`. The rest of `backups` is nothing an agent should
+open: two-factor exports and other backups in `backups/private`, and the
+laptop's encrypted personal archives in `backups/personal`, which the laptop
+restores from, so nothing on the mini may be able to add one. Sign in to
+Dropbox; on the mini it runs in File Provider mode, so files arrive as
 online-only placeholders. Then sync that one folder:
 
 1. Dropbox icon in the menu bar → your avatar → **Preferences** → **Sync**.
    Under "Select folders to sync to this Mac", click **Modify**.
-2. Tick **backups** and nothing else, and click **Update**. Leave
-   **repositories** unticked: it's the repos' old home, synced with the
-   laptop, and it holds the old `tilde` checkout with arnor's old SSH private
-   keys. Never open `tilde` on the mini.
-3. `ls ~/Library/CloudStorage/Dropbox` shows `backups` and no `repositories`.
-4. Once the laptop has made its first personal backup, which creates
-   `backups/personal`, come back here, open **backups** and untick
-   **personal**. Those are the laptop's encrypted archives, and the laptop
-   restores the newest one it finds there, so nothing on the mini may be able
-   to add one. Dropbox syncs a new subfolder by default, so it takes this
-   untick; `ls ~/Library/CloudStorage/Dropbox/backups` then shows no
-   `personal`.
+2. Open **backups** and tick only **repositories** inside it, nothing else
+   anywhere, and click **Update**. Leave the top-level **repositories**
+   unticked: it's the repos' old home, synced with the laptop, and it holds
+   the old `tilde` checkout with arnor's old SSH private keys. Never open
+   `tilde` on the mini.
+3. `ls ~/Library/CloudStorage/Dropbox` shows `backups` and no
+   `repositories`, and `ls ~/Library/CloudStorage/Dropbox/backups` shows only
+   `repositories`.
+4. Selective Sync chooses folders, and syncs a new one by default. So keep
+   loose files out of `backups` itself, which would reach the mini, and put
+   them in `backups/private`; and when a new folder lands in `backups`, as
+   `personal` does with the laptop's first personal backup, untick it here.
 
 ### The snapshot job's access
 
@@ -1185,7 +1189,7 @@ reads it from 1Password and keeps it in memory), the app-settings blob, a key
 that can log in to the servers, Ansible (`bash tests/run.sh` in a dotfiles
 worktree puts it in that worktree's `ansible/.venv` to check the playbook's
 syntax, and never runs it against a host), Docker Desktop, the Claude desktop
-app, any Dropbox folder but `backups`, or an Anthropic API key. Its Claude
+app, any Dropbox folder but `backups/repositories`, or an Anthropic API key. Its Claude
 Code loads none of the account's claude.ai connectors or synced plugins.
 
 **Never managed by this repo on the mini:** `~/.t3`, the Codex auth files,

@@ -221,9 +221,10 @@ commits on no remote. It encrypts the archive to the personal age key's
 public half, writes it to `backups/personal/<date>.tar.age` in Dropbox and
 keeps the newest eight; a week with no change writes nothing. Only the
 private half, which is only in 1Password, opens them. The mini syncs
-`backups` for its own snapshots but not `backups/personal`
+only `backups/repositories`, for its own snapshots
 ([its Dropbox steps](setup-mini.md#3-dropbox-and-the-repos)): a restore takes the newest archive it
-finds, so only the laptop may write one. A restore also refuses an archive
+finds, so only the laptop may write one. Other backups go in
+`backups/private`, which the mini doesn't sync either. A restore also refuses an archive
 that holds anything a backup never writes, or that is dated in the future. Its report is `~/Library/Logs/personal-backup/attention.txt`. Like
 the mini's snapshot job it writes into Dropbox from launchd, so `/bin/bash`
 needs Full Disk Access: System Settings → Privacy & Security → **Full Disk
