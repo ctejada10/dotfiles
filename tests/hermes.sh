@@ -43,7 +43,7 @@ mkdir -p "$T/bin"
 cat >"$T/bin/hermes" <<EOF
 #!/bin/bash
 case "\$2" in
-  get) f="$T/cfg/\$3"; if [ -f "\$f" ]; then cat "\$f"; else echo "Config key not set: \$3"; fi ;;
+  get) f="$T/cfg/\$3"; if [ -f "\$f" ]; then cat "\$f"; else echo "Config key not set: \$3"; exit 1; fi ;;
   set) echo "\$3" >>"$T/sets"; python3 -c 'import json,sys
 v=sys.argv[1]
 try:
@@ -66,6 +66,21 @@ grep -qx 'approvals.mode' "$T/sets" && fail "leaves a key that matches alone" ||
 grep -qx 'mcp_servers.a' "$T/sets" && pass "sets a map" || fail "sets a map"
 out=$(HERMES_BIN=$T/bin/hermes python3 -B "$sync" config "$T/want.json" "$T/state.json")
 [ -z "$out" ] && pass "changes nothing on a second run" || fail "changes nothing on a second run" "$out"
+before=$(cksum <"$T/state.json"; stat -f %m "$T/state.json" 2>/dev/null || stat -c %Y "$T/state.json")
+sleep 1
+HERMES_BIN=$T/bin/hermes python3 -B "$sync" config "$T/want.json" "$T/state.json" >/dev/null
+[ "$before" = "$(cksum <"$T/state.json"; stat -f %m "$T/state.json" 2>/dev/null || stat -c %Y "$T/state.json")" ] \
+  && pass "doesn't rewrite its state when nothing changed" || fail "doesn't rewrite its state when nothing changed"
+echo edited >"$T/cfg/mcp_servers.a"
+out=$(HERMES_BIN=$T/bin/hermes python3 -B "$sync" config "$T/want.json" "$T/state.json")
+[ "$out" = mcp_servers.a ] && pass "repairs a map edited by hand" || fail "repairs a map edited by hand" "$out"
+printf '#!/bin/bash\nexit 3\n' >"$T/bin/broken"; chmod +x "$T/bin/broken"
+HERMES_BIN=$T/bin/broken python3 -B "$sync" config "$T/want.json" "$T/state2.json" >/dev/null 2>&1 \
+  && fail "fails when hermes fails" || pass "fails when hermes fails"
+chmod 644 "$T/target"
+python3 -B "$sync" env "$T/rendered" "$T/target" >/dev/null
+perm=$(stat -f %Lp "$T/target" 2>/dev/null || stat -c %a "$T/target")
+[ "$perm" = 600 ] && pass "tightens the mode with nothing to render" || fail "tightens the mode with nothing to render" "$perm"
 rm -rf "$T"
 
 if [ "$(uname)" != Darwin ]; then
@@ -120,7 +135,7 @@ cat >"$F/home/.local/bin/hermes" <<EOF
 #!/bin/bash
 case "\$1 \$2" in
   "--version "*) echo "Hermes Agent v\$(cat "$F/version") (x)" ;;
-  "config get") if [ -f "$F/cfg/\$3" ]; then cat "$F/cfg/\$3"; else echo "Config key not set: \$3"; fi ;;
+  "config get") if [ -f "$F/cfg/\$3" ]; then cat "$F/cfg/\$3"; else echo "Config key not set: \$3"; exit 1; fi ;;
   "config set") echo "\$4" >"$F/cfg/\$3" ;;
   "gateway restart") echo restart >>"$F/restarts" ;;
 esac

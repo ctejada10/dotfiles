@@ -25,16 +25,23 @@ def hermes(*args):
 
 
 def current(key):
-    """The key's value as text or a list. Maps can't be read back as sent, so they aren't read."""
-    out = hermes("get", key)
-    if out.startswith("Config key not set"):
+    """The key's value as text or a list, or None if it isn't set."""
+    run = subprocess.run([HERMES, "config", "get", key], capture_output=True, text=True)
+    if "Config key not set" in run.stdout + run.stderr:
         return None
+    if run.returncode:
+        raise SystemExit(f"hermes config get {key} failed")
+    out = run.stdout.strip()
     if out == "[]":
         return []
     lines = out.splitlines()
     if lines and all(line.strip().startswith("- ") for line in lines):
         return [line.strip()[2:].strip("'\"") for line in lines]
     return out
+
+
+def digest(text):
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def wanted(value):
@@ -51,23 +58,30 @@ def sync_config(desired_path, state_path):
             state = json.load(f)
     except FileNotFoundError:
         state = {}
-    for key, value in desired.items():
-        if isinstance(value, dict):
-            digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
-            if state.get(key) == digest:
-                continue
-            state[key] = digest
-        else:
-            have = current(key)
-            if have == wanted(value) or (have is None and value == []):
-                continue
-            if key == "command_allowlist":
-                for entry in sorted(set(have or []) - set(value)):
-                    print(f"removed from command_allowlist: {entry}")
-        hermes("set", key, json.dumps(value) if isinstance(value, (list, dict)) else wanted(value))
-        print(key)
-    with open(state_path, "w") as f:
-        json.dump(state, f, indent=2)
+    before = dict(state)
+    try:
+        for key, value in desired.items():
+            if isinstance(value, dict):
+                # A map can't be compared with what Hermes prints, so remember
+                # what it printed after the last set and repair any drift.
+                sent = digest(json.dumps(value, sort_keys=True))
+                if state.get(key) == [sent, digest(str(current(key)))]:
+                    continue
+            else:
+                have = current(key)
+                if have == wanted(value) or (have is None and value == []):
+                    continue
+                if key == "command_allowlist":
+                    for entry in sorted(set(have or []) - set(value)):
+                        print(f"removed from command_allowlist: {entry}")
+            hermes("set", key, json.dumps(value) if isinstance(value, (list, dict)) else wanted(value))
+            print(key)
+            if isinstance(value, dict):
+                state[key] = [sent, digest(str(current(key)))]
+    finally:
+        if state != before:
+            with open(state_path, "w") as f:
+                json.dump(state, f, indent=2)
 
 
 def sync_env(rendered_path, env_path):
@@ -89,8 +103,11 @@ def sync_env(rendered_path, env_path):
             kept.append(line)
     new = "\n".join(kept + [BEGIN, *block, END]) + "\n"
     if new == old:
+        os.chmod(env_path, 0o600)
         return
     tmp = env_path + ".tilde"
+    if os.path.exists(tmp):
+        os.unlink(tmp)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(new)

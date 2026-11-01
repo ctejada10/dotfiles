@@ -32,7 +32,9 @@ if [ ! -e "$state/backed-up" ]; then
   backup=$state/backup-$(date +%Y%m%d-%H%M%S)
   ( umask 077; mkdir -p "$backup" )
   cp -p "$HOME/.hermes/config.yaml" "$backup/" || { warn "couldn't back up config.yaml, so nothing was changed"; exit 1; }
-  cp -p "$HOME/.hermes/.env" "$backup/" 2>/dev/null
+  if [ -e "$HOME/.hermes/.env" ]; then
+    cp -p "$HOME/.hermes/.env" "$backup/" || { warn "couldn't back up .env, so nothing was changed"; exit 1; }
+  fi
   cp -pR "$HOME/.hermes/skills" "$backup/" || { warn "couldn't back up the skills, so nothing was changed"; exit 1; }
   touch "$state/backed-up"
   say "backed up Hermes's config to $backup"
@@ -68,7 +70,9 @@ fi
 unset OP_SERVICE_ACCOUNT_TOKEN
 {{ end -}}
 
-out=$("$sync" config "$data/config.json" "$state/applied.json") || { warn "couldn't update Hermes's config"; exit 1; }
+out=$("$sync" config "$data/config.json" "$state/applied.json")
+sync_status=$?
+[ "$sync_status" -eq 0 ] || warn "couldn't finish updating Hermes's config; the next apply tries again"
 if [ -n "$out" ]; then
   while IFS= read -r line; do say "hermes config: $line"; done <<<"$out"
   changed=1
@@ -97,6 +101,8 @@ if [ -n "$changed" ]; then
   fi
 fi
 
+[ "$sync_status" -eq 0 ] || exit 1
+
 # Always on. Only what differs reaches pmset.
 power=$(pmset -g 2>/dev/null)
 for pair in sleep=0 disksleep=0 womp=1 autorestart=1 powernap=0; do
@@ -113,7 +119,7 @@ done
 # Only the steps still undone. Steps nothing can detect stay until the file
 # named beside them exists.
 todo() { [ -e "$state/done-$1" ] || printf '  - %s (then: touch %s)\n' "$2" "$state/done-$1"; }
-{
+checklist=$(
 {{- if .hermes.secrets.enabled }}
   security find-generic-password -a "$USER" -s hermes-op-service-account >/dev/null 2>&1 \
     || echo "  - Store the service account token: security add-generic-password -a \"\$USER\" -s hermes-op-service-account -w"
@@ -128,10 +134,10 @@ todo() { [ -e "$state/done-$1" ] || printf '  - %s (then: touch %s)\n' "$2" "$st
   todo tailscale "Log in to Tailscale and tag this Mac tag:agent (the ACL grants are in the Hurin repo)"
   todo approvals "Confirm in a Hermes chat that the five pre-approved hurin_act tools run without a prompt and any other act tool prompts"
 {{- end }}
-} >"$state/checklist"
-if [ -s "$state/checklist" ]; then
+)
+if [ -n "$checklist" ]; then
   say "still to do by hand:"
-  cat "$state/checklist"
+  printf '%s\n' "$checklist"
 fi
 exit 0
 {{ end -}}
