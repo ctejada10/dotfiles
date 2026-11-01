@@ -32,7 +32,7 @@ out=$(python3 -B "$sync" env "$T/rendered" "$T/target")
 grep -q '^OWN=mine$' "$T/target" && pass "keeps lines it doesn't own" || fail "keeps lines it doesn't own"
 [ "$(grep -c '^TOKEN=' "$T/target")" = 1 ] && grep -q '^TOKEN=s3cret$' "$T/target" \
   && pass "replaces a key it owns" || fail "replaces a key it owns" "$(grep -c TOKEN "$T/target")"
-perm=$(stat -f %Lp "$T/target" 2>/dev/null || stat -c %a "$T/target")
+perm=$(stat -c %a "$T/target" 2>/dev/null || stat -f %Lp "$T/target")
 [ "$perm" = 600 ] && pass "writes mode 600" || fail "writes mode 600" "$perm"
 before=$(cat "$T/target")
 out=$(python3 -B "$sync" env "$T/rendered" "$T/target")
@@ -66,10 +66,10 @@ grep -qx 'approvals.mode' "$T/sets" && fail "leaves a key that matches alone" ||
 grep -qx 'mcp_servers.a' "$T/sets" && pass "sets a map" || fail "sets a map"
 out=$(HERMES_BIN=$T/bin/hermes python3 -B "$sync" config "$T/want.json" "$T/state.json")
 [ -z "$out" ] && pass "changes nothing on a second run" || fail "changes nothing on a second run" "$out"
-before=$(cksum <"$T/state.json"; stat -f %m "$T/state.json" 2>/dev/null || stat -c %Y "$T/state.json")
+before=$(cksum <"$T/state.json"; stat -c %Y "$T/state.json" 2>/dev/null || stat -f %m "$T/state.json")
 sleep 1
 HERMES_BIN=$T/bin/hermes python3 -B "$sync" config "$T/want.json" "$T/state.json" >/dev/null
-[ "$before" = "$(cksum <"$T/state.json"; stat -f %m "$T/state.json" 2>/dev/null || stat -c %Y "$T/state.json")" ] \
+[ "$before" = "$(cksum <"$T/state.json"; stat -c %Y "$T/state.json" 2>/dev/null || stat -f %m "$T/state.json")" ] \
   && pass "doesn't rewrite its state when nothing changed" || fail "doesn't rewrite its state when nothing changed"
 echo edited >"$T/cfg/mcp_servers.a"
 out=$(HERMES_BIN=$T/bin/hermes python3 -B "$sync" config "$T/want.json" "$T/state.json")
@@ -79,7 +79,7 @@ HERMES_BIN=$T/bin/broken python3 -B "$sync" config "$T/want.json" "$T/state2.jso
   && fail "fails when hermes fails" || pass "fails when hermes fails"
 chmod 644 "$T/target"
 python3 -B "$sync" env "$T/rendered" "$T/target" >/dev/null
-perm=$(stat -f %Lp "$T/target" 2>/dev/null || stat -c %a "$T/target")
+perm=$(stat -c %a "$T/target" 2>/dev/null || stat -f %Lp "$T/target")
 [ "$perm" = 600 ] && pass "tightens the mode with nothing to render" || fail "tightens the mode with nothing to render" "$perm"
 rm -rf "$T"
 
