@@ -1,0 +1,2 @@
+# Only the secret lives here; the bridge's other settings are in its plist.
+HURIN_BRIDGE_TOKEN=op://Hermes/Hurin/bridge-token
