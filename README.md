@@ -34,7 +34,7 @@ the role, never off the hostname, which on macOS changes with the network.
 On a Mac, after the steps its guide lists first:
 
 ```sh
-sh -c "$(curl -fsLS get.chezmoi.io)" -- init --apply ctejada10
+sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin" init --apply ctejada10
 ```
 
 It asks for the role, the name and the display name. Without a terminal, as in
