@@ -1,0 +1,32 @@
+# Hermes on the mini. tilde adopts the install and never installs or updates
+# it. To upgrade: run `hermes update` yourself, change version here, apply, then
+# re-check every key in dot_local/share/dotfiles/hermes/config.json.tmpl against
+# the new version's docs.
+hermes:
+  version: "0.22.5"
+  # The one small model. Notify and investigate both use it, so webhook routes
+  # need no model of their own, which Hermes doesn't offer anyway.
+  cronModel: gpt-6-luna
+  cronProvider: openai-codex
+  # Off until the Hermes vault holds the items in .chezmoitemplates/hermes-secrets.op and the service
+  # account token is in the keychain. While off, ~/.hermes/.env is not touched.
+  secrets:
+    enabled: false
+  # Off until Hurin ships its MCP server, signed events and a tagged bridge
+  # release. While off, no Hurin MCP server, webhook route, allowlist entry,
+  # skill or bridge reaches this Mac.
+  hurin:
+    enabled: false
+    host: ""
+    port: 0
+    webhookHost: ""
+    webhookPort: 8644
+    telegramChatId: ""
+    bridge:
+      tag: ""
+      port: 0
+      vaultPath: ""
+      allowedFolders: ""
+      dropFolder: ""
+      messagesDb: ""
+      beeperApiUrl: ""

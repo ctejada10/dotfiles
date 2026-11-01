@@ -45,7 +45,7 @@ load() {
 
 plists=0
 {{- if .isAgent }}
-jobs="worktree-ttl repo-snapshots"
+jobs="worktree-ttl repo-snapshots hermes-logs{{ if .hermes.hurin.enabled }} hurin-bridge{{ end }}"
 {{- else }}
 jobs="personal-backup"
 {{- end }}
@@ -64,6 +64,10 @@ fi
 {{- if .isAgent }}
 load worktree-ttl "worktree cleanup job" "daily at 04:17" "nothing is cleaned"
 load repo-snapshots "snapshot job" "Sundays at 03:47" "no snapshot is taken"
+load hermes-logs "Hermes log rotation" "daily at 04:37" "the gateway's logs keep growing"
+{{- if .hermes.hurin.enabled }}
+load hurin-bridge "Hurin Mac bridge" "always on" "Hurin can't reach this Mac"
+{{- end }}
 {{- else }}
 load personal-backup "personal backup" "Sundays at 03:47" "no backup is made"
 {{- end }}

@@ -756,6 +756,38 @@ hermes config set approvals.mode smart && hermes config set approvals.timeout 60
   vault. Credential files are protected everywhere.
 - **Disabled toolsets** apply to every platform, Telegram included.
 
+### What the apply manages
+
+`run_after_61-hermes.sh` adopts this Hermes on every apply. It never installs or
+updates it, and it stops without touching `~/.hermes` if the version differs
+from `hermes.version` in `home/.chezmoidata/hermes.yaml`. It backs up
+`config.yaml`, `.env` and the skills once, then sets only the keys in
+`home/dot_local/share/dotfiles/hermes/config.json.tmpl` that differ, and
+restarts the gateway only if something changed. Those keys now win over the
+commands above, and `command_allowlist` holds only what tilde puts there, so an
+"Always" you tap in Telegram is removed on the next apply and reported.
+
+Hermes stays on its ChatGPT login with smart approvals. `hermes-health` reports
+the state of everything, and the apply prints the steps still to do by hand.
+The gateway is Hermes's own LaunchAgent, which starts at login, so it needs
+auto-login on and FileVault off; turning FileVault on leaves the mini with no
+network after a reboot until someone unlocks it.
+
+Two switches in `hermes.yaml` are off:
+
+- **`secrets.enabled`:** create the items named in `home/.chezmoitemplates/hermes-secrets.op` in the Hermes
+  vault, make a service account that reads only that vault, then store its
+  token with
+  `security add-generic-password -a "$USER" -s hermes-op-service-account -w`.
+- **`hurin.enabled`:** waits for Hurin's MCP server, signed events and a tagged
+  bridge release. Fill in the rest of that block first, and check the skill and
+  the bridge's provisional setting names against what Hurin ships. Until then
+  no Hurin server, route, allowlist entry, skill or bridge reaches the mini.
+
+To upgrade: run `hermes update`, change the pin, apply, re-check every key
+against the new version's docs, then create a paused canary cron job, run it
+once, check `hermes cron doctor` and delete the canary.
+
 ### Telegram: Bree
 
 1. In the Telegram app, message **@BotFather**, send `/newbot`, and name the

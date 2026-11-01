@@ -1,0 +1,40 @@
+#!/bin/bash
+# Reports whether Hermes on this Mac is as tilde expects. Exits 1 if not.
+set -uo pipefail
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+tailscale=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+bad=0
+ok() { printf '  ok    %s\n' "$1"; }
+no() { printf '  FAIL  %s\n' "$1"; bad=1; }
+check() { local what=$1; shift; if "$@" >/dev/null 2>&1; then ok "$what"; else no "$what"; fi; }
+
+have=$(hermes --version 2>/dev/null | sed -n 's/^Hermes Agent v\([0-9.]*\).*/\1/p')
+[ "$have" = {{ .hermes.version | squote }} ] && ok "Hermes is the pinned $have" || no "Hermes is ${have:-missing}, pinned {{ .hermes.version }}"
+check "the gateway is running" launchctl print "gui/$(id -u)/ai.hermes.gateway"
+gateways=$(pgrep -f 'hermes.* gateway run' | wc -l | tr -d ' ')
+[ "$gateways" -le 2 ] && ok "one gateway service" || no "$gateways gateway processes"
+check "auto-login is on, so the gateway starts after a reboot" defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser
+check "FileVault is off, which auto-login needs" sh -c "fdesetup status | grep -q 'is Off'"
+check "Tailscale is up" "$tailscale" status
+{{- if .hermes.secrets.enabled }}
+OP_SERVICE_ACCOUNT_TOKEN=$(security find-generic-password -a "$USER" -s hermes-op-service-account -w 2>/dev/null)
+export OP_SERVICE_ACCOUNT_TOKEN
+check "op can reach the Hermes vault" op vault get Hermes
+{{- else }}
+echo "  off   secrets: hermes.secrets.enabled is false"
+{{- end }}
+{{- if .hermes.hurin.enabled }}
+mcp=$(hermes mcp list 2>&1)
+grep -q 'hurin_read' <<<"$mcp" && ok "hurin_read is configured" || no "hurin_read is configured"
+grep -q 'hurin_act' <<<"$mcp" && ok "hurin_act is configured" || no "hurin_act is configured"
+check "hurin_read connects" hermes mcp test hurin_read
+check "hurin_act connects" hermes mcp test hurin_act
+hermes mcp test hurin_read 2>&1 | sed 's/^/        /'
+hermes mcp test hurin_act 2>&1 | sed 's/^/        /'
+check "the webhook answers" curl -fsS --max-time 5 "http://{{ .hermes.hurin.webhookHost }}:{{ .hermes.hurin.webhookPort }}/health"
+check "the bridge is loaded" launchctl print "gui/$(id -u)/com.carlosetejada.hurin-bridge"
+check "the bridge answers" curl -fsS --max-time 5 "http://{{ .hermes.hurin.webhookHost }}:{{ .hermes.hurin.bridge.port }}/health"
+{{- else }}
+echo "  off   Hurin MCP, webhook and bridge: hermes.hurin.enabled is false"
+{{- end }}
+exit "$bad"
