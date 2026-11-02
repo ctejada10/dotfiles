@@ -384,6 +384,28 @@ if [ "$(uname)" = Darwin ]; then
     && pass "the mini's ~/src and ~/Repositories aren't links chezmoi makes" || fail "the mini's ~/src and ~/Repositories aren't links chezmoi makes"
 fi
 
+section "the Brewfile on every apply"
+if [ "$(uname)" = Darwin ]; then
+  # An entry the first apply skipped, an App Store app before signing in or a
+  # cask whose download failed, is installed by a later apply, not only after
+  # the Brewfile changes.
+  [ -f "$REPO/home/.chezmoiscripts/run_before_20-packages.sh.tmpl" ] \
+    && [ -z "$(find "$REPO/home/.chezmoiscripts" -name 'run_onchange_*packages*')" ] \
+    && pass "the package script runs on every apply" || fail "the package script runs on every apply"
+  # With every Homebrew entry in and only App Store apps missing, nothing is
+  # reinstalled: the stand-in brew's check passes only without the App Store.
+  sandbox laptop arnor arnor >/dev/null 2>&1
+  script=$(cz execute-template < "$REPO/home/.chezmoiscripts/run_before_20-packages.sh.tmpl" 2>/dev/null)
+  printf '#!/bin/sh\necho "brew $* MAS=${HOMEBREW_TILDE_MAS:-}" >> "%s/brew-called"\n[ "$1 $2" = "bundle check" ] && [ "${HOMEBREW_TILDE_MAS:-}" != 0 ] && exit 1\nexit 0\n' "$SANDBOX" > "$SANDBOX/stub/brew"
+  printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/stub/mas"
+  chmod +x "$SANDBOX/stub/brew" "$SANDBOX/stub/mas"
+  PATH="$SANDBOX/stub:$PATH" bash -c "$script" >/dev/null 2>&1 </dev/null
+  calls=$(cat "$SANDBOX/brew-called" 2>/dev/null)
+  cleanup_sandbox
+  ! grep -q "MAS=0" <<< "$(grep 'bundle install' <<< "$calls")" \
+    && pass "missing App Store apps alone don't reinstall the rest" || fail "missing App Store apps alone don't reinstall the rest" "$calls"
+fi
+
 section "the laptop's Tailscale name"
 if [ "$(uname)" = Darwin ]; then
   sandbox laptop arnor arnor >/dev/null 2>&1
