@@ -777,13 +777,25 @@ The gateway is Hermes's own LaunchAgent, which starts at login, so it needs
 auto-login on and FileVault off; turning FileVault on leaves the mini with no
 network after a reboot until someone unlocks it.
 
-Two switches in `hermes.yaml` are off:
+`hermes.yaml` has two switches:
 
-- **`secrets.enabled`:** create the items named in `home/.chezmoitemplates/hermes-secrets.op` in the Hermes
-  vault, make a service account that reads only that vault, then store its
-  token with
-  `security add-generic-password -a "$USER" -s hermes-op-service-account -w`.
-- **`hurin.enabled`:** waits for Hurin's MCP server, signed events and a tagged
+- **`secrets.enabled`, on:** each apply renders the items named in
+  `home/.chezmoitemplates/hermes-secrets.op` from the Hermes vault into a
+  marked block in `~/.hermes/.env`, leaving its other lines alone. `op` runs
+  only as a service account that reads only that vault; the mini has no
+  personal 1Password sign-in for it. Create the service account on the laptop,
+  then in Terminal at the mini's screen (over VNC is fine) store its token.
+  Don't paste it at `security`'s own `-w` prompt, which cuts input to 128
+  characters and leaves a token `op` can't decode:
+
+  ```sh
+  read -rs 'tok?Service account token: '; echo; echo "${#tok} characters"
+  security add-generic-password -U -a "$USER" -s hermes-op-service-account -w "$tok"; unset tok
+  ```
+
+  The count should be in the 800s. A shell with no access to the login
+  keychain, such as SSH, fails with "User interaction is not allowed".
+- **`hurin.enabled`, off:**** waits for Hurin's MCP server, signed events and a tagged
   bridge release. Fill in the rest of that block first, and check the skill and
   the bridge's provisional setting names against what Hurin ships. Until then
   no Hurin server, route, allowlist entry, skill or bridge reaches the mini.
@@ -797,8 +809,11 @@ once, check `hermes cron doctor` and delete the canary.
 1. In the Telegram app, message **@BotFather**, send `/newbot`, and name the
    bot: display name `Bree`, after the village beside Weathertop where news
    from all over passed through, and a username ending in `bot`. Save the
-   token in 1Password; anyone with it controls the bot.
-2. Message **@userinfobot** for your numeric user ID.
+   token in the Hermes vault as item `Telegram`, field `bot-token`; anyone with
+   it controls the bot.
+2. Message **@userinfobot** for your numeric user ID, and save it in the same
+   item as field `user-id`. Keep both fields out of any named section, so the
+   `op://Hermes/Telegram/...` references resolve.
 3. `hermes gateway setup` → Telegram → **Manual**, paste the token, give your
    user ID as the only allowed user, and use it as the home channel, where
    scheduled jobs deliver. That replaces the old guide's `/sethome`.

@@ -8,10 +8,11 @@ hermes:
   # need no model of their own, which Hermes doesn't offer anyway.
   cronModel: gpt-6-luna
   cronProvider: openai-codex
-  # Off until the Hermes vault holds the items in .chezmoitemplates/hermes-secrets.op and the service
-  # account token is in the keychain. While off, ~/.hermes/.env is not touched.
+  # Renders .chezmoitemplates/hermes-secrets.op from the Hermes vault into a
+  # marked block in ~/.hermes/.env, with the read-only service account token in
+  # the login keychain. While off, ~/.hermes/.env is not touched.
   secrets:
-    enabled: false
+    enabled: true
   # Off until Hurin ships its MCP server, signed events and a tagged bridge
   # release. While off, no Hurin MCP server, webhook route, allowlist entry,
   # skill or bridge reaches this Mac.
