@@ -20,13 +20,31 @@ still the live setup on arnor, and nothing here has been applied to it.
    to show your keys, choose **Use Key Names**: it stores only the items'
    titles, "SSH login key" and "SSH signing key", and its approval prompt then
    names the key it's about to use, so you can tell a login from a commit
-   signature.
-3. Sign in to the App Store, so the Mac App Store apps can install.
+   signature. Keep 1Password open and unlocked from here on. Check that the
+   agent is running:
+
+   ```sh
+   export SSH_AUTH_SOCK=~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agent.sock
+   ssh-add -l
+   ```
+
+   It lists "SSH login key" and "SSH signing key". `Error connecting to agent`
+   means **Use the SSH agent** is off or 1Password is closed.
+3. Put both keys on GitHub, once per key: the apply clones the private
+   `scripts` over SSH, and GitHub refuses a key it doesn't have. Check which
+   are there already by comparing `curl -fsS https://github.com/ctejada10.keys | ssh-keygen -lf -`
+   with `ssh-add -l`; that list holds login keys only. For each one missing,
+   copy it with `ssh-add -L | grep 'SSH login key' | pbcopy` (or
+   `'SSH signing key'`), then on GitHub go to Settings → SSH and GPG keys →
+   New SSH key, title it `arnor`, and choose **Authentication Key** for the
+   login key and **Signing Key** for the signing key. In the same shell,
+   `ssh -T git@github.com` then greets you by name.
+4. Sign in to the App Store, so the Mac App Store apps can install.
 
 ## The one-liner
 
 ```sh
-sh -c "$(curl -fsLS get.chezmoi.io)" -- init --apply ctejada10
+sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin" init --apply ctejada10
 ```
 
 It asks three questions: the role (`laptop`), the name (lowercase letters,
@@ -37,9 +55,10 @@ for the casks that install a package, such as Tailscale. The App Store apps
 install last, and only when you run it at the Mac's own screen with the App
 Store signed in (mas may ask for the password too). Telling whether it is
 signed in needs Full Disk Access, which Terminal doesn't have, so on a new Mac
-the apply says they wait, and
-`brew bundle --file=~/.local/share/chezmoi/Brewfile` installs them once you've
-signed in.
+every apply says they wait until
+`brew bundle --file=~/.local/share/chezmoi/Brewfile` installs them, once you've
+signed in. Any other entry that didn't install, such as a cask whose download
+failed, is tried again by the next apply.
 
 A second `chezmoi apply` changes nothing, `chezmoi diff` is empty and
 `chezmoi verify` exits 0.
@@ -48,9 +67,9 @@ A second `chezmoi apply` changes nothing, `chezmoi diff` is empty and
 
 **Dropbox.** On a wiped Mac, Dropbox is installed during that first apply, so
 anything that lives in Dropbox waits for it: sign in to Dropbox, let it finish,
-then run `chezmoi apply` once more. That second apply writes 1Password's
-`agent.toml` into `config-files`. It also stops once, because `~/.config` is
-still the real folder `init` made; [`~/.config`](#config) says what to do. The
+then run `chezmoi apply` once more. That second apply turns `~/.config` into
+the link into Dropbox ([`~/.config`](#config) says how) and writes 1Password's
+`agent.toml` into `config-files`. The
 repos don't wait for Dropbox: the first apply already cloned them into `~/src`
 from GitHub.
 
@@ -60,12 +79,25 @@ time zone turned on, which no script can do.
 
 **Tailscale.** Open it, allow its system extension and VPN configuration, and
 sign in. After a clean install the laptop is a new machine on the tailnet with
-a new address: update the Tailscale policy as the
+a new address, and the old install still holds the name `arnor`, so Tailscale
+calls the new one `arnor-1`. In the admin console, under Machines, remove the
+old `arnor`, the one shown offline, then run `chezmoi apply`: it renames the
+new one to `arnor`, and says so while the old one is still there. Then update
+the Tailscale policy as the
 [mini's guide](setup-mini.md#the-tailscale-admin-console) says.
 
 **First launches.** The first time you open Ghostty, or any other app the
 Brewfile installed, macOS asks whether to open an app downloaded from the
 internet: open it.
+
+**1Password in each terminal.** On macOS 27, a terminal can't reach the
+1Password app until you allow it, and until then `op` says "No accounts
+configured for use with 1Password CLI" even with the CLI integration on. The
+first time a terminal runs `op`, macOS asks whether it may use data shared by
+1Password: allow it. If that was declined, or never asked, turn it on under
+System Settings → Privacy & Security → Files & Folders → Ghostty, in the entry
+that starts with "Data shared by 1Password", then quit and reopen Ghostty. Each
+terminal needs its own: Terminal for the one-liner, Ghostty after it.
 
 **A name still in use.** A new Mac given the name of one still on the network,
 as a new laptop is while the old arnor is on, can't have it on the network:
@@ -73,8 +105,9 @@ macOS calls it `arnor-2` there (Bonjour, `arnor.local`, and SMB). The apply says
 so and leaves it; once the old one is off or renamed, `chezmoi apply` sets the
 name.
 
-**Checks.** `ssh -T git@github.com` works through 1Password's agent, and a new
-commit shows `G` in `git log --format=%G? -1`.
+**Checks.** `ssh -T git@github.com` and `ssh amon-sul true` work through
+1Password's agent, `~/src/scripts` exists, and a new commit shows `G` in
+`git log --format=%G? -1`.
 
 ## Reaching the mini and the servers
 
@@ -122,11 +155,15 @@ talks, as they were.
 
 Of the repos the mini's agents work in, the laptop clones only `scripts`, and
 only to run it: develop it on the mini, and `git pull` here to update. Set it
-up as its README says (pre-commit, `scripts secrets pull`, then
+up as its README says (pre-commit, `uv run scripts secrets pull`, then
 `uv tool install --editable .`), and point Raycast's script commands at
 `~/src/scripts/interfaces/raycast` and Hazel's rules at
-`~/src/scripts/interfaces/hazel`. Read the other repos on GitHub, or on the
-mini through T3.
+`~/src/scripts/interfaces/hazel`. The bare `scripts` command exists only once
+`uv tool install` has put it in `~/.local/bin`; until then every Raycast
+command fails with `~/.local/bin/scripts: No such file or directory`. The
+pull needs [1Password in the terminal](#after-the-first-apply) allowed first.
+`scripts doctor` then shows `secrets readable  yes`. Read the other repos on
+GitHub, or on the mini through T3.
 
 ### `~/.config`
 
@@ -135,14 +172,15 @@ rclone, Raycast and the rest keep syncing their settings as they always have.
 chezmoi keeps its own config and state there too, in `config-files/chezmoi`.
 The link is made only once Dropbox has brought `config-files` down. Until
 then, and on a wiped laptop, `init` writes a real `~/.config/chezmoi`, and the
-next apply stops rather than replace that folder. Move `~/.config/chezmoi`
-into `config-files`, replacing any `chezmoi` folder an earlier install left
-there (its state would stop setup scripts from running again), then make the
-link yourself, since chezmoi can't find its config until it exists:
-`rmdir ~/.config && ln -s ~/Library/CloudStorage/Dropbox/config-files ~/.config && chezmoi apply`.
-On a wiped laptop the first apply's 1Password check also leaves
-`~/.config/op` holding only op's socket; remove it first (`rm -r ~/.config/op`),
-or `rmdir` refuses. The preflight's message says so. It also stops while
+first apply after Dropbox has synced empties that folder and makes the link
+itself, before anything else. `~/.config/chezmoi` moves into `config-files`,
+and any `chezmoi` folder an earlier install left there goes to the Trash (its
+state would stop setup scripts from running again). A folder `config-files`
+already has, such as `gh` after you logged in to gh, keeps the synced copy,
+and the one from this install goes to the Trash. `op` holding only the socket
+the first apply's 1Password check made is removed, and anything else moves
+into `config-files`. If a move fails, the apply stops and says what's left.
+The preflight also stops the apply while
 `~/src` is still a link into Dropbox from before the repos moved out;
 `unlink ~/src` removes just the link, never what it points to.
 

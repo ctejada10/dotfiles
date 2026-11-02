@@ -1,0 +1,26 @@
+{{- if and .isMac (not .ci) -}}
+#!/bin/bash
+set -eo pipefail
+old="$HOME/bin"
+new="$HOME/.local/bin"
+[ -e "$old" ] || [ -L "$old" ] || exit 0
+if [ -L "$old" ] || [ ! -d "$old" ]; then
+  echo "Cannot migrate $old: expected a real directory." >&2
+  exit 1
+fi
+mkdir -p "$new"
+shopt -s dotglob nullglob
+files=("$old"/*)
+# Check every destination before moving anything.
+for file in "${files[@]}"; do
+  target="$new/${file##*/}"
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    echo "Cannot migrate $file: $target already exists." >&2
+    exit 1
+  fi
+done
+for file in "${files[@]}"; do
+  mv "$file" "$new/"
+done
+rmdir "$old"
+{{- end }}

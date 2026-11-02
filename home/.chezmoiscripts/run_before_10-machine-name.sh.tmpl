@@ -92,11 +92,21 @@ ts=""
 for candidate in tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale; do
   if command -v "$candidate" >/dev/null 2>&1; then ts=$candidate; break; fi
 done
+tailnet_name() {
+  timeout_run 10 "$ts" status --json 2>/dev/null | plutil -extract Self.DNSName raw -o - - 2>/dev/null || true
+}
 if [ -n "$ts" ]; then
-  dns=$(timeout_run 10 "$ts" status --json 2>/dev/null | plutil -extract Self.DNSName raw -o - - 2>/dev/null || true)
+  dns=$(tailnet_name)
   if [ -n "$dns" ] && [ "${dns%%.*}" != "$name" ]; then
     if timeout_run 10 "$ts" set --hostname="$name" 2>/dev/null; then
-      say "set the Tailscale name to $name"
+      # While another machine holds the name, Tailscale accepts it and keeps
+      # a -1 suffix, so the name is read back.
+      dns=$(tailnet_name)
+      if [ "${dns%%.*}" = "$name" ]; then
+        say "set the Tailscale name to $name"
+      else
+        warn "another machine on the tailnet holds $name, so this Mac is still ${dns%%.*}. Remove that machine in Tailscale's admin console, then run chezmoi apply."
+      fi
     else
       warn "couldn't set the Tailscale name; it follows the OS name on its next start"
     fi

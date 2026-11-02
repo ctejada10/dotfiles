@@ -6,8 +6,8 @@
 # ~/.ssh must be a real folder first, so nothing is written through the old
 # link into Dropbox, and so must ~/src, where the repos are cloned. On the
 # laptop ~/.config becomes a link into Dropbox; chezmoi would delete a real
-# folder in its place without asking, so a real one with anything in it stops
-# the apply.
+# folder in its place without asking, so this moves what's in it into Dropbox
+# and makes the link first.
 
 set -uo pipefail
 SCRIPT=preflight
@@ -48,25 +48,51 @@ fi
 {{- if eq .role "laptop" }}
 
 # A real ~/.config where the link into Dropbox's config-files goes, but only
-# once config-files exists: until then the link is held back.
+# once config-files exists: until then the link is held back, and init has
+# written chezmoi's config into a real folder. Its contents move into
+# config-files and the link is made here, before chezmoi would delete the
+# folder. Dropbox is on the same disk, so the moves are renames, and chezmoi's
+# state file, open through this apply, moves with its folder.
+dropbox={{ .dropboxConfig | squote }}
 folder="$HOME/.config"
-if [ -e {{ .dropboxConfig | squote }} ] && [ -d "$folder" ] && [ ! -L "$folder" ] && [ -n "$(ls -A "$folder" 2>/dev/null)" ]; then
-  warn "$folder is a real folder with files in it, and this apply would replace it with a link into Dropbox."
-  warn "move $folder/chezmoi into {{ .dropboxConfig }}, replacing any chezmoi folder already there, then link the folder yourself and apply:"
-  # 1Password's CLI makes its folder the first time it runs, so on a wiped
-  # laptop the apply's own 1Password check leaves one here holding only op's
-  # socket. The real one is in config-files.
-  only_socket=1
-  for entry in "$folder/op"/* "$folder/op"/.[!.]*; do
-    [ -e "$entry" ] || continue
-    [ "${entry##*/}" = op-daemon.sock ] || only_socket=0
+only_socket() {
+  local entry
+  for entry in "$1"/* "$1"/.[!.]*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    [ "${entry##*/}" = op-daemon.sock ] || return 1
   done
-  if [ -d "$folder/op" ] && [ "$only_socket" = 1 ]; then
-    warn "  rm -r $folder/op    (it holds only the socket op made during this setup)"
+}
+# The Trash, not rm: a copy config-files already has may still be wanted.
+# macOS's own trash command, which needs no access to look inside the Trash.
+to_trash() { trash "$1"; }
+if [ -d "$dropbox" ] && [ -d "$folder" ] && [ ! -L "$folder" ]; then
+  failed=0
+  for entry in "$folder"/* "$folder"/.[!.]*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    base=${entry##*/}
+    if [ "$base" = chezmoi ]; then
+      # This install's config and state win over an earlier install's, whose
+      # state would stop setup scripts from running again.
+      { [ ! -e "$dropbox/chezmoi" ] || to_trash "$dropbox/chezmoi"; } && mv "$entry" "$dropbox/" || failed=1
+    elif [ "$base" = op ] && only_socket "$entry"; then
+      # 1Password's CLI makes its folder the first time it runs, so the
+      # apply's own 1Password check leaves one holding only op's socket.
+      rm -r "$entry" || failed=1
+    elif [ -e "$dropbox/$base" ]; then
+      # config-files has the synced copy; this one a tool wrote on this
+      # install, such as gh's after logging in.
+      to_trash "$entry" && say "moved the new $base settings to the Trash; the ones in Dropbox stay" || failed=1
+    else
+      mv "$entry" "$dropbox/" && say "moved the $base settings into Dropbox" || failed=1
+    fi
+  done
+  if [ "$failed" = 0 ] && rmdir "$folder" && ln -s "$dropbox" "$folder"; then
+    say "linked $folder to $dropbox"
+  else
+    warn "couldn't empty $folder into $dropbox (see above), and this apply would replace it with a link."
+    warn "move what's left in it into $dropbox, then: rmdir $folder && ln -s $dropbox $folder && chezmoi apply"
+    status=1
   fi
-  warn "  rmdir $folder && ln -s {{ .dropboxConfig }} $folder && chezmoi apply"
-  warn "rmdir refuses if anything else is still in $folder; move that into {{ .dropboxConfig }} first."
-  status=1
 fi
 {{- end }}
 

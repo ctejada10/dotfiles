@@ -101,6 +101,7 @@ Library/LaunchAgents/com.carlosetejada.repo-snapshots.plist
 .claude/skills/domain-modeling
 .claude/skills/frontend-e2e-evaluator-ops
 .claude/skills/github-actions-hardening
+.claude/skills/go
 .claude/skills/grill-me
 .claude/skills/grill-with-docs
 .claude/skills/grilling
