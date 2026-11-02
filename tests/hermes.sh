@@ -158,10 +158,12 @@ case "\$1 \$2" in
 esac
 EOF
 chmod +x "$F/home/.local/bin/hermes"
-printf '#!/bin/sh\nprintf "TOKEN=s3cret\\n" >"$4"\n' >"$F/stub/op"
+# Like the real op: a template on stdin must come through a pipe, and a
+# heredoc in macOS's bash 3.2 is a file.
+printf '#!/bin/sh\n[ -p /dev/stdin ] || { echo "expected data on stdin but none found" >&2; exit 1; }\nprintf "TOKEN=s3cret\\n" >"$4"\n' >"$F/stub/op"
 printf '#!/bin/sh\necho token\n' >"$F/stub/security"
 printf '#!/bin/sh\nexit 0\n' >"$F/stub/launchctl"
-printf '#!/bin/sh\nprintf " sleep 0\\n disksleep 0\\n womp 1\\n autorestart 1\\n powernap 1\\n"\n' >"$F/stub/pmset"
+printf '#!/bin/sh\nprintf " sleep 0 (sleep prevented by sharingd, powerd)\\n disksleep 0\\n womp 1\\n autorestart 1\\n powernap 1\\n"\n' >"$F/stub/pmset"
 printf '#!/bin/sh\n[ "$1" = -n ] && shift\n[ "$1" = true ] && exit 0\necho "$*" >>"%s/root"\n' "$F" >"$F/stub/sudo"
 chmod +x "$F"/stub/*
 rendered=$F/apply.sh
@@ -193,6 +195,12 @@ apply >/dev/null
 [ "$before" = "$(cd "$F/home/.hermes" && cat .env config.yaml | cksum)" ] && pass "a second run changes nothing" || fail "a second run changes nothing"
 [ "$backups" = "$(ls -d "$state"/backup-* | wc -l)" ] && pass "backs up only once" || fail "backs up only once"
 ls "$state"/render.* >/dev/null 2>&1 && fail "leaves no rendered temp file" || pass "leaves no rendered temp file"
+mv "$F/stub/op" "$F/stub/op.ok"
+printf '#!/bin/sh\necho "op says no" >&2; exit 1\n' >"$F/stub/op"; chmod +x "$F/stub/op"
+before=$(cksum <"$F/home/.hermes/.env")
+out=$(apply)
+grep -q "couldn't render.*op says no" <<<"$out" && pass "shows op's error when it can't render" || fail "shows op's error when it can't render" "$out"
+[ "$before" = "$(cksum <"$F/home/.hermes/.env")" ] && pass "leaves .env alone when op fails" || fail "leaves .env alone when op fails"
 rm -rf "$F"
 cleanup_sandbox
 summary

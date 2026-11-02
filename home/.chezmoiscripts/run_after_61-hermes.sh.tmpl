@@ -42,14 +42,16 @@ fi
 
 {{ if .hermes.secrets.enabled -}}
 # render TARGET: op inject of the template on stdin into a private temporary
-# file, then the marked block in TARGET. Values go through files, never the log.
+# file, then the marked block in TARGET. Values go through files, never the log;
+# op's errors name no values. The cat makes stdin a pipe, which op inject needs:
+# bash 3.2 hands a heredoc over as a file.
 render() {
-  local tmp out
+  local tmp out err
   tmp=$(mktemp "$state/render.XXXXXX") || return 1
-  if timeout_run 60 op inject --force -o "$tmp" >/dev/null 2>&1; then
+  if err=$(cat | timeout_run 60 op inject --force -o "$tmp" 2>&1 >/dev/null); then
     out=$("$sync" env "$tmp" "$1") && [ -z "$out" ] || changed=1
   else
-    warn "op inject couldn't render, so $1 was left as it was"
+    warn "op inject couldn't render, so $1 was left as it was: ${err:-no error message}"
   fi
   rm -f "$tmp"
 }
@@ -107,7 +109,8 @@ fi
 power=$(pmset -g 2>/dev/null)
 for pair in sleep=0 disksleep=0 womp=1 autorestart=1 powernap=0; do
   key=${pair%=*} value=${pair#*=}
-  if ! grep -Eq "^ *$key +$value\$" <<<"$power"; then
+  # pmset can append a note, as in "sleep 0 (sleep prevented by powerd)".
+  if ! grep -Eq "^ *$key +$value( |\$)" <<<"$power"; then
     if can_root; then
       as_root pmset -a "$key" "$value" && say "set pmset $key to $value"
     else
