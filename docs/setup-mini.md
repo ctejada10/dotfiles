@@ -1043,9 +1043,13 @@ refuses a commit or PR that credits an AI.
 A draft PR's body lists the work, one line per change, plus the `STOP:` text
 when a run stopped and a line for each gate that failed or was skipped. In a
 repo whose default branch's ruleset has Copilot's review, which is scripts for
-now, Copilot reviews the draft when it opens and on every push. The agent
-waits for each review, fixes what holds up and pushes, then replies in each
-thread and resolves it, for at most three rounds.
+now, credits are limited, so each PR gets one Copilot review, as the last check
+on a PR already believed clean. Before opening the PR the agent passes every
+gate, runs CI's checks locally and gets adversarial reviews on two model
+families. After Copilot's review it puts every finding that holds up in one
+change, gets that change reviewed by a different model family, pushes once,
+then replies in each thread and resolves it. A repo reviews every push until
+`review_on_push` is off in its ruleset.
 
 Any other repo and this dotfiles source change only for a task you typed, and
 never in place: `~/.local/share/chezmoi` is the mini's live config. An agent
