@@ -123,6 +123,23 @@ done
 plist=$(cz --override-data "$ON" execute-template <"$REPO/home/private_Library/LaunchAgents/com.carlosetejada.hurin-bridge.plist.tmpl")
 plutil -lint - <<<"$plist" >/dev/null && pass "the bridge plist is valid" || fail "the bridge plist is valid"
 
+section "hermes-health counts gateways"
+H=$(mktemp -d "${TMPDIR:-/tmp}/hermes-health.XXXXXX")
+mkdir -p "$H/.local/bin"
+cz execute-template <"$REPO/home/dot_local/bin/executable_hermes-health.tmpl" >"$H/health"
+printf '#!/bin/bash\necho "Hermes Agent v0.22.5"\n' >"$H/.local/bin/hermes"
+printf '#!/bin/bash\ncut -d" " -f1 "%s/procs"\n' "$H" >"$H/.local/bin/pgrep"
+printf '#!/bin/bash\nawk -v p="$4" '"'"'$1==p {print $2}'"'"' "%s/procs"\n' "$H" >"$H/.local/bin/ps"
+chmod +x "$H/.local/bin/"*
+# launchd starts a wrapper, which starts Hermes's launcher, which starts the gateway.
+printf '10 1\n11 10\n12 11\n' >"$H/procs"
+out=$(HOME=$H bash "$H/health" 2>&1)
+grep -q 'ok    one gateway service' <<<"$out" && pass "a wrapper chain is one gateway" || fail "a wrapper chain is one gateway" "$out"
+printf '10 1\n11 10\n12 11\n20 1\n21 20\n' >"$H/procs"
+out=$(HOME=$H bash "$H/health" 2>&1)
+grep -q 'FAIL  2 gateway services' <<<"$out" && pass "two chains are two gateways" || fail "two chains are two gateways" "$out"
+rm -rf "$H"
+
 section "the apply script"
 F=$(mktemp -d "${TMPDIR:-/tmp}/hermes-apply.XXXXXX")
 mkdir -p "$F/home/.hermes/skills/x" "$F/home/.local/bin" "$F/home/.local/share/dotfiles/hermes" "$F/stub" "$F/cfg"

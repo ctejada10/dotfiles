@@ -11,8 +11,14 @@ check() { local what=$1; shift; if "$@" >/dev/null 2>&1; then ok "$what"; else n
 have=$(hermes --version 2>/dev/null | sed -n 's/^Hermes Agent v\([0-9.]*\).*/\1/p')
 [ "$have" = {{ .hermes.version | squote }} ] && ok "Hermes is the pinned $have" || no "Hermes is ${have:-missing}, pinned {{ .hermes.version }}"
 check "the gateway is running" launchctl print "gui/$(id -u)/ai.hermes.gateway"
-gateways=$(pgrep -f 'hermes.* gateway run' | wc -l | tr -d ' ')
-[ "$gateways" -le 2 ] && ok "one gateway service" || no "$gateways gateway processes"
+# One gateway runs as a chain of matching processes (wrapper, launcher, gateway),
+# so count only those whose parent isn't also a match.
+pids=$(pgrep -f 'hermes.* gateway run')
+gateways=0
+for p in $pids; do
+  grep -qx "$(ps -o ppid= -p "$p" | tr -d ' ')" <<<"$pids" || gateways=$((gateways + 1))
+done
+[ "$gateways" -eq 1 ] && ok "one gateway service" || no "$gateways gateway services"
 check "auto-login is on, so the gateway starts after a reboot" defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser
 check "FileVault is off, which auto-login needs" sh -c "fdesetup status | grep -q 'is Off'"
 check "Tailscale is up" "$tailscale" status
