@@ -1,0 +1,42 @@
+{{- if and .isAgent .hermes.hurin.enabled -}}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.carlosetejada.hurin-bridge</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>set -a; . "$HOME/.local/state/dotfiles/hermes/bridge.env"; exec "$HOME/.local/bin/hurin-bridge" serve --host {{ .hermes.hurin.webhookHost }}</string>
+	</array>
+	<!-- Provisional names: match them to the bridge's release before enabling. -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HURIN_BRIDGE_PORT</key>
+		<string>{{ .hermes.hurin.bridge.port }}</string>
+		<key>HURIN_BRIDGE_VAULT_PATH</key>
+		<string>{{ .hermes.hurin.bridge.vaultPath }}</string>
+		<key>HURIN_BRIDGE_ALLOWED_FOLDERS</key>
+		<string>{{ .hermes.hurin.bridge.allowedFolders }}</string>
+		<key>HURIN_BRIDGE_DROP_FOLDER</key>
+		<string>{{ .hermes.hurin.bridge.dropFolder }}</string>
+		<key>HURIN_BRIDGE_MESSAGES_DB</key>
+		<string>{{ .hermes.hurin.bridge.messagesDb }}</string>
+		<key>HURIN_BRIDGE_BEEPER_API_URL</key>
+		<string>{{ .hermes.hurin.bridge.beeperApiUrl }}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>StandardOutPath</key>
+	<string>{{ .chezmoi.homeDir }}/Library/Logs/hurin-bridge.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{ .chezmoi.homeDir }}/Library/Logs/hurin-bridge.log</string>
+</dict>
+</plist>
+{{ end -}}

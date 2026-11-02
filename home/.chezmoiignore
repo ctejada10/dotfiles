@@ -93,6 +93,11 @@ Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 .claude/hooks/agent-gate.sh
 .local/bin/worktree-ttl
 .local/bin/repo-snapshots
+.local/bin/hermes-config-sync
+.local/bin/hermes-health
+.local/bin/hermes-rotate-logs
+.local/share/dotfiles/hermes
+Library/LaunchAgents/com.carlosetejada.hermes-logs.plist
 Library/LaunchAgents/com.carlosetejada.worktree-ttl.plist
 Library/LaunchAgents/com.carlosetejada.repo-snapshots.plist
 .claude/attended.md
@@ -116,6 +121,10 @@ Library/LaunchAgents/com.carlosetejada.repo-snapshots.plist
 .local/share/georgeskills
 .local/share/openscad
 .local/share/openscad-skill
+{{- end }}
+
+{{ if not (and .isAgent .hermes.hurin.enabled) -}}
+Library/LaunchAgents/com.carlosetejada.hurin-bridge.plist
 {{- end }}
 
 {{ if ne .role "laptop" -}}

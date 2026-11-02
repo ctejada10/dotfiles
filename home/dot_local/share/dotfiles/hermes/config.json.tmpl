@@ -1,0 +1,52 @@
+{{- $h := .hermes -}}
+{{- $desired := dict
+  "approvals.mode" "smart"
+  "approvals.cron_mode" "deny"
+  "approvals.deny" (list
+    "*gmail send*" "*gmail reply*" "*gmail modify*" "*messages send*"
+    "*drafts send*" "*calendar delete*" "*.obsidian*" "git push --force*"
+    "*rm -rf*" "*rm -fr*" "*rm -r *" "*rm --recursive*"
+    "*git push*" "*curl *" "*wget *"
+    "*.hermes/hermes-agent*" "*launchctl*")
+  "terminal.backend" "local"
+  "skills.write_approval" true
+  "memory.write_approval" true
+  "web.keyless_fallback" false
+  "web.keyless_rescue" false
+  "cron.model" $h.cronModel
+  "cron.model_provider" $h.cronProvider
+-}}
+{{- if $h.hurin.enabled -}}
+{{-   $base := printf "http://%s:%v/mcp" $h.hurin.host $h.hurin.port -}}
+{{-   $route := dict
+        "secret" "${HURIN_WEBHOOK_SECRET}"
+        "skills" (list "hurin-events")
+        "prompt" "{__raw__}"
+        "deliver" "telegram"
+        "deliver_extra" (dict "chat_id" $h.hurin.telegramChatId)
+        "mirror_to_session" true
+-}}
+{{-   $_ := set $desired "command_allowlist" (list
+        "mcp:hurin_act/event_reply"
+        "mcp:hurin_act/commitment_record"
+        "mcp:hurin_act/roll_loaded"
+        "mcp:hurin_act/roll_finished"
+        "mcp:hurin_act/github_issue_open_or_comment") -}}
+{{-   $_ := set $desired "mcp_servers.hurin_read" (dict
+        "url" (printf "%s/read" $base)
+        "headers" (dict "Authorization" "Bearer ${HURIN_MCP_READ_TOKEN}")
+        "trust" "full") -}}
+{{-   $_ := set $desired "mcp_servers.hurin_act" (dict
+        "url" (printf "%s/act" $base)
+        "headers" (dict "Authorization" "Bearer ${HURIN_MCP_ACT_TOKEN}")
+        "trust" "untrusted") -}}
+{{-   $_ := set $desired "platforms.webhook" (dict
+        "enabled" true
+        "extra" (dict
+          "host" $h.hurin.webhookHost
+          "port" $h.hurin.webhookPort
+          "routes" (dict "hurin" $route))) -}}
+{{- else -}}
+{{-   $_ := set $desired "command_allowlist" (list) -}}
+{{- end -}}
+{{ toPrettyJson $desired }}

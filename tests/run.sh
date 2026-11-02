@@ -26,6 +26,7 @@ run tests/agent-gate.sh
 run tests/worktree.sh
 run tests/worktree-ttl.sh
 run tests/repo-snapshots.sh
+run tests/hermes.sh
 run tests/personal-backup.sh
 run tests/ansible.sh
 run tests/apply-twice.sh

@@ -1,0 +1,13 @@
+#!/bin/bash
+# Launchd holds the gateway's logs open and Hermes doesn't rotate them, so past
+# 10 MB each is copied aside and emptied in place. Three old copies are kept.
+set -uo pipefail
+for log in "$HOME"/.hermes/logs/gateway.log "$HOME"/.hermes/logs/gateway.error.log; do
+  [ -f "$log" ] || continue
+  [ "$(stat -f %z "$log")" -gt 10485760 ] || continue
+  rm -f "$log.3.gz"
+  [ -f "$log.2.gz" ] && mv "$log.2.gz" "$log.3.gz"
+  [ -f "$log.1.gz" ] && mv "$log.1.gz" "$log.2.gz"
+  gzip -c "$log" >"$log.1.gz" && : >"$log"
+done
+exit 0
