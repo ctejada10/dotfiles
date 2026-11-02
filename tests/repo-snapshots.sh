@@ -102,7 +102,7 @@ echo keep >"$DBX/repositories/old/file"
 
 # The exact attention lines, less the path each starts with.
 KICK="macOS hasn't let the job into Dropbox's folder (Operation not permitted), so the run stopped; give /bin/bash Full Disk Access in System Settings > Privacy & Security, then run launchctl kickstart gui/\$(id -u)/com.carlosetejada.repo-snapshots"
-NOBACKUPS="not there, so no repo was snapshotted; tick it in Dropbox's Preferences > Sync, under Select folders to sync to this Mac, rather than making it by hand, which would give a conflicting copy"
+NOBACKUPS="not there, so no repo was snapshotted; in Dropbox's Preferences > Sync, under Select folders to sync to this Mac, open it and tick only repositories inside it, rather than making it by hand, which would give a conflicting copy"
 
 commit() { (cd "$1" && echo "$2" >>"f-$2.txt" && git add "f-$2.txt" && git commit -q -m "$2"); }
 
