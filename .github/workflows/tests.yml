@@ -135,9 +135,10 @@ jobs:
 
       # Homebrew's current chezmoi, as on the Macs; .chezmoiversion sets the
       # oldest one the source accepts. The shell baseline was recorded with
-      # fzf, eza and bat installed.
-      - name: Install chezmoi, shellcheck and the shell's tools
-        run: brew install chezmoi shellcheck fzf eza bat
+      # fzf, eza and bat installed. tests/personal-backup.sh needs age and
+      # age-keygen.
+      - name: Install chezmoi, shellcheck, age and the shell's tools
+        run: brew install chezmoi shellcheck age fzf eza bat
 
       # Galaxy now and then resets the connection, so three tries. A failed
       # try's collections go, or the next would skip a missing dependency.
