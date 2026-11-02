@@ -38,7 +38,7 @@ Stop only for one of these.
 
 To stop:
 
-1. Commit and push the reversible work done so far, and open or update the draft PR. With no commits yet, skip the PR. Never make an empty or placeholder commit.
+1. Commit and push the reversible work done so far, and open or update the draft PR. With no commits yet, skip the PR. In a repo with Copilot's review, skip it until that section allows one, and a stop may still commit on red. Never make an empty or placeholder commit.
 2. Write `STOP:` and the blocker on one line, then up to four numbered questions under it, each with the default you would take. For a remote host, give the one complete command for Carlos to run. When there is a PR, put this at the top of its body.
 3. Raise the same text. Claude Code raises it as its section below says. Codex never calls `request_user_input`: it puts the text first in its final message and ends the turn.
 
@@ -90,7 +90,7 @@ Carlos answers a Claude Code question in T3, and the run continues from that ans
 ## Done means
 
 - Run the repo's own gates, from its AGENTS.md, CLAUDE.md, Makefile or CI config: targeted tests first, then the full suite, lint and type-check.
-- Every branch ends with the full suite, a push and a draft PR, even when a gate fails; put the failing output in the PR body. A delegated child returns to its parent instead.
+- Every branch ends with the full suite, a push and a draft PR, even when a gate fails; put the failing output in the PR body. In a repo with Copilot's review, its section decides when the PR opens. A delegated child returns to its parent instead.
 - Python repos have nothing on PATH. Run everything through `uv run`.
 - hurin, rivendell and media-organizer weld coverage into addopts, so a subset run needs `--no-cov` (`uv run pytest --no-cov tests/test_x.py`) or it fails with every test passing. In those three, run the full `make test` before pushing.
 - For a feature or behavior change in a repo with tests, write the test first.
@@ -106,18 +106,19 @@ Write it for a reviewer who was not in the thread, after Google's guide to chang
 
 No other headings or parts: no decisions, rulings, verification narrative or notes. Anything else for Carlos goes in your final message.
 
-Just before you push for the PR, write `rules: mini 2026-10-31b` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
+Just before you push for the PR, write `rules: mini 2026-10-31c` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
 
 Base every claim on a tool result from this run.
 
 ## Copilot's review
 
-Where `gh api repos/{owner}/{repo}/rules/branches/<default> --jq '.[].type'` lists `copilot_code_review`, Copilot reviews the draft PR when it opens and on every push. Answering it is part of the PR and needs no request from Carlos. After you open the PR and after each push:
+Where `gh api repos/{owner}/{repo}/rules/branches/<default> --jq '.[].type'` lists `copilot_code_review`, Copilot reviews the draft PR when it opens. Credits are limited, so each PR gets one review. Set `review_on_push` to false in the repo's rulesets when a task names them. Otherwise say in your final message that the repo still reviews every push.
 
-1. Wait up to 10 minutes for Copilot's review of your HEAD: in `gh api repos/{owner}/{repo}/pulls/<n>/reviews`, one by a login containing `copilot` whose `commit_id` is your HEAD. If none comes, carry on.
-2. Read the unresolved threads it started, from the GraphQL `reviewThreads` field. Fix each comment that holds up and stays within the task, run the gates, and push.
-3. Reply one line in each thread, `Fixed in <short sha>.` or why not, with `gh api repos/{owner}/{repo}/pulls/<n>/comments/<id>/replies`, where `<id>` is its first comment's `databaseId`. Then resolve it with the `resolveReviewThread` mutation.
-4. After three rounds, or once a review raises nothing new, wait no longer.
+That one review is the last check on a PR already believed clean, never a way to find issues. No later review catches a bad fix, so fixes are held to the same bar.
+
+Before a PR opens: (1) Finish the work, and pass every gate, reading each real exit code. Never commit on red, and never run a gate behind a pipe that hides its exit code. (2) Run an adversarial review on at least two model families, picking the best model per PR, and fix what they find. A review is a development step and never a PR comment. (3) Every fix gets a fresh reviewer, your own small fixes included. Review anything that could be problematic before you commit it. (4) Run everything CI runs locally, on Linux where it matters, because CI starts only once a PR exists. (5) Open the PR only when the latest review of the final head raises nothing at warning or above. Open a stacked PR only after its parent merges, and open no PR while Copilot's quota is out, because a skipped review does not come back.
+
+After you open the PR: (1) Wait up to 10 minutes for Copilot's review of your HEAD: in `gh api repos/{owner}/{repo}/pulls/<n>/reviews`, one by a login containing `copilot` whose `commit_id` is your HEAD. If none comes, carry on. (2) Read the unresolved threads it started, from the GraphQL `reviewThreads` field, and its review summary. Check each finding against the code, and dismiss a wrong one with a concrete reason. (3) Fix the root cause of each one that holds up and stays within the task, sweep the PR for the same mistake, and write the failing test first. (4) Put every finding in one change, not one push per finding. Run the gates and the local CI on that change. (5) Get a fresh adversarial review of the fix diff from a different model family, and fix what it finds. Then push once. (6) Reply one line in each thread, `Fixed in <short sha>.` or why not, with `gh api repos/{owner}/{repo}/pulls/<n>/comments/<id>/replies`, where `<id>` is its first comment's `databaseId`. Then resolve it with the `resolveReviewThread` mutation. (7) If the quota is out and Copilot skips a review, say so in the PR body and your final message, and do not look for another route.
 
 ## Prose people read
 
