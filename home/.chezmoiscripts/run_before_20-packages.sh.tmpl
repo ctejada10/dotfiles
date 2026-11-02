@@ -1,9 +1,8 @@
 {{- if and .isMac (not .ci) -}}
 #!/bin/bash
-# Installs this role's part of the shared Brewfile. Re-runs when it changes:
-#   Brewfile sha256 {{ include (joinPath .chezmoi.workingTree "Brewfile") | sha256sum }}
-# A failed entry (an App Store app before signing in, a network error) is
-# reported and the apply carries on; `brew bundle` by hand picks it up.
+# Installs this role's part of the shared Brewfile. Runs on every apply, so
+# an entry that didn't install (an App Store app before signing in, a network
+# error) is tried again by the next one; with nothing missing it only checks.
 
 set -uo pipefail
 SCRIPT=packages
@@ -25,16 +24,14 @@ export HOMEBREW_TILDE_ROLE={{ .role | squote }}
 export HOMEBREW_NO_AUTO_UPDATE=1
 brewfile={{ joinPath .chezmoi.workingTree "Brewfile" | squote }}
 
-if brew bundle check --no-upgrade --file="$brewfile" >/dev/null 2>&1; then
-  exit 0
-fi
-
 # Everything but the App Store apps first. Signed out of the App Store, mas
 # opens the sign-in sheet on this Mac's screen and waits on it for good, app
 # after app, so it runs only once the App Store is signed in and someone is
-# at the screen.
-if ! HOMEBREW_TILDE_MAS=0 brew bundle install --no-upgrade --file="$brewfile"; then
-  warn "some entries didn't install. Fix what's above, then run: brew bundle --file=$brewfile"
+# at the screen. The App Store apps are counted on their own below, so one
+# still missing doesn't reinstall the rest on every apply.
+if ! HOMEBREW_TILDE_MAS=0 brew bundle check --no-upgrade --file="$brewfile" >/dev/null 2>&1 \
+  && ! HOMEBREW_TILDE_MAS=0 brew bundle install --no-upgrade --file="$brewfile"; then
+  warn "some entries didn't install; the next apply tries again. Fix what's above, or run: brew bundle --file=$brewfile"
 fi
 {{- if eq .role "laptop" }}
 

@@ -55,9 +55,10 @@ for the casks that install a package, such as Tailscale. The App Store apps
 install last, and only when you run it at the Mac's own screen with the App
 Store signed in (mas may ask for the password too). Telling whether it is
 signed in needs Full Disk Access, which Terminal doesn't have, so on a new Mac
-the apply says they wait, and
-`brew bundle --file=~/.local/share/chezmoi/Brewfile` installs them once you've
-signed in.
+every apply says they wait until
+`brew bundle --file=~/.local/share/chezmoi/Brewfile` installs them, once you've
+signed in. Any other entry that didn't install, such as a cask whose download
+failed, is tried again by the next apply.
 
 A second `chezmoi apply` changes nothing, `chezmoi diff` is empty and
 `chezmoi verify` exits 0.
