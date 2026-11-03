@@ -1,4 +1,4 @@
-# dor-lomin: the VPS that runs Húrin. Its address, SSH port and user are in
+# dor-lomin: the VPS that runs Morwen. Its address, SSH port and user are in
 # home/.chezmoidata/hosts.yaml.
 
 # Open to the internet besides SSH. The scan after each run fails when what
@@ -12,37 +12,32 @@ lan_ports: []
 ufw_remove: []
 
 docker: true
-# Publish to 127.0.0.1 unless a compose file names an address. Off until
-# Húrin's compose file publishes 80 and 443 as 0.0.0.0:80 and 0.0.0.0:443,
-# or Caddy stops answering.
-docker_loopback_default: false
+# Publish to 127.0.0.1 unless a compose file names an address. Morwen's
+# compose file publishes Caddy's 80 and 443 as 0.0.0.0:80 and 0.0.0.0:443.
+docker_loopback_default: true
 tailscale: false
 samba: false
 
 # Unattended upgrades reboot for a new kernel at this time, server time.
 reboot_time: "04:00"
-# Off until Hurin's compose file restarts its containers on its own (restart:
-# unless-stopped): today they have restart: no, so a reboot would leave Hurin
-# down until the next deploy.
-automatic_reboot: false
+# Morwen's containers have restart: always, so they come back after a reboot.
+automatic_reboot: true
 # Password login goes off here.
 password_login: false
 # The checkout the deploy gate deploys, and the branch a commit must be on.
-deploy_repo: /home/deploy/hurin
+deploy_repo: /home/deploy/morwen
 deploy_branch: main
 # The repo deploy fetches, which the run clones there once GitHub takes the
-# read key it prints, and the folders Hurin's containers write in the
-# checkout: the web and scheduler run as uid 1001, Caddy as uid 1000.
-deploy_github_repo: ctejada10/hurin
+# read key it prints. Morwen's containers write only in named volumes, so no
+# folder in the checkout needs another owner.
+deploy_github_repo: ctejada10/morwen
 deploy_submodule_repos: []
-deploy_owned_dirs:
-  - { path: logs, owner: 1001, group: 1001 }
-  - { path: docker/services/caddy/data, owner: 1000, group: 1000 }
+deploy_owned_dirs: []
 # The public half of the key GitHub Actions deploys with, which can only ask
 # the gate for a deploy. Empty until that key is made, in 1Password as
-# "hurin deploy key" (README, "The deploy key").
+# "morwen deploy key" (docs/setup-servers.md, "Moving a repo's deploy to the
+# gate").
 deploy_public_key: ""
-# Public halves of keys to take out of deploy's authorized_keys. Once the
-# workflow deploys with the key above, today's unrestricted one
-# (github-actions-deploy) goes here.
+# Public halves of keys to take out of deploy's authorized_keys. A fresh
+# install has no other key there.
 deploy_retired_keys: []
