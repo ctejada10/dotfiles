@@ -122,9 +122,11 @@
        the mini has none: what its rules forbid is denied instead, and the
        rest runs. hooks/guard-git.py blocks the Git forms a prefix misses.
        gc, repack, prune and maintenance aren't here: they are fine in the
-       clones in ~/src, and guard-git.py refuses them in Dropbox. */ -}}
+       clones in ~/src, and guard-git.py refuses them in Dropbox. JXA through
+       osascript runs; plain AppleScript asks. */ -}}
 {{- if .isAgent -}}
-{{-   $ask = list -}}
+{{-   $allow = append $allow "Bash(osascript -l JavaScript:*)" -}}
+{{-   $ask = list "Bash(osascript -e:*)" -}}
 {{-   $deny = concat $deny (list
         "Bash(git filter-branch:*)" "Bash(git stash:*)"
         "Bash(git commit --no-verify:*)" "Bash(git push --no-verify:*)"
@@ -136,7 +138,7 @@
         "Bash(gh repo deploy-key:*)"
         "Bash(gh release create:*)" "Bash(gh release delete:*)" "Bash(gh release edit:*)"
         "Bash(gh release upload:*)" "Bash(gh release delete-asset:*)"
-        "Bash(ssh:*)" "Bash(scp:*)" "Bash(rsync:*)" "Bash(osascript:*)"
+        "Bash(ssh:*)" "Bash(scp:*)" "Bash(rsync:*)"
         "Bash(brew install:*)" "Bash(uv tool install:*)"
         "Bash(chezmoi apply:*)" "Bash(chezmoi update:*)" "Bash(chezmoi init:*)"
         "Bash(chezmoi destroy:*)" "Bash(chezmoi purge:*)"
