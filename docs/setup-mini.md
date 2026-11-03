@@ -1092,15 +1092,14 @@ Claude Code's `hooks/guard-git.py` blocks the ordinary forms of each, and
 refuses a commit or PR that credits an AI.
 
 A draft PR's body lists the work, one line per change, plus the `STOP:` text
-when a run stopped and a line for each gate that failed or was skipped. In a
-repo whose default branch's ruleset has Copilot's review, which is scripts for
-now, credits are limited, so each PR gets one Copilot review, as the last check
-on a PR already believed clean. Before opening the PR the agent passes every
-gate, runs CI's checks locally and gets adversarial reviews on two model
-families. After Copilot's review it puts every finding that holds up in one
-change, gets that change reviewed by a different model family, pushes once,
-then replies in each thread and resolves it. A repo reviews every push until
-`review_on_push` is off in its ruleset.
+when a run stopped and a line for each gate that failed or was skipped. No
+repo has automatic Copilot review: each review costs about 270 AI credits, and
+five reviews of morwen PRs used 1,364 of the 1,500 monthly credits in two days.
+You request Copilot's review by hand on the PRs you choose, after you've seen
+them; agents never request or trigger one, or turn it on in a ruleset. When you
+have requested one, the agent checks each finding, puts every one that holds up
+in one change, runs the gates, pushes once, then replies in each thread and
+resolves it.
 
 Any other repo and this dotfiles source change only for a task you typed, and
 never in place: `~/.local/share/chezmoi` is the mini's live config. An agent
