@@ -66,6 +66,32 @@ defaults_set com.apple.finder WarnOnEmptyTrash bool false
 defaults_set com.apple.desktopservices DSDontWriteNetworkStores bool true
 defaults_set com.apple.desktopservices DSDontWriteUSBStores bool true
 
+# Finder's view settings: the default view, each view's options, and the
+# Desktop, Computer and Trash windows. They are nested, which defaults_set
+# can't write, so defaults-merge.py writes just these values and leaves the
+# rest of Finder's settings alone. It prints nothing when they're all there.
+merge_py=$(cat <<'PY'
+{{ template "defaults-merge.py" . }}
+PY
+)
+finder_view=$(cat <<'FINDER_VIEW'
+{{ template "finder-view.plist" . }}
+FINDER_VIEW
+)
+if ! finder_now=$(defaults export com.apple.finder -) \
+   || ! finder_new=$(printf '%s' "$finder_now" | /usr/bin/python3 -I -c "$merge_py" "$finder_view"); then
+  warn "FAILED to read and merge Finder's view settings"; FAILED=$((FAILED + 1))
+elif [ -z "$finder_new" ]; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would set Finder's view settings"; CHANGED=$((CHANGED + 1))
+elif printf '%s' "$finder_new" | defaults import com.apple.finder -; then
+  say "set Finder's view settings"; CHANGED=$((CHANGED + 1))
+  TOUCHED_DOMAINS="${TOUCHED_DOMAINS}com.apple.finder "
+else
+  warn "FAILED to set Finder's view settings"; FAILED=$((FAILED + 1))
+fi
+
 for dir in Music Pictures Public Movies Applications Databases; do
   path="$HOME/$dir"
   [ -e "$path" ] || continue
