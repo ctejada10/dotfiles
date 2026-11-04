@@ -92,6 +92,26 @@ defaults_set com.apple.dock mru-spaces bool false
 defaults_set com.apple.dock showhidden bool true
 defaults_set com.apple.dock show-recents bool true
 
+# The Dock's apps in four groups: browser, messages, terminals, notes and
+# plans. dock.py prints the arranged Dock, or nothing when it's in order.
+dock_py=$(cat <<'PY'
+{{ template "dock.py" . }}
+PY
+)
+if ! dock_now=$(defaults export com.apple.dock -) \
+   || ! dock_new=$(printf '%s' "$dock_now" | /usr/bin/python3 -I -c "$dock_py"); then
+  warn "FAILED to read and arrange the Dock's apps"; FAILED=$((FAILED + 1))
+elif [ -z "$dock_new" ]; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would arrange the Dock's apps"; CHANGED=$((CHANGED + 1))
+elif printf '%s' "$dock_new" | defaults import com.apple.dock -; then
+  say "arranged the Dock's apps"; CHANGED=$((CHANGED + 1))
+  TOUCHED_DOMAINS="${TOUCHED_DOMAINS}com.apple.dock "
+else
+  warn "FAILED to arrange the Dock's apps"; FAILED=$((FAILED + 1))
+fi
+
 ###############################################################################
 # Apps                                                                        #
 ###############################################################################
