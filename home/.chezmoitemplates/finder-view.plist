@@ -401,13 +401,13 @@
 	<key>FXArrangeGroupViewBy</key>
 	<string>Name</string>
 	<key>FXPreferredViewStyle</key>
-	<string>clmv</string>
+	<string>Nlsv</string>
 	<key>ShowExternalHardDrivesOnDesktop</key>
 	<false/>
 	<key>ShowHardDrivesOnDesktop</key>
 	<true/>
 	<key>ShowMountedServersOnDesktop</key>
-	<true/>
+	<false/>
 	<key>ShowRemovableMediaOnDesktop</key>
 	<true/>
 	<key>ShowSidebar</key>
