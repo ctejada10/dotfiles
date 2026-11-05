@@ -95,6 +95,49 @@ else
   warn "FAILED to set Finder's view settings"; FAILED=$((FAILED + 1))
 fi
 
+# The sidebar's Favorites, in this order. A folder this Mac doesn't have is
+# left out.
+sidebar_py=$(cat <<'PY'
+{{ template "sidebar.py" . }}
+PY
+)
+favorites=(/Applications "$HOME" "$HOME/Desktop" "$HOME/Documents" "$HOME/Downloads" "$HOME/Library/CloudStorage/Dropbox")
+if ! sidebar_diff=$(/usr/bin/python3 -I -c "$sidebar_py" check "${favorites[@]}"); then
+  warn "FAILED to read the sidebar's Favorites"; FAILED=$((FAILED + 1))
+elif [ -z "$sidebar_diff" ]; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would set $sidebar_diff"; CHANGED=$((CHANGED + 1))
+elif /usr/bin/python3 -I -c "$sidebar_py" set "${favorites[@]}" >/dev/null; then
+  say "set $sidebar_diff"; CHANGED=$((CHANGED + 1))
+else
+  warn "FAILED to set the sidebar's Favorites"; FAILED=$((FAILED + 1))
+fi
+{{- if eq .role "laptop" }}
+
+# The home folder opens in icon view. A folder's own view is a record in its
+# .DS_Store, which only Finder writes, so Finder is asked over Apple events;
+# the first time, macOS asks whether the terminal may control Finder. That
+# can't be answered on the mini, so this is the laptop's alone. The check
+# reads the record itself and never asks Finder.
+home_view=$(/usr/bin/python3 -I -c 'import re, sys
+try: m = re.search(rb"\x00\x00\x00\x01\x00\.vstltype(....)", open(sys.argv[1], "rb").read())
+except OSError: m = None
+print(m.group(1).decode() if m else "")' "$HOME/.DS_Store")
+if [ "$home_view" = icnv ]; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would open the home folder in icon view (now: ${home_view:-the default view})"; CHANGED=$((CHANGED + 1))
+elif timeout_run 30 osascript -e 'tell application "Finder" to set current view of container window of home to icon view' >/dev/null 2>&1; then
+  say "set the home folder to open in icon view"; CHANGED=$((CHANGED + 1))
+  # Finder writes .DS_Store when it quits, so it's restarted.
+  TOUCHED_DOMAINS="${TOUCHED_DOMAINS}com.apple.finder "
+else
+  warn "couldn't set the home folder's icon view: Finder didn't answer, or this terminal may not control it (System Settings > Privacy & Security > Automation). The next apply tries again."
+  SKIPPED=$((SKIPPED + 1))
+fi
+{{- end }}
+
 for dir in Music Pictures Public Movies Applications Databases; do
   path="$HOME/$dir"
   [ -e "$path" ] || continue

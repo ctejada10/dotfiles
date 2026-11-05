@@ -48,5 +48,22 @@ grep -qE 'WindowBounds|scrollPosition' "$saved" \
 grep -q '<key>_FXSortFoldersFirst</key>' "$saved" \
   && fail "leave _FXSortFoldersFirst to its own line" || pass "leave _FXSortFoldersFirst to its own line"
 
+# Only lists and compares: set would change this Mac's sidebar.
+if [ "$(uname)" = Darwin ]; then
+  section "sidebar.py"
+  sidebar=$REPO/home/.chezmoitemplates/sidebar.py
+  if now=$(/usr/bin/python3 -I "$sidebar" list); then pass "lists the Favorites"; else fail "lists the Favorites"; fi
+  # Folders only, with ~ expanded, as check takes them.
+  folders=()
+  while IFS= read -r f; do folders+=("$f"); done < <(grep -v '://' <<< "$now" | sed "s|^~|$HOME|")
+  out=$(/usr/bin/python3 -I "$sidebar" check "${folders[@]}" /nonexistent-dotfiles-test)
+  [ -z "$out" ] && pass "finds nothing to change when they match, skipping a folder that doesn't exist" \
+    || fail "finds nothing to change when they match, skipping a folder that doesn't exist" "$out"
+  out=$(/usr/bin/python3 -I "$sidebar" check "$T")
+  # The helper resolves /var to /private/var, as Finder does.
+  grep -qF -- "-> $(cd "$T" && pwd -P)" <<< "$out" && pass "says what would change when they don't" \
+    || fail "says what would change when they don't" "$out"
+fi
+
 rm -rf "$T"
 summary
