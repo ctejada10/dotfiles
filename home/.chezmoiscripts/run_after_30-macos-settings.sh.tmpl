@@ -110,6 +110,9 @@ elif [ "$CHECK" = 1 ]; then
   say "would set $sidebar_diff"; CHANGED=$((CHANGED + 1))
 elif /usr/bin/python3 -I -c "$sidebar_py" set "${favorites[@]}" >/dev/null; then
   say "set $sidebar_diff"; CHANGED=$((CHANGED + 1))
+elif [ $? -eq 3 ]; then
+  warn "couldn't set the sidebar's Favorites: this session can't read some of those folders, as over SSH. Nothing was changed; an apply in the Mac's own Terminal sets them."
+  SKIPPED=$((SKIPPED + 1))
 else
   warn "FAILED to set the sidebar's Favorites"; FAILED=$((FAILED + 1))
 fi

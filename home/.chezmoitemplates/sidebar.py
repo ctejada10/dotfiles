@@ -4,7 +4,10 @@
 #   sidebar.py list          prints the Favorites, one per line
 #   sidebar.py check PATH... prints what would change, or nothing
 #   sidebar.py set PATH...   makes the folders in the Favorites exactly these,
-#                            in this order, and prints what it changed
+#                            in this order, and prints what it changed. If it
+#                            can't read one of them, it changes nothing and
+#                            exits 3: removed Favorites it can't add back would
+#                            be lost, as over SSH, which can't reach ~/Desktop.
 # Paths may start with ~/. A path that doesn't exist on this Mac is skipped.
 # Items that aren't folders or files, such as AirDrop, are left alone.
 import ctypes, os, sys
@@ -17,6 +20,16 @@ def short(path):
 
 def wanted(paths):
     return [os.path.realpath(os.path.expanduser(p)) for p in paths if os.path.exists(os.path.expanduser(p))]
+
+def unreachable(paths):
+    """The paths this process can't read, which Launch Services won't add."""
+    out = []
+    for p in paths:
+        try:
+            os.listdir(p) if os.path.isdir(p) else open(p, 'rb').close()
+        except OSError:
+            out.append(p)
+    return out
 
 class Favorites:
     def __init__(self):
@@ -94,6 +107,10 @@ def main(argv):
     print('Favorites: ' + ', '.join(map(short, now)) + ' -> ' + ', '.join(map(short, want)))
     if argv[0] == 'check':
         return 0
+    blocked = unreachable(want)
+    if blocked:
+        print('sidebar.py: no access to ' + ', '.join(map(short, blocked)) + ', so nothing was changed', file=sys.stderr)
+        return 3
     # Out of order or not the same folders: all out, then back in order.
     failed = [p for item, p, is_file in items if is_file and not fav.remove(item)]
     failed += [p for p in want if not fav.add(p)]

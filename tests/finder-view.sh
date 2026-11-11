@@ -63,6 +63,16 @@ if [ "$(uname)" = Darwin ]; then
   # The helper resolves /var to /private/var, as Finder does.
   grep -qF -- "-> $(cd "$T" && pwd -P)" <<< "$out" && pass "says what would change when they don't" \
     || fail "says what would change when they don't" "$out"
+  mkdir "$T/locked" && chmod 000 "$T/locked"
+  out=$(/usr/bin/python3 -I -c 'import runpy, sys; m = runpy.run_path(sys.argv[1]); print(m["unreachable"](sys.argv[2:]))' \
+    "$sidebar" "$T" "$T/locked" 2>&1)
+  [ "$out" = "['$T/locked']" ] && pass "names a folder it can't read" || fail "names a folder it can't read" "$out"
+  # Safe to run on this Mac only because the guard stops it before any change.
+  /usr/bin/python3 -I "$sidebar" set "${folders[@]}" "$T/locked" >/dev/null 2>&1; code=$?
+  after=$(/usr/bin/python3 -I "$sidebar" list)
+  [ "$code" = 3 ] && [ "$after" = "$now" ] && pass "set changes nothing when it can't read a folder" \
+    || fail "set changes nothing when it can't read a folder" "exit $code; before: $now; after: $after"
+  chmod 700 "$T/locked"
 fi
 
 rm -rf "$T"
