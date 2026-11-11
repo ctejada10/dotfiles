@@ -115,6 +115,7 @@ assert d["mcp_servers.hurin_act"]["url"]=="http://dor-lomin.test:8000/mcp/act"
 assert d["platforms.webhook"]["extra"]["host"]=="100.64.0.1"
 assert "s3" not in json.dumps(d) and "${HURIN_MCP_ACT_TOKEN}" in json.dumps(d)
 ' <<<"$on" && pass "config has the five allowlist entries, both servers and the bound route" || fail "config has the five allowlist entries, both servers and the bound route" "$on"
+python3 -c 'import json,sys; assert json.load(sys.stdin)["tools.connectors.enabled"] is False' <<<"$on" && pass "config turns off hosted connectors" || fail "config turns off hosted connectors" "$on"
 for t in "$script" "$REPO/home/dot_local/bin/executable_hermes-health.tmpl" "$REPO/home/.chezmoiscripts/run_after_59-launch-agents.sh.tmpl"; do
   for data in '{}' "$ON"; do
     cz --override-data "$data" execute-template <"$t" | bash -n && pass "$(basename "$t") parses" || fail "$(basename "$t") parses"
