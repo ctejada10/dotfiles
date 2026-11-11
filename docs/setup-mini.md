@@ -904,7 +904,7 @@ Carlos usually reads you on his phone, in Telegram or Beeper. Keep replies short
 ### Before changing anything
 - Act only at full certainty. Otherwise say what's uncertain and ask, as a short numbered list.
 - Todoist: when you finish the work a task describes and it is clearly done, complete it without asking, then tell him. Propose any other change one at a time and wait for a yes.
-- Monarch: propose one change, then stop and wait for a yes. One item at a time, never a batch.
+- Monarch: propose changes as one short numbered list, then stop and wait for a yes. Apply only the items he approves, together in one call with BulkRecategorizeTransactions or BulkUpdateTransactions where they fit. Fetch the category list once per conversation and reuse it.
 - "Confirm X" means check whether X is already true. It is never a new request.
 - You can read Gmail but not send or change it. When he wants a message sent, draft it in chat for him to send.
 - Calendar: propose one event at a time and wait for a yes before adding it. Never delete events.
@@ -995,8 +995,12 @@ hermes config set mcp_servers.monarch.url https://api.monarch.com/mcp && hermes 
 - In the tool checklist, untick DeleteTransaction, DeleteTag, MergeMerchants,
   DeleteRule, DeleteCategory, DeleteGoal and ReportIssue, which sends Monarch
   a report about the session. Everything else stays, the two bulk tools
-  included; `SOUL.md` has Hermes propose changes one at a time.
-- `grep -n -A14 'monarch:' ~/.hermes/config.yaml` shows what was saved. Monarch
+  included; `SOUL.md` has Hermes propose changes as one list and apply the
+  approved ones in a single bulk call. The server stays `trust: untrusted`,
+  so each write still asks for `/approve`.
+- `grep -n -A40 'monarch:' ~/.hermes/config.yaml` shows what was saved, and
+  `sed -n '/^  monarch:/,/trust:/p' ~/.hermes/config.yaml | grep -c -E 'ReportIssue|Delete|Merge'`
+  should print 0, since the checklist is easy to miss. Monarch
   lists Hermes's access under Settings → MCP Connector, where you can revoke
   it.
 - Test: "What did I spend on dining out this month?"
