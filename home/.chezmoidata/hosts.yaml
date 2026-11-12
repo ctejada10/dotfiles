@@ -33,3 +33,13 @@ macs:
   amon-sul:
     address: amon-sul
     user: ctejada
+    # From anywhere, through a Cloudflare Tunnel. Cloudflare Access lets in
+    # only a client that shows the amonsul-ssh service token, which the
+    # laptop keeps in its Keychain (cf-token). The host key is the mini's own
+    # /etc/ssh/ssh_host_ed25519_key.pub, read there, and is pinned under the
+    # alias so the tunnel and the home network share one known_hosts entry.
+    tunnel:
+      alias: amonsul
+      hostname: amonsul.middlearth.io
+      lan: amon-sul.local
+      hostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDEwuaOj6NFj9Rf0GkYeuAWhWCRTwWHj2Qy3kjuz9XTt"

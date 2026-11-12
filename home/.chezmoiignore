@@ -82,6 +82,8 @@ Library/CloudStorage/Dropbox
 .local/bin/personal-backup
 .local/share/dotfiles/personal-backup.conf
 Library/LaunchAgents/com.carlosetejada.personal-backup.plist
+.ssh/cf-amonsul.sh
+.local/bin/cf-token
 {{- end }}
 
 {{- /* The mini: where all development happens. */}}
