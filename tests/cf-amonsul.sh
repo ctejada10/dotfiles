@@ -15,17 +15,18 @@ sandbox laptop >/dev/null 2>&1
 cz apply --exclude=scripts,externals >/dev/null 2>&1
 cfg="$SANDBOX/home/.ssh/config"
 g() { ssh -G -F "$cfg" "$1" 2>/dev/null | grep -Ei "^$2 " | cut -d' ' -f2-; }
-for host in amonsul amonsul.middlearth.io; do
-  got="$(g "$host" hostname)|$(g "$host" hostkeyalias)|$(g "$host" user)|$(g "$host" identitiesonly)|$(g "$host" proxycommand)|$(g "$host" serveraliveinterval)|$(g "$host" forwardagent)"
-  [ "$got" = "amonsul.middlearth.io|amonsul|ctejada|yes|~/.ssh/cf-amonsul.sh %h|30|no" ] \
-    && pass "$host goes through the tunnel" || fail "$host goes through the tunnel" "$got"
-done
-got="$(g amonsul-lan hostname)|$(g amonsul-lan hostkeyalias)|$(g amonsul-lan proxycommand)|$(g amonsul-lan identitiesonly)"
-[ "$got" = "amon-sul.local|amonsul||yes" ] && pass "amonsul-lan goes straight over the home network" || fail "amonsul-lan goes straight over the home network" "$got"
+got="$(g amonsul hostname)|$(g amonsul hostkeyalias)|$(g amonsul user)|$(g amonsul identitiesonly)|$(g amonsul proxycommand)|$(g amonsul serveraliveinterval)|$(g amonsul forwardagent)"
+[ "$got" = "amonsul.middlearth.io|amonsul|ctejada|yes|~/.ssh/cf-amonsul.sh %h|30|no" ] \
+  && pass "amonsul goes through the tunnel" || fail "amonsul goes through the tunnel" "$got"
+# Like the servers: one Host line, the name and then the address.
+names=$(grep -i '^Host .*amon' "$cfg")
+[ "$names" = "Host amonsul amonsul.middlearth.io" ] && pass "the mini has one Host line, name and address" || fail "the mini has one Host line, name and address" "$names"
+# shellcheck disable=SC2088 # ssh -G prints the ~ as written
+[ "$(g amonsul.middlearth.io proxycommand)" = "~/.ssh/cf-amonsul.sh %h" ] && pass "its address goes through the tunnel too" || fail "its address goes through the tunnel too"
 # shellcheck disable=SC2088 # ssh -G prints the ~ as written
 [ "$(g amonsul identityfile)" = "~/.ssh/login.pub" ] && pass "offers only the login key" || fail "offers only the login key" "$(g amonsul identityfile)"
-# ssh -G doesn't print UseKeychain, so count it in the file: both blocks.
-[ "$(grep -c '^  UseKeychain yes$' "$cfg")" = 2 ] && pass "uses the Keychain" || fail "uses the Keychain"
+# ssh -G doesn't print UseKeychain, so look in the file.
+[ "$(grep -c '^  UseKeychain yes$' "$cfg")" = 1 ] && pass "uses the Keychain" || fail "uses the Keychain"
 
 helper="$SANDBOX/home/.ssh/cf-amonsul.sh"
 [ "$(stat -f %Lp "$helper" 2>/dev/null)" = 700 ] && pass "writes cf-amonsul.sh as 0700" || fail "writes cf-amonsul.sh as 0700"
@@ -52,10 +53,11 @@ section "the host key pin"
 script="$SANDBOX/pin.sh"
 cz execute-template < "$REPO/home/.chezmoiscripts/run_after_62-amonsul-tunnel.sh.tmpl" > "$script"
 kh="$SANDBOX/home/.ssh/known_hosts"
-printf 'github.com ssh-ed25519 AAAAgithub\namonsul ssh-ed25519 AAAAstale\n' > "$kh"
+printf 'github.com ssh-ed25519 AAAAgithub\namonsul ssh-ed25519 AAAAstale\namon-sul ssh-ed25519 AAAAold\namon-sul.local,192.0.2.1 ssh-ed25519 AAAAold\n' > "$kh"
 HOME="$SANDBOX/home" bash "$script" </dev/null >/dev/null 2>&1
 [ "$(grep -c '^amonsul ' "$kh")" = 1 ] && grep -qxF "amonsul $key" "$kh" \
   && pass "replaces a stale entry with the mini's key" || fail "replaces a stale entry with the mini's key" "$(cat "$kh")"
+grep -q '^amon-sul' "$kh" && fail "forgets the mini's other names" "$(cat "$kh")" || pass "forgets the mini's other names"
 grep -qxF 'github.com ssh-ed25519 AAAAgithub' "$kh" && pass "leaves other hosts alone" || fail "leaves other hosts alone" "$(cat "$kh")"
 before=$(cat "$kh")
 out=$(HOME="$SANDBOX/home" bash "$script" </dev/null 2>&1)
