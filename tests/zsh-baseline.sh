@@ -86,8 +86,11 @@ section "aliases"
 compare "alias -L" "$(grep -v "^alias update=" "$FIXTURES/aliases.txt")" "$(cat "$OUT/aliases.txt")"
 
 section "completion styles"
-# Deliberate: the cache moved out of ~/.oh-my-zsh, and the updater is gone.
-want=$(normalize "$FIXTURES/zstyle.txt" | grep -v ':omz:update' | sed 's|~/.oh-my-zsh/cache|~/.cache/zsh|')
+# Deliberate: the cache moved out of ~/.oh-my-zsh, the updater is gone, and
+# ssh completes each box to its name, not its address (tests/ssh-completion.sh).
+want=$(normalize "$FIXTURES/zstyle.txt" | grep -v ':omz:update' | sed 's|~/.oh-my-zsh/cache|~/.cache/zsh|' \
+  | sed "3a\\
+zstyle ':completion:*:hosts' ignored-patterns '*.*' '*:*'")
 compare "zstyle -L" "$want" "$(normalize "$OUT/zstyle.txt")"
 
 section "functions"

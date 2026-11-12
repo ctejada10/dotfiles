@@ -33,6 +33,7 @@ run tests/cf-amonsul.sh
 run tests/ansible.sh
 run tests/apply-twice.sh
 run tests/zsh-baseline.sh
+run tests/ssh-completion.sh
 run tests/finder-view.sh
 
 if [ "$status" -eq 0 ]; then printf '\nall passed\n'; else printf '\nSOME FAILED\n'; fi
