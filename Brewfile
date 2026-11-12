@@ -14,6 +14,7 @@ role = ENV.fetch("HOMEBREW_TILDE_ROLE")
 brew "age"
 brew "bat"
 brew "chezmoi"
+brew "cloudflared"
 brew "coreutils"
 brew "eza"
 brew "fzf"
