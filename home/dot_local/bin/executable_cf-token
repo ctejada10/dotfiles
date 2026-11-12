@@ -1,0 +1,49 @@
+#!/bin/bash
+# The Cloudflare Access service token (amonsul-ssh) that `ssh amonsul` shows
+# the tunnel, kept in the login Keychain as cf-access-amonsul, accounts id and
+# secret.
+#
+#   cf-token          asks for the token, only if it isn't stored yet
+#   cf-token rotate   asks again and overwrites it (once a year)
+#   cf-token status   exits 0 when both items are stored
+#
+# The values reach security(1) on its stdin, through its -i mode, so they
+# never appear in a command line that ps can show. -T /usr/bin/security lets
+# the ProxyCommand helper read them without a Keychain prompt.
+
+set -euo pipefail
+service=cf-access-amonsul
+keychain=${CF_TOKEN_KEYCHAIN:-}  # tests only: a throwaway keychain
+
+read_item() { security find-generic-password -s "$service" -a "$1" -w ${keychain:+"$keychain"} 2>/dev/null; }
+stored() { read_item id >/dev/null && read_item secret >/dev/null; }
+
+case "${1:-}" in
+  status) stored; exit ;;
+  rotate) ;;
+  "") stored && exit 0 ;;
+  *) echo "usage: cf-token [rotate|status]" >&2; exit 2 ;;
+esac
+
+read -rsp "Cloudflare Access Client ID for amonsul-ssh: " id; echo >&2
+read -rsp "Client Secret: " secret; echo >&2
+# security -i splits its input on spaces and quotes, so only the characters a
+# Cloudflare token uses get through.
+for v in "$id" "$secret"; do
+  [[ $v =~ ^[A-Za-z0-9._-]+$ ]] || { echo "cf-token: that doesn't look like a service token; nothing changed" >&2; exit 1; }
+done
+
+# Updating an item in place makes the Keychain ask on screen, so the old ones
+# go first.
+for account in id secret; do
+  security delete-generic-password -s "$service" -a "$account" ${keychain:+"$keychain"} >/dev/null 2>&1 || true
+done
+printf 'add-generic-password -U -s %s -a id -T /usr/bin/security -w %s %s\nadd-generic-password -U -s %s -a secret -T /usr/bin/security -w %s %s\n' \
+  "$service" "$id" "$keychain" "$service" "$secret" "$keychain" | security -i
+# security -i exits 0 even when a command fails, so read both back.
+if [ "$(read_item id)" = "$id" ] && [ "$(read_item secret)" = "$secret" ]; then
+  echo "cf-token: stored in the Keychain as $service" >&2
+else
+  echo "cf-token: FAILED to store the token in the Keychain" >&2
+  exit 1
+fi

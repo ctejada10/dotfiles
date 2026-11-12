@@ -117,6 +117,12 @@ machine there answers by name:
 - `ssh amon-sul` reaches the mini over the tailnet. At home,
   `ssh ctejada@amon-sul.local` gets there without Tailscale, so a Tailscale
   outage doesn't lock you out.
+- `ssh amonsul` reaches the mini from anywhere through its Cloudflare Tunnel,
+  and `ssh amonsul-lan` goes straight to `amon-sul.local`. Both check the same
+  pinned host key, which the apply writes into `~/.ssh/known_hosts`.
+  Cloudflare Access lets the tunnel in only with the `amonsul-ssh` service
+  token: the first attended apply asks for its Client ID and Secret and keeps
+  them in the Keychain. When the token is renewed, run `cf-token rotate`.
 - `open vnc://amon-sul` opens Screen Sharing. Sign in with the mini's macOS
   account name and password, not a separate VNC password.
 - `ssh dor-lomin`, `ssh rivendell` and `ssh esgaroth` reach the servers, on the

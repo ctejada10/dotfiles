@@ -1,0 +1,34 @@
+{{- if eq .role "laptop" -}}
+#!/bin/bash
+# Readies `ssh amonsul`, through the Cloudflare Tunnel, without a prompt:
+# pins each Mac's host key in known_hosts, and asks for the Access service
+# token once if the Keychain doesn't hold it yet. known_hosts isn't managed by
+# chezmoi, so only each pinned alias's lines change.
+
+set -uo pipefail
+SCRIPT=amonsul-tunnel
+{{ template "script-lib.sh" . }}
+
+kh="$HOME/.ssh/known_hosts"
+pin() {
+  local alias="$1" want="$1 $2"
+  [ "$(ssh-keygen -F "$alias" -f "$kh" 2>/dev/null | grep -v '^#')" = "$want" ] && return
+  [ -e "$kh" ] && ssh-keygen -R "$alias" -f "$kh" >/dev/null 2>&1
+  printf '%s\n' "$want" >> "$kh" && chmod 600 "$kh" && say "pinned $alias's host key in known_hosts"
+}
+{{- range $name, $mac := .macs }}
+{{-   with $mac.tunnel }}
+pin {{ .alias | squote }} {{ .hostKey | squote }}
+{{-   end }}
+{{- end }}
+
+cf_token="$HOME/.local/bin/cf-token"
+if ! "$cf_token" status; then
+  if attended; then
+    "$cf_token" || warn "no service token yet, so ssh amonsul fails at Cloudflare. Run: cf-token"
+  else
+    warn "no Cloudflare service token in the Keychain yet, so ssh amonsul fails at Cloudflare. At a terminal, run: cf-token"
+  fi
+fi
+exit 0
+{{ end -}}
