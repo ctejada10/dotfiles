@@ -18,17 +18,11 @@ Host {{ $name }}{{ if ne $host.address $name }} {{ $host.address }}{{ end }}
   IdentitiesOnly yes
 {{-   end }}
 {{-   range $name, $mac := .macs }}
-
-Host {{ $name }}
-  HostName {{ $mac.address }}
-  User {{ $mac.user }}
-  IdentityFile ~/.ssh/login.pub
-  IdentitiesOnly yes
 {{-     with $mac.tunnel }}
 
-# Through the Cloudflare Tunnel, from anywhere. The helper hands cloudflared
-# the Access service token from the Keychain. The mini refuses agent
-# forwarding, and Host * below keeps it off.
+# The mini, from anywhere, home included: through its Cloudflare Tunnel. The
+# helper hands cloudflared the Access service token from the Keychain. The
+# mini refuses agent forwarding, and Host * keeps it off.
 Host {{ .alias }} {{ .hostname }}
   HostName {{ .hostname }}
   HostKeyAlias {{ .alias }}
@@ -40,16 +34,13 @@ Host {{ .alias }} {{ .hostname }}
   ServerAliveInterval 30
   ServerAliveCountMax 3
   ProxyCommand ~/.ssh/cf-amonsul.sh %h
+{{-     else }}
 
-# Straight over the home network, with the same pinned host key.
-Host {{ .alias }}-lan
-  HostName {{ .lan }}
-  HostKeyAlias {{ .alias }}
+Host {{ $name }}
+  HostName {{ $mac.address }}
   User {{ $mac.user }}
   IdentityFile ~/.ssh/login.pub
   IdentitiesOnly yes
-  UseKeychain yes
-  AddKeysToAgent yes
 {{-     end }}
 {{-   end }}
 

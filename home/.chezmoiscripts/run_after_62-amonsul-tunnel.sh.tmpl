@@ -16,9 +16,20 @@ pin() {
   [ -e "$kh" ] && ssh-keygen -R "$alias" -f "$kh" >/dev/null 2>&1
   printf '%s\n' "$want" >> "$kh" && chmod 600 "$kh" && say "pinned $alias's host key in known_hosts"
 }
+# The names the mini went by before the tunnel, so completion stops offering
+# them.
+forget() {
+  local name
+  for name in "$@"; do
+    [ -n "$(ssh-keygen -F "$name" -f "$kh" 2>/dev/null)" ] || continue
+    ssh-keygen -R "$name" -f "$kh" >/dev/null 2>&1 && say "forgot $name in known_hosts; use $alias_now"
+  done
+}
 {{- range $name, $mac := .macs }}
 {{-   with $mac.tunnel }}
 pin {{ .alias | squote }} {{ .hostKey | squote }}
+alias_now={{ .alias | squote }}
+forget {{ $name | squote }} {{ printf "%s.local" $name | squote }}
 {{-   end }}
 {{- end }}
 
