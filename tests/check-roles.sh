@@ -52,7 +52,12 @@ for role in "${roles[@]}"; do
       ak=$(cz --override-data '{"ssh":{"devices":{"iphone":"","ipad":""}}}' cat "$SANDBOX/home/.ssh/authorized_keys" 2>/dev/null)
       ak_device=$(cz --override-data '{"ssh":{"devices":{"iphone":"ecdsa-sha2-nistp256 AAAAtest iphone","ipad":""}}}' \
         cat "$SANDBOX/home/.ssh/authorized_keys" 2>/dev/null)
+      # sshd reads it whatever its mode, so only the owner may write it, and
+      # nobody else needs to read it either.
+      cz apply --recursive=false "$SANDBOX/home/.ssh" "$SANDBOX/home/.ssh/authorized_keys" >/dev/null 2>&1
+      ak_mode=$(stat -f %Lp "$SANDBOX/home/.ssh/authorized_keys" 2>/dev/null)
       cleanup_sandbox
+      [ "$ak_mode" = 600 ] && pass "writes authorized_keys as 0600" || fail "writes authorized_keys as 0600" "mode: ${ak_mode:-not written}"
       [ -n "$login_pub" ] && [ "$ak" = "$login_pub" ] \
         && pass "authorizes only the laptop's login key while no device has one" \
         || fail "authorizes only the laptop's login key while no device has one" "$ak"
@@ -87,7 +92,9 @@ if [ "$(uname)" = Darwin ]; then
   laptop=$(cz execute-template < "$settings_tmpl" 2>/dev/null)
   cleanup_sandbox
   for line in "PasswordAuthentication no" "KbdInteractiveAuthentication no" "PermitRootLogin no" \
-              "AuthenticationMethods publickey" "AllowUsers \$me\""; do
+              "AuthenticationMethods publickey" "MaxAuthTries 3" "LoginGraceTime 30" \
+              "ClientAliveInterval 300" "ClientAliveCountMax 2" "AllowTcpForwarding local" \
+              "AllowAgentForwarding no" "AllowUsers \$me\""; do
     grep -qxF "$line" <<< "$mini" && pass "the mini's sshd drop-in sets $line" || fail "the mini's sshd drop-in sets $line"
   done
   # The account the apply runs as, which is the one the laptop's key is in.

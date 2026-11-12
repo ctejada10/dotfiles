@@ -169,8 +169,13 @@ Once Remote Login and Tailscale are on, run `chezmoi apply` at the mini's own
 screen (Screen Sharing counts; SSH doesn't). SSH turns key-only only once
 Remote Login is on, and only in an apply that can ask for sudo. It writes
 `/etc/ssh/sshd_config.d/010-dotfiles-keyonly.conf` and checks that the running
-sshd offers public keys alone. With Tailscale signed in, it also sets the
-mini's tailnet name to `amon-sul`.
+sshd offers public keys alone. The same file allows 3 tries and 30 seconds to
+log in, drops a session after 10 silent minutes, turns agent forwarding off and
+keeps TCP forwarding to `ssh -L` alone. When the file changes and `sshd -t`
+passes, the apply restarts sshd; when `sshd -t` fails, the old file goes back.
+A hand-made `011-hardening-extra.conf` is removed once 010 sets everything it
+does. With Tailscale signed in, it also sets the mini's tailnet name to
+`amon-sul`.
 
 ### Check from the laptop
 

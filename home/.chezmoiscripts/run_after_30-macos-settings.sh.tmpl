@@ -423,12 +423,25 @@ only_me screensharing "Screen Sharing"
 # while authorized_keys holds a key, so it can't lock the laptop out, and only
 # once Remote Login is on and has made its host keys, without which sshd -t
 # fails whatever the file says.
+#
+# The rest is for SSH published through a Cloudflare Tunnel, where sshd is the
+# last line of defence: fewer tries and less time to log in, idle sessions
+# dropped after ten minutes, and no agent forwarding, which would lend the mini
+# the client's keys. TCP forwarding stays on for local forwards only, so
+# ssh -L can still reach Screen Sharing on localhost:5900. No Port or
+# ListenAddress: launchd owns the socket and sshd ignores both.
 keyonly=/etc/ssh/sshd_config.d/010-dotfiles-keyonly.conf
 keyonly_want="# Written by the dotfiles' macos-settings script: keys only, $me only.
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
 AuthenticationMethods publickey
+MaxAuthTries 3
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+AllowTcpForwarding local
+AllowAgentForwarding no
 AllowUsers $me"
 keyonly_now=$(cat "$keyonly" 2>/dev/null)
 keyonly_mode=$(stat -f '%Su:%Sg %Lp' "$keyonly" 2>/dev/null)
@@ -478,6 +491,14 @@ else
     FAILED=$((FAILED + 1))
   elif sshd_err=$(as_root /usr/sbin/sshd -t 2>&1); then
     say "made SSH key-only"; CHANGED=$((CHANGED + 1)); keyonly_in=1
+    # Only here, after a change sshd -t passed, so an apply that changes
+    # nothing never restarts sshd.
+    if as_root launchctl kickstart -k system/com.openssh.sshd; then
+      say "restarted sshd"
+    else
+      warn "FAILED to restart sshd; run sudo launchctl kickstart -k system/com.openssh.sshd"
+      FAILED=$((FAILED + 1))
+    fi
   else
     # sshd won't take it, so put back what was there. sshd -t reads every
     # file in sshd_config.d, so the fault may be in another one.
@@ -494,6 +515,36 @@ else
   fi
   [ -z "$saved" ] || as_root rm -f "$saved"
   rm -f "$staged"
+fi
+
+# A drop-in made by hand before the file above held these settings. It sorts
+# after it, so every keyword it shares with it is already ignored; once that's
+# all of them, it goes. A keyword of its own, or a Match block, keeps it.
+extra=/etc/ssh/sshd_config.d/011-hardening-extra.conf
+if [ "$keyonly_in" = 1 ] && [ -e "$extra" ]; then
+  if ! extra_text=$(cat "$extra" 2>/dev/null); then
+    warn "couldn't read $extra, so it stays"
+    SKIPPED=$((SKIPPED + 1))
+  else
+    extra_own=$(printf '%s\n' "$extra_text" | WANT="$keyonly_want" awk '
+      BEGIN { n = split(ENVIRON["WANT"], w, "\n"); for (i = 1; i <= n; i++) { split(w[i], f, " "); set[tolower(f[1])] = 1 } }
+      /^[[:space:]]*(#|$)/ { next }
+      !(tolower($1) in set) { print $1 }')
+    if [ -n "$extra_own" ]; then
+      warn "$extra stays: it sets ${extra_own//$'\n'/ }, which $keyonly doesn't"
+      SKIPPED=$((SKIPPED + 1))
+    elif [ "$CHECK" = 1 ]; then
+      say "would remove $extra, which $keyonly now covers"; CHANGED=$((CHANGED + 1))
+    elif ! can_root; then
+      warn "$extra is covered by $keyonly now; removing it needs sudo. The next attended apply does it."
+      SKIPPED=$((SKIPPED + 1))
+    elif as_root rm -f "$extra"; then
+      say "removed $extra, which $keyonly now covers"; CHANGED=$((CHANGED + 1))
+    else
+      warn "FAILED to remove $extra"
+      FAILED=$((FAILED + 1))
+    fi
+  fi
 fi
 
 # Checked on every apply against the sshd that really answers, not the file:
