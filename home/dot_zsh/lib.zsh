@@ -113,6 +113,11 @@ zstyle ':completion:*:*:*:users' ignored-patterns \
         usbmux uucp vcsa wwwrun xfs '_*'
 zstyle '*' single-ignored show
 
+# Every box completes to its name, never its address. zsh also offers each
+# HostName and every known_hosts entry, where the playbook pins servers as
+# [address]:port. A typed address still works; Tab only lists it.
+zstyle ':completion:*:hosts' ignored-patterns '*.*' '*:*'
+
 autoload -U +X bashcompinit && bashcompinit
 
 ###############################################################################
