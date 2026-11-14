@@ -270,6 +270,10 @@ for role in "${roles[@]}"; do
       cleanup_sandbox
       [ "$(grep -v '^#' <<< "$sshcfg" | grep -v '^$' | head -n 1)" = "Include ~/.colima/ssh_config" ] \
         && pass "the mini's SSH config starts with Colima's Include" || fail "the mini's SSH config starts with Colima's Include" "$sshcfg"
+      # Hazel on the mini rsyncs to rivendell by name, so the server's port has to come from here.
+      [ "$(awk '/^Host rivendell( |$)/{f=1;next} /^Host /{f=0} f && $1=="Port"{print $2}' <<< "$sshcfg")" = 69 ] \
+        && pass "the mini reaches rivendell on its port" || fail "the mini reaches rivendell on its port" "$sshcfg"
+      grep -q 'login.pub' <<< "$sshcfg" && fail "the mini offers no laptop key" "$sshcfg" || pass "the mini offers no laptop key"
       jq -e '.hooks.WorktreeCreate[0].hooks[0].command | endswith("/.claude/hooks/worktree.sh create")' <<< "$settings" >/dev/null \
         && pass "the mini's Claude Code worktrees go through the worktree hook" || fail "the mini's Claude Code worktrees go through the worktree hook" "$(jq -c .hooks <<< "$settings")"
       ask=$(jq -r '.permissions.ask | join(" ")' <<< "$settings")
