@@ -5,18 +5,23 @@
 # Colima adds this line whenever it's missing; it's here so it stays.
 Include ~/.colima/ssh_config
 {{- end }}
-{{- if eq .role "laptop" }}
+{{- if has .role (list "laptop" "agent-mini") }}
 {{-   range $name, $host := .hosts }}
 
 {{/* The address too: the playbook connects by it, and without a match there
-     it would offer every key the agent holds, more than MaxAuthTries 2. */ -}}
+     it would offer every key the agent holds, more than MaxAuthTries 2. The
+     mini brings its own key (Hazel passes -i), so it gets only the port. */ -}}
 Host {{ $name }}{{ if ne $host.address $name }} {{ $host.address }}{{ end }}
   HostName {{ $host.address }}
   User {{ $host.user }}
   Port {{ $host.port }}
+{{-     if eq $.role "laptop" }}
   IdentityFile ~/.ssh/login.pub
   IdentitiesOnly yes
+{{-     end }}
 {{-   end }}
+{{- end }}
+{{- if eq .role "laptop" }}
 {{-   range $name, $mac := .macs }}
 {{-     with $mac.tunnel }}
 
