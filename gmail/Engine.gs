@@ -10,6 +10,7 @@
  *   installTriggers()   router every 10 min, housekeeping daily
  *   router()            forwards anything carrying a CONFIG.forwards label, then removes that label
  *   housekeeping()      trashes expired mail per rule.expireDays
+ *   reviewDigest()      mails CONFIG.reviewTo a week of evidence for the Sunday review (if set)
  */
 const RD_FOLDER = 'Gmail Redesign';
 
@@ -219,12 +220,59 @@ function housekeeping() {
   if (all.length > 400) all.slice(0, all.length - 400).forEach(function (k) { props.deleteProperty(k); });
 }
 
+/* ---------------- weekly review digest (CONFIG.reviewTo) ---------------- */
+// The Sunday Claude review reads only the personal account, so an account with CONFIG.reviewTo mails it the
+// same evidence about itself: what no rule caught and Carlos handled by hand, and what rules archived or
+// deleted (possible misfires). Read-only on mail; the digest is the only thing sent.
+function reviewDigest() {
+  if (!CONFIG.reviewTo) { Logger.log('no CONFIG.reviewTo'); return; }
+  const since = Date.now() - 7 * 864e5, me = rdMe_();
+  const addr = function (f) { const m = String(f).match(/<([^>]+)>/); return (m ? m[1] : String(f)).trim().toLowerCase(); };
+  const brief = function (m) {
+    return { date: Utilities.formatDate(m.getDate(), 'America/New_York', 'yyyy/MM/dd'), subject: m.getSubject().slice(0, 120),
+      text: m.getPlainBody().replace(/\s+/g, ' ').trim().slice(0, 160) };
+  };
+  const unruled = {};
+  [['archived', 'newer_than:7d has:nouserlabels -in:inbox -in:sent -in:trash -in:spam -in:chats -from:me'],
+   ['inbox', 'newer_than:7d has:nouserlabels in:inbox -from:me'],
+   ['trashed', 'newer_than:7d has:nouserlabels in:trash -from:me']].forEach(function (s) {
+    GmailApp.search(s[1], 0, 150).forEach(function (t) {
+      t.getMessages().forEach(function (m) {
+        const from = addr(m.getFrom());
+        if (m.getDate().getTime() < since || from === me) return;
+        const u = unruled[from] || (unruled[from] = { sender: from, archived: 0, inbox: 0, trashed: 0, samples: [] });
+        u[s[0]]++;
+        if (u.samples.length < 3) u.samples.push(brief(m));
+      });
+    });
+  });
+  const ruled = [];
+  CONFIG.rules.filter(function (r) { return r.archive || r.trash; }).forEach(function (r) {
+    GmailApp.search('in:anywhere newer_than:7d (' + r.query + ')', 0, 15).forEach(function (t) {
+      const m = t.getMessages().pop();
+      if (m.getDate().getTime() >= since && addr(m.getFrom()) !== me) {
+        ruled.push(Object.assign({ rule: r.id, action: r.trash ? 'deleted' : 'archived', sender: addr(m.getFrom()) }, brief(m)));
+      }
+    });
+  });
+  const digest = { account: me, generated: new Date().toISOString(),
+    unruled: Object.keys(unruled).map(function (k) { return unruled[k]; })
+      .sort(function (a, b) { return (b.archived + b.inbox + b.trashed) - (a.archived + a.inbox + a.trashed); }).slice(0, 150),
+    ruled: ruled.slice(0, 200) };
+  GmailApp.sendEmail(CONFIG.reviewTo, 'Gmail review data: ' + me + ' ' + Utilities.formatDate(new Date(), 'America/New_York', 'yyyy/MM/dd'),
+    JSON.stringify(digest, null, 1));
+  Logger.log('DIGEST SENT: %s unruled senders, %s ruled messages', digest.unruled.length, digest.ruled.length);
+}
+
 function installTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (['router', 'housekeeping'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t);
+    if (['router', 'housekeeping', 'reviewDigest'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('router').timeBased().everyMinutes(10).create();
   ScriptApp.newTrigger('housekeeping').timeBased().atHour(4).everyDays(1).inTimezone('America/New_York').create();
+  // Sunday 6 AM, ahead of the 7:47 review.
+  if (CONFIG.reviewTo) ScriptApp.newTrigger('reviewDigest').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(6)
+    .inTimezone('America/New_York').create();
   Logger.log('TRIGGERS OK');
 }
 

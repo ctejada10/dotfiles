@@ -45,6 +45,7 @@ const CONFIG = {
   dryRunWindow: 'newer_than:365d',
   backfillWindow: '',
   noBackfill: ['Notify'],
+  reviewTo: 'carlos@carlosetejada.com',   // reviewDigest(): the Sunday review reads this account through personal
   unsubscribe: UNSUBSCRIBED,
 
   labels: [

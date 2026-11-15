@@ -42,7 +42,7 @@ const HEALTH = {{ op://Private/gmail-rules/health-senders }};
 const CONF = ['precisionconference.com', 'hotcrp.com', 'easychair.org', 'manuscriptcentral.com', 'openreview.net', 'softconf.com'];
 const BILLERS = {{ op://Private/gmail-rules/billers }};
 // Unsubscribed 2026-11-14; trashed on arrival in case a list keeps sending.
-const UNSUBSCRIBED = ['hello@readwise.io', 'feedback@noteifyapp.com', 'dennis@amie.so', 'no-reply@kickstarter.com',
+const UNSUBSCRIBED = ['hello@readwise.io', 'feedback@noteifyapp.com', 'dennis@amie.so',
   'globaltouring@events.aegpresents.com', 'yeah@newsletter.pointsyeah.com', 'hello@frameworkhomeownership.org'];
 const GH = 'from:notifications@github.com';
 const GH_KEEP = '-subject:"run failed" -cc:mention@noreply.github.com -cc:review_requested@noreply.github.com ' +
@@ -59,7 +59,7 @@ const CONFIG = {
   account: 'carlos@carlosetejada.com',
   dryRunWindow: 'newer_than:365d',
   backfillWindow: '',            // whole archive
-  noBackfill: ['Notify', 'Todoist', '_fwd/Flighty', '_fwd/Tripsy', '_fwd/Karejucar', '_fwd/Dad'],
+  noBackfill: ['Notify', 'Todoist', '_fwd/Flighty', '_fwd/Tripsy', '_fwd/Karejucar', '_fwd/Dad', '_review'],
   unsubscribe: UNSUBSCRIBED,
 
   labels: [
@@ -78,6 +78,7 @@ const CONFIG = {
     { name: 'Notify', hidden: true },
     { name: '_fwd', hidden: true }, { name: '_fwd/Flighty', hidden: true }, { name: '_fwd/Tripsy', hidden: true },
     { name: '_fwd/Karejucar', hidden: true }, { name: '_fwd/Dad', hidden: true },
+    { name: '_review', hidden: true },
   ],
 
   // removed after backfill (labels not in the list above are only removed if named here)
@@ -288,11 +289,15 @@ const CONFIG = {
       query: '(to:carlos@karejucar.com OR cc:carlos@karejucar.com) -to:' + TODOIST_ADDRESS },
     { id: 'dad-forward', labels: ['_fwd/Dad'], archive: true, read: true,
       query: 'from:' + {{ op://Private/gmail-rules/family-mortgage-sender }} },
+    { id: 'review-data', labels: ['_review'], archive: true, read: true, expireDays: 35,   // the work account's weekly digest
+      query: 'from:carlos@karejucar.com subject:"Gmail review data"' },
     { id: 'todoist-in', labels: ['Todoist'], archive: true,
       query: 'to:' + TODOIST_ADDRESS },
     { id: 'newsletters', labels: ['Newsletters'], archive: true,
       query: FROM_(['macstories.net', 'substack.com', 'call-for-papers@hq.acm.org', 'pubs@acm.org']) +
         ' -subject:receipt -subject:invoice -subject:"your order"' },
+    { id: 'noise-kickstarter', trash: true,        // project updates only: pledge, survey and shipping mail stays
+      query: 'from:no-reply@kickstarter.com subject:"Project Update"' },
     { id: 'noise-unsubscribed', trash: true,
       query: FROM_(UNSUBSCRIBED) },
 
