@@ -1,0 +1,331 @@
+/**
+ * Rules — carlos@carlosetejada.com
+ * Source of truth: ctejada10/dotfiles → gmail/Rules.personal.gs.op
+ * Template: every op:// reference is a 1Password field (vault Private, item gmail-rules)
+ * holding a JSON value, so the rendered reference is a JS literal. Render with gmail/render.
+ *
+ * Conventions (see vault: 22.05 Email):
+ *  - Default is INBOX. A rule only archives mail it positively recognises.
+ *  - Phrases of two+ words; senders by address where the domain also sends marketing.
+ *  - Every exclusion is its own -term (negation does not distribute).
+ *  - Deletes (trash) are sender lists, plus multi-word notice/survey phrases (30-day Trash grace).
+ *  - Each child label is applied together with its parent (one filter per label).
+ *  - _fwd/* labels are hidden hand-offs to the router (forward, then label removed). Never backfilled.
+ */
+function OR_(arr) { return '(' + arr.join(' OR ') + ')'; }
+function FROM_(arr) { return 'from:' + OR_(arr); }
+function SUBJ_(arr) { return 'subject:' + OR_(arr.map(function (s) { return /\s|[:&']/.test(s) ? '"' + s + '"' : s; })); }
+function NOT_SUBJ_(arr) { return arr.map(function (s) { return '-subject:"' + s + '"'; }).join(' '); }
+function NOT_FROM_(arr) { return arr.map(function (s) { return '-from:' + s; }).join(' '); }
+
+/* ---------- from 1Password: people, providers and accounts ---------- */
+const TODOIST_ADDRESS = {{ op://Private/gmail-rules/todoist-address }};        // the hand-off address
+const HEALTH_INSURERS = {{ op://Private/gmail-rules/health-insurers }};        // first one also bills
+const HEALTH_RETAIL = {{ op://Private/gmail-rules/health-retail }};            // pharmacy pickups, filed as shopping
+const HEALTH_NOISE = {{ op://Private/gmail-rules/health-noise }};              // provider marketing and surveys: delete
+const FINANCE_NOISE = {{ op://Private/gmail-rules/finance-noise }};            // bank and lender marketing and surveys: delete
+
+/* ---------- shared vocab ---------- */
+const NOW_PHRASES = ['ready for pickup', 'ready for pick up', 'ready to pick up', 'pick up your', 'pickup information',
+  'pickup order', 'order is ready', 'out for delivery', 'has been delivered', 'was delivered', 'arriving today',
+  'delivered 1 item', 'delivered:', 'has been picked up', 'was picked up'];
+const PROBLEM_PHRASES = ['delivery delayed', 'delivery exception', 'unable to deliver', 'delivery attempt', 'attempted delivery',
+  'problem with your order', 'delivery estimate update', 'shipment exception', 'to avoid cancellation', 'we cancelled your order',
+  'out of stock', 'package is delayed', 'order is delayed'];
+const AIRLINES = ['united.com', 'delta.com', 'aa.com', 'jetblue.com', 'aircanada.com', 'alaskaair.com', 'southwest.com',
+  'spirit.com', 'flyfrontier.com', 'britishairways.com', 'lufthansa.com', 'iberia.com', 'klm.com', 'airfrance.com',
+  'flysas.com', 'norwegian.com', 'turkishairlines.com', 'copaair.com', 'avianca.com', 'jetsmart.com', 'aeromexico.com'];
+const LODGING_CARS_RAIL = ['hilton.com', 'marriott.com', 'hyatt.com', 'ihg.com', 'booking.com', 'airbnb.com', 'expedia.com',
+  'hotels.com', 'silvercloud.com', 'property.booking.com', 'nationalcar.com', 'avis.com', 'hertz.com', 'enterprise.com',
+  'emeraldclub.com', 'amtrak.com', 'amstardmc.com', 'vrbo.com', 'sixt.com'];
+const HEALTH = {{ op://Private/gmail-rules/health-senders }};
+const CONF = ['precisionconference.com', 'hotcrp.com', 'easychair.org', 'manuscriptcentral.com', 'openreview.net', 'softconf.com'];
+const BILLERS = {{ op://Private/gmail-rules/billers }};
+// Unsubscribed 2026-11-14; trashed on arrival in case a list keeps sending.
+const UNSUBSCRIBED = ['hello@readwise.io', 'feedback@noteifyapp.com', 'dennis@amie.so', 'no-reply@kickstarter.com',
+  'globaltouring@events.aegpresents.com', 'yeah@newsletter.pointsyeah.com', 'hello@frameworkhomeownership.org'];
+const GH = 'from:notifications@github.com';
+const GH_KEEP = '-subject:"run failed" -cc:mention@noreply.github.com -cc:review_requested@noreply.github.com ' +
+  '-cc:assign@noreply.github.com -cc:team_mention@noreply.github.com';
+const REPOS = [
+  { label: 'Dev/cad-a11y', list: 'cad-a11y.cad-accessibility.github.com' },
+  { label: 'Dev/tangible-controls', list: 'tangible-controls.cad-accessibility.github.com' },
+  { label: 'Dev/hurin', list: 'hurin.ctejada10.github.com' },
+  { label: 'Dev/rivendell', list: 'rivendell.ctejada10.github.com' },
+  { label: 'Dev/morwen', list: 'morwen.ctejada10.github.com' },
+];
+
+const CONFIG = {
+  account: 'carlos@carlosetejada.com',
+  dryRunWindow: 'newer_than:365d',
+  backfillWindow: '',            // whole archive
+  noBackfill: ['Notify', 'Todoist', '_fwd/Flighty', '_fwd/Tripsy', '_fwd/Karejucar', '_fwd/Dad'],
+  unsubscribe: UNSUBSCRIBED,
+
+  labels: [
+    'Receipts', 'Receipts/Food', 'Receipts/Transport', 'Receipts/Shopping', 'Receipts/Subscriptions',
+    'Receipts/Entertainment', 'Receipts/Travel',
+    'Deliveries',
+    'Statements', 'Statements/Cards', 'Statements/Loans', 'Statements/Services', 'Statements/Medical',
+    'Money', 'Money/In', 'Money/Out', 'Money/Problems',
+    'Security', 'Security/Codes', 'Security/Account', 'Security/Sign-ins',
+    'Health', 'Health/Appointments', 'Health/Messages', 'Health/Insurance',
+    'Jobs', 'Jobs/Applied', 'Jobs/Closed', 'Jobs/Listings',
+    'Research', 'Research/Reviews', 'Research/Submissions', 'Research/Citations',
+    'Dev', 'Dev/cad-a11y', 'Dev/tangible-controls', 'Dev/hurin', 'Dev/rivendell', 'Dev/morwen',
+    'Travel', 'Price Alerts', 'Karejucar', 'Newsletters',
+    { name: 'Todoist', color: { backgroundColor: '#fb4c2f', textColor: '#ffffff' } },
+    { name: 'Notify', hidden: true },
+    { name: '_fwd', hidden: true }, { name: '_fwd/Flighty', hidden: true }, { name: '_fwd/Tripsy', hidden: true },
+    { name: '_fwd/Karejucar', hidden: true }, { name: '_fwd/Dad', hidden: true },
+  ],
+
+  // removed after backfill (labels not in the list above are only removed if named here)
+  oldLabels: ['@Alert', '@Reply', '@Waiting', 'Health/Pharmacy', 'Notices', 'Loyalty', 'Surveys', 'Promos',
+    'Price Alerts/Flights'],
+
+  forwards: [
+    { label: '_fwd/Flighty', to: 'track@my.flightyapp.com' },
+    { label: '_fwd/Tripsy', to: 'my@tripsy.app' },
+    { label: '_fwd/Karejucar', to: 'carlos@karejucar.com' },
+    { label: '_fwd/Dad', to: {{ op://Private/gmail-rules/family-forward }}, thenTrash: true },
+  ],
+
+  rules: [
+    /* ---------------- Security ---------------- */
+    { id: 'sec-codes', labels: ['Security/Codes', 'Security'], expireDays: 7,
+      query: SUBJ_(['verification code', 'security code', 'one-time code', 'one-time passcode', 'one-time password',
+        'single-use code', 'login code', 'sign-in code', 'sign in code', 'authentication code', 'your code is',
+        'is your code', 'beeper code', 'dia code', 'magic link', 'secure link to', 'one-time login link', 'login link',
+        'sign-in link', 'password reset', 'reset your password', 'verify your email', 'confirm your email',
+        'email confirmation link', 'verify your candidate account']) },
+    { id: 'sec-account', labels: ['Security/Account', 'Security'],
+      query: SUBJ_(['passkey was added', 'passkey was just enabled', 'passkey was enabled', 'added a passkey',
+        'new passkey', 'password was changed', 'password has been changed', 'password has been updated',
+        'password has been reset', 'email address was changed', 'email address has been changed', 'Zelle recipient',
+        'added to Apple Pay', 'removed from Apple Pay', 'new trusted device', 'security info was added',
+        'new app(s) connected', 'connected your bank account', 'requesting updated permissions', 'two-step verification',
+        '2-step verification', 'two-factor authentication', 'recovery email', 'account was recovered',
+        'security incident', 'remembered device added', 'new device was added', 'credit inquiry',
+        'new account alert', 'unresolved security risks', 'connected your account', 'personal access token',
+        'SSH authentication public key', 'has been added to your account']) },
+    { id: 'sec-signins', labels: ['Security/Sign-ins', 'Security'], archive: true, read: true,
+      query: '(' + SUBJ_(['new sign-in', 'new sign in', 'new login', 'new log-in', 'sign-in alert', 'sign-in detected',
+        'sign-in attempt', 'sign in activity', 'was used to sign in', 'did you log in', 'just signed in',
+        'new device logged in', 'new device signed in', 'new device is using', 'new device is signed in',
+        'device registration', 'access detected from a new device', 'account sign-in']) +
+        ' OR (from:no-reply@accounts.google.com subject:"security alert") OR (from:(account-update@amazon.com OR account-update@goodreads.com) subject:sign-in)) ' +
+        NOT_SUBJ_(['verification code', 'your code is', 'magic link', 'passkey', 'password']) },
+
+    /* ---------------- Money ---------------- */
+    { id: 'money-problems', labels: ['Money/Problems', 'Money', 'Notify'], star: true,
+      query: SUBJ_(['transaction declined', 'payment declined', 'card declined', 'was declined', 'unable to process',
+        'past due', 'late fee', 'payment failed', 'failed payment', 'payment was unsuccessful', 'insufficient funds',
+        'returned payment', 'card expiring', 'card has expired', "haven't received your payment", 'missed payment',
+        'payment overdue', 'low balance', 'no longer enrolled in Autopay', 'payment method failed',
+        'update your payment method', 'action required: payment']) + ' -from:notifications@github.com' },
+    { id: 'money-in', labels: ['Money/In', 'Money'], archive: true, read: true,
+      query: SUBJ_(['received money', 'sent you money', 'you received money', "you've received", 'direct deposit',
+        'deposit posted', 'refund issued', 'refund has been issued', 'refund is on its way', 'your refund',
+        'travel credit', 'claim has been approved', 'sent you an Apple Gift Card', 'cash back has been']) +
+        ' ' + NOT_SUBJ_(['refund request']) },
+    { id: 'money-out', labels: ['Money/Out', 'Money'], archive: true, read: true,
+      query: FROM_(BILLERS) + ' ' + SUBJ_(['payment', 'AutoPay', 'account notification', 'you paid', 'you sent']) +
+        ' ' + NOT_SUBJ_(['declined', 'past due', 'failed', 'unsuccessful', 'insufficient', 'returned payment', 'payment method',
+          'refund', 'no longer enrolled', 'late fee', 'missed']) },
+
+    /* ---------------- Statements ---------------- */
+    { id: 'st-cards', labels: ['Statements/Cards', 'Statements'], archive: true, read: true,
+      query: FROM_({{ op://Private/gmail-rules/card-issuers }}) +
+        ' subject:statement -subject:privacy -subject:terms' },
+    { id: 'st-loans', labels: ['Statements/Loans', 'Statements'], archive: true, read: true,
+      query: FROM_({{ op://Private/gmail-rules/lenders }}) + ' ' + SUBJ_(['statement is ready', 'statement is now available', 'monthly statement', 'your statement', 'loan has been closed']) },
+    { id: 'st-services', labels: ['Statements/Services', 'Statements'], archive: true, read: true,
+      query: FROM_({{ op://Private/gmail-rules/payment-services }}) +
+        ' ' + SUBJ_(['statement', 'snapshot', 'activity', 'transaction history', 'payments summary', 'eStatement']) +
+        ' -subject:privacy -subject:terms' },
+    { id: 'st-medical', labels: ['Statements/Medical', 'Statements', 'Health'],   // stays in inbox (bills)
+      query: FROM_(HEALTH.concat(HEALTH_INSURERS.slice(0, 1))) + ' ' + SUBJ_(['balance', 'new charges', 'pay your balance', 'your receipt from',
+        'invoice', 'amount due', 'payment receipt', 'statement', 'payment success']) },
+    { id: 'st-medical-archived', labels: ['Statements/Medical', 'Statements', 'Health'], archive: true, read: true,
+      query: 'from:' + {{ op://Private/gmail-rules/health-invoice-sender }} + ' subject:"invoice for your"' },
+
+    /* ---------------- Receipts ---------------- */
+    { id: 'rc-food', labels: ['Receipts/Food', 'Receipts'], archive: true, read: true,
+      query: '(' + FROM_(['wolt.com', 'wholefoodsmarket.com', 'grubhub.com', 'doordash.com', 'ubereats.com', 'seamless.com',
+        'email.chipotle.com', 'shakeshack.com', 'jerseymikes.com']) +
+        ' OR (from:noreply@uber.com subject:"with Uber Eats") OR subject:"Chick-fil-A" OR (from:no-reply@amazon.com subject:"payment to Uber Eats")' +
+        ' OR (from:prime@amazon.com subject:"Uber Eats order was confirmed")) ' + NOT_SUBJ_(NOW_PHRASES) +
+        ' ' + NOT_SUBJ_(['sign-in', 'new device', 'your code', 'verification code']) },
+    { id: 'rc-transport', labels: ['Receipts/Transport', 'Receipts'], archive: true, read: true,
+      query: '(' + '(from:noreply@uber.com -subject:"Uber Eats")' + ' OR ' + FROM_(['lyftmail.com', 'njtransit.com', 'mytix.njtransit.com',
+        'rejsekort.dk', 'tsdnotify.com']) + ' OR subject:"SpotHero Parking Confirmation") ' +
+        NOT_SUBJ_(['statement', 'snapshot', 'terms', 'policy', 'sign-in', 'sign in', 'new device', 'prices are in', 'benefit']) +
+        ' ' + NOT_FROM_(['njtmarketing@njtransit.com']) },
+    { id: 'rc-shopping-a', labels: ['Receipts/Shopping', 'Receipts'], archive: true, read: true,
+      query: FROM_(['auto-confirm@amazon.com', 'order-update@amazon.com', 'return@amazon.com', 'oe.target.com',
+        'oe1.target.com', 'orders.staples.com', 'customerservice@beauty.sephora.com', 'your_order_us@orders.apple.com',
+        'order_acknowledgment@orders.apple.com', 'do_not_reply@email.apple.com', 'gardenstateplaza@email.apple.com',
+        'bestbuyinfo@emailinfo.bestbuy.com'].concat(HEALTH_RETAIL)) + ' ' + NOT_SUBJ_(NOW_PHRASES) + ' ' +
+        NOT_SUBJ_(PROBLEM_PHRASES) + ' -subject:review' },
+    { id: 'rc-shopping-b', labels: ['Receipts/Shopping', 'Receipts'], archive: true, read: true,
+      query: FROM_(['nomad@nomadgoods.com', 'loopreturns.com', 'peakdesign.com', 'shopifyemail.com', 'squarespace.info',
+        'sales@decantx.com', 'support@tylerturnbullart.com', 'orders@hidratespark.com', 'contact@platsupply.com',
+        'noreply@notify.bambulab.com', 'noreply@customers.gumroad.com', 'jifiti.com', 'orders@noa.com']) + ' ' +
+        NOT_SUBJ_(NOW_PHRASES) + ' ' + NOT_SUBJ_(PROBLEM_PHRASES) + ' -subject:review -subject:"credits have arrived"' },
+    { id: 'rc-subs', labels: ['Receipts/Subscriptions', 'Receipts'], archive: true, read: true,
+      query: FROM_(['no_reply@email.apple.com', 'stripe.com', 'invoice+statements@mail.anthropic.com', 'paddle.com', 'lemonsqueezy-mail.com',
+        'macstories.net', 'playstation.com', 'parallels.com', 'backblaze.com', 'invoice+statements@raycast.com', 'team@raycast.com',
+        'support@us.ovhcloud.com', 'payments-noreply@google.com', 'billing@mimestream.com', 'support@itch.io',
+        'no-reply@accounts.nintendo.com', 'noreply@tesla.com', 'notice@email.anthropic.com']) + ' ' +
+        SUBJ_(['receipt', 'invoice', 'subscription', 'subscribed', 'renewal', 'renew', 'proof of coverage', 'purchase',
+          'your order', 'thanks for your payment', 'payment', 'expiration', 'plan']) + ' ' + NOT_SUBJ_(['refund request', 'sign-in']) },
+    { id: 'rc-entertainment', labels: ['Receipts/Entertainment', 'Receipts'], archive: true, read: true,
+      query: FROM_(['amctheatres.com', 'regaltickets.com', 'gothamsports.com', 'customer_support@email.ticketmaster.com',
+        'tickets@moma.org', 'mlbemail.com', 'atgtickets.com', 'usopen.org', 'reservations@resy.com', 'noreply@resy.com',
+        'sevenrooms.com', 'ventrata.com', 'bigbustours.com', 'luckyseat.com']) + ' ' +
+        SUBJ_(['order', 'ticket', 'tickets', 'receipt', 'confirmation', 'confirmed', 'reservation', "you're all set",
+          'see you soon', "you're going", 'registering', 'pre-event']) + ' ' +
+        NOT_SUBJ_(['presale', 'on sale', 'cancelled', 'canceled', 'changed', 'confirm your', 'sign in', 'sign-in', 'new device',
+          'schedule change', 'your code', 'verification code', 'password']) },
+
+    /* ---------------- Travel ---------------- */
+    { id: 'tr-flights', labels: ['Receipts/Travel', 'Receipts', 'Travel', '_fwd/Flighty', '_fwd/Tripsy'], archive: true, read: true,
+      query: FROM_(AIRLINES) + ' ' + SUBJ_(['booking confirmation', 'trip confirmation', 'eTicket', 'e-ticket',
+        'itinerary', 'trip details', 'flight confirmation', 'thanks for your purchase', 'confirmation for',
+        'reservation confirmation']) + ' ' +
+        NOT_SUBJ_(['check in', 'check-in', 'schedule change', 'cancelled', 'canceled', 'delayed', 'survey', 'how was']) +
+        ' -from:marketing.jetblue.com -from:enews.united.com' },
+    { id: 'tr-bookings', labels: ['Receipts/Travel', 'Receipts', 'Travel', '_fwd/Tripsy'], archive: true, read: true,
+      query: FROM_(LODGING_CARS_RAIL) + ' ' + SUBJ_(['confirmation', 'confirmed', 'reservation', 'itinerary', 'booking',
+        'rental agreement', 'folio', 'receipt', 'your upcoming', 'departure transfer', 'order confirmation']) +
+        ' ' + NOT_SUBJ_(['survey', 'how was', 'review', 'terms', 'statement', 'eStatement', 'message from', 'cancelled',
+          'canceled', 'confirm or modify', 'quote']) },
+    { id: 'tr-changes', labels: ['Travel', 'Notify'],
+      query: FROM_(AIRLINES.concat(LODGING_CARS_RAIL)) + ' ' + SUBJ_(['schedule change', 'flight change', 'has been changed',
+        'has been cancelled', 'has been canceled', 'is delayed', 'flight delay', 'gate change', 'new departure time',
+        'itinerary change', 'trip change', 'flight cancellation', 'cancelled flight', 'canceled flight', 'weather']) },
+    { id: 'tr-dayof', labels: ['Travel'], archive: true, read: true,
+      query: FROM_(AIRLINES) + ' ' + SUBJ_(['check in', 'check-in', 'now boarding', 'checked bags', 'upcoming flight',
+        'look forward to', 'wi-fi', 'trip is coming up', 'skymiles account', 'skyclub', 'checked bag',
+        'what to know about your trip']) + ' ' +
+        NOT_SUBJ_(['schedule change', 'cancelled', 'canceled', 'delayed', 'gate change']) },
+    { id: 'price-alerts', labels: ['Price Alerts'],
+      query: 'from:noreply-travel@google.com ' + SUBJ_(['tracked flight', 'prices', 'price']) },
+
+    /* ---------------- Deliveries ---------------- */
+    { id: 'dl-now', labels: ['Deliveries'],
+      query: SUBJ_(NOW_PHRASES) + ' -from:notifications@github.com ' + NOT_FROM_(AIRLINES) },
+    { id: 'dl-problem', labels: ['Deliveries', 'Notify'], star: true,
+      query: SUBJ_(PROBLEM_PHRASES) + ' ' + NOT_FROM_(AIRLINES) },
+    { id: 'dl-tracking', labels: ['Deliveries'], archive: true, read: true, expireDays: 30,
+      query: FROM_(['trackingupdates@fedex.com', 'pkginfo@ups.com', 'mcinfo@ups.com', 'usps.com', 'shipment-tracking@amazon.com',
+        'tracking@shipstation.com', 'shipping_notification@orders.apple.com', 'dhl.com', 'ontrac.com']) + ' ' +
+        NOT_SUBJ_(NOW_PHRASES) + ' ' + NOT_SUBJ_(PROBLEM_PHRASES) },
+
+    /* ---------------- Health ---------------- */
+    { id: 'h-change', labels: ['Health/Appointments', 'Health', 'Notify'],
+      query: FROM_(HEALTH) + ' ' + SUBJ_(['cancelled', 'canceled', 'cancellation', 'rescheduled', 'reschedule', 'changed',
+        'updated', 'booked', 'is scheduled', 'has been scheduled', 'appointment request', 'confirm your appointment']) +
+        ' -subject:invoice -subject:receipt' },
+    { id: 'h-reminder', labels: ['Health/Appointments', 'Health'], archive: true, read: true,
+      query: FROM_(HEALTH) + ' ' + SUBJ_(['reminder', 'is tomorrow', 'in one hour', 'upcoming appointment',
+        'you have an appointment', 'appointment with', 'session with']) + ' ' +
+        NOT_SUBJ_(['cancelled', 'canceled', 'cancellation', 'rescheduled', 'changed', 'booked', 'invoice', 'receipt',
+          'assessments due', 'action required']) },
+    { id: 'h-messages', labels: ['Health/Messages', 'Health'],
+      query: FROM_(HEALTH) + ' ' + SUBJ_(['new message', 'sent you a message', 'has sent you', 'secure message']) },
+    { id: 'h-insurance', labels: ['Health/Insurance', 'Health'],
+      query: FROM_(HEALTH_INSURERS) + ' -subject:statement' },
+
+    /* ---------------- Jobs ---------------- */
+    { id: 'j-applied', labels: ['Jobs/Applied', 'Jobs'], archive: true, read: true,
+      query: SUBJ_(['successfully submitted', 'thanks for applying', 'thank you for applying', 'thank you for your application',
+        'thanks for your application', 'application has been received', 'received your application', 'application received',
+        'completing your application', 'your application for', 'keep track of your application', 'application with',
+        'we have received your application', 'thank you for your interest']) + ' ' +
+        '-"not to move forward" -"not moving forward" -"not be moving forward" -"move forward with other" ' +
+        '-"other candidates" -"position has been filled" -"regret to inform" -"unable to move forward" -"not be proceeding"' },
+    { id: 'j-closed', labels: ['Jobs/Closed', 'Jobs'],
+      query: '("not to move forward" OR "not moving forward" OR "not be moving forward" OR "move forward with other" OR ' +
+        '"other candidates" OR "position has been filled" OR "regret to inform" OR "unable to move forward" OR "not be proceeding") ' +
+        FROM_(['ashbyhq.com', 'greenhouse-mail.io', 'greenhouse.io', 'myworkday.com', 'icims.com', 'lever.co', 'smartrecruiters.com',
+          'amazon.jobs', 'careers.microsoft.com', 'jobvite.com', 'workablemail.com', 'recruiting', 'talent', 'careers', 'jobs', 'hiring']) },
+    { id: 'j-listings', labels: ['Jobs/Listings', 'Jobs'], archive: true, read: true, expireDays: 30,
+      query: FROM_(['hiring.cafe', 'builtin.com', 'jobalerts-noreply@linkedin.com', 'jobs-listings@linkedin.com',
+        'jobs-noreply@linkedin.com', 'indeed.com', 'jobright.ai', 'dice.com', 'theladders.com',
+        'notifications@us.greenhouse-jobs.com', 'no-reply@us.greenhouse-jobs.com', 'team@hi.wellfound.com', 'ziprecruiter.com', 'glassdoor.com']) +
+        ' ' + NOT_SUBJ_(['login link', 'code', 'verify', 'application to', 'an update from', 'message', 'intro', 'terms', 'privacy']) },
+
+    /* ---------------- Research ---------------- */
+    { id: 'r-reviews', labels: ['Research/Reviews', 'Research'],
+      query: FROM_(CONF) + ' ' + SUBJ_(['review', 'reviews', 'reviewer', 'discussion comment', 'due', 'invitation to']) +
+        ' ' + NOT_SUBJ_(['submission made']) },
+    { id: 'r-decisions', labels: ['Research/Submissions', 'Research'],
+      query: FROM_(CONF) + ' ' + SUBJ_(['decision', 'accepted', 'rejected', 'camera-ready', 'rebuttal', 'notification', 'conditionally']) },
+    { id: 'r-confirm', labels: ['Research/Submissions', 'Research'], archive: true, read: true,
+      query: '((' + FROM_(CONF) + ' ' + SUBJ_(['submission made', 'has been received', 'submission received', 'has been submitted', 'submission updated']) +
+        ') OR from:rightsreview@acm.org OR ' + SUBJ_(['permission release', 'copyright form']) + ') ' +
+        NOT_SUBJ_(['decision', 'accepted', 'rejected', 'camera-ready', 'rebuttal', 'review']) },
+    { id: 'r-citations', labels: ['Research/Citations', 'Research'], archive: true, read: true,
+      query: 'from:scholaralerts-noreply@google.com' },
+
+    /* ---------------- Dev (GitHub) ---------------- */
+  ].concat(REPOS.map(function (r) {
+    return { id: 'dev-' + r.label.split('/')[1], labels: [r.label, 'Dev'], query: GH + ' list:' + r.list };
+  })).concat([
+    { id: 'dev-bots', labels: ['Dev'], archive: true, read: true, expireDays: 90,
+      query: GH + ' (from:dependabot OR from:copilot OR from:"github-actions" OR from:renovate OR from:coderabbitai OR ' +
+        'cc:push@noreply.github.com OR cc:your_activity@noreply.github.com OR cc:state_change@noreply.github.com OR cc:ci_activity@noreply.github.com) ' + GH_KEEP },
+    { id: 'dev-digests', labels: ['Dev'], archive: true, read: true, expireDays: 90,
+      query: 'from:noreply@github.com ' + SUBJ_(['Dependabot alerts', 'weekly digest']) },
+
+    /* ---------------- Routing ---------------- */
+    { id: 'kj-forward', labels: ['Karejucar', '_fwd/Karejucar'], archive: true, read: true,
+      query: '(to:karejucar.com OR cc:karejucar.com OR from:karejucar.com) -to:carlos@karejucar.com -cc:carlos@karejucar.com ' +
+        '-from:carlos@karejucar.com -to:' + TODOIST_ADDRESS },
+    { id: 'kj-copied', labels: ['Karejucar'], archive: true, read: true,
+      query: '(to:carlos@karejucar.com OR cc:carlos@karejucar.com) -to:' + TODOIST_ADDRESS },
+    { id: 'dad-forward', labels: ['_fwd/Dad'], archive: true, read: true,
+      query: 'from:' + {{ op://Private/gmail-rules/family-mortgage-sender }} },
+    { id: 'todoist-in', labels: ['Todoist'], archive: true,
+      query: 'to:' + TODOIST_ADDRESS },
+    { id: 'newsletters', labels: ['Newsletters'], archive: true,
+      query: FROM_(['macstories.net', 'substack.com', 'call-for-papers@hq.acm.org', 'pubs@acm.org']) +
+        ' -subject:receipt -subject:invoice -subject:"your order"' },
+    { id: 'noise-unsubscribed', trash: true,
+      query: FROM_(UNSUBSCRIBED) },
+
+    /* ---------------- Delete on arrival (sender lists) ---------------- */
+    { id: 'noise-promos-1', trash: true,
+      query: FROM_(['marketing.jetblue.com', 'hello@orbitkey.com', 'kontakt@nemlig.com',
+        'email.bestbuy.com', 'e.lululemon.com', 'store-news@amazon.com', 'newsletters@email.moma.org',
+        'info@transit.app', 'music@last.fm', 'connect@keepyourcadence.com',
+        'gyms.noreply@email.planetfitness.com', 'broadcasts.lemonsqueezy-mail.com',
+        'creators.gumroad.com', 'news@mail.dazn.com', 'marlins.com', 'updates@email.grok.com', 'noreply@email.openai.com',
+        'updates.otter.ai', 'hello@glaze.app', 'hello@mail.bevel.health', 'm.equinox.com']) },
+    { id: 'noise-promos-2', trash: true,
+      query: FROM_(['emarketing.newjerseydevils.com', 'm.gametime.co', 'newsletter@email.ticketmaster.com', 'targetnews@em.target.com',
+        'pointspathdeals.com',
+        'mailbox@pointspath.com', 'help@walmart.com', 'uberone@uber.com', 'updates.daybridge.com',
+        'em@em1.cloudflare.com', 'noreply@dsw.com', 'emails.ancestry.com', 'm.starbucks.com',
+        'dunkinrewards.com', 'hello@scrobblecloud.com', 'mobilepay.dk', 'noreply@careers.tiktok.com',
+        'talent.paypal.com', 'specials@e.uline.com', 'jetblueairways@marketing.jetblue.com']) },
+    { id: 'noise-health', trash: true, query: FROM_(HEALTH_NOISE) },
+    { id: 'noise-finance', trash: true, query: FROM_(FINANCE_NOISE) },
+    { id: 'noise-loyalty', trash: true,
+      query: {{ op://Private/gmail-rules/finance-loyalty-query }} },
+    { id: 'noise-surveys', trash: true,
+      query: '(' + FROM_(['medallia.com', 'feedback.hilton.com', 'qualtrics.com', 'survey.pledgebox.com', 'pgsurveying.com',
+        'asknicelyemail.com', 'trustpilotmail.com',
+        'smg.com', 'customer.em.com', 'bazaarvoice-cgc.com', 'resellerratings.com']) + ' OR ' +
+        SUBJ_(['how was your stay', 'how was your experience', 'how did we do', 'tell us about your experience',
+          'tell us about your recent experience', 'rate your recent experience', 'rate your experience', 'share your feedback',
+          'provide your feedback', 'leave a review', 'give it a review', 'submit a review', 'help us improve',
+          'take our survey', 'take our short survey', 'thoughts on your new', 'hope you enjoyed your stay']) + ') -from:me' },
+    { id: 'noise-notices', trash: true,
+      query: SUBJ_(['terms of use', 'terms of service', 'terms & conditions', 'terms and conditions', 'privacy policy',
+        'privacy notice', 'privacy notices', 'privacy statement', 'user agreement', 'member agreements', 'updates to our terms',
+        'updated our terms', 'legal terms', 'change in terms', 'opt-out notice', 'platform terms']) + ' -from:me -is:starred' },
+  ]),
+};
