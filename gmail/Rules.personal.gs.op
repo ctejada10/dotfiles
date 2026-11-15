@@ -59,6 +59,7 @@ const CONFIG = {
   account: 'carlos@carlosetejada.com',
   dryRunWindow: 'newer_than:365d',
   backfillWindow: '',            // whole archive
+  categorize: true,              // Notify mail to Primary, other inbox rules to Updates (see rdCategory_)
   noBackfill: ['Notify', 'Todoist', '_fwd/Flighty', '_fwd/Tripsy', '_fwd/Karejucar', '_fwd/Dad', '_review'],
   unsubscribe: UNSUBSCRIBED,
 

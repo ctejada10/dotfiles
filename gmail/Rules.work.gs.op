@@ -44,6 +44,7 @@ const CONFIG = {
   account: 'carlos@karejucar.com',
   dryRunWindow: 'newer_than:365d',
   backfillWindow: '',
+  categorize: true,              // Notify mail to Primary, other inbox rules to Updates (see rdCategory_)
   noBackfill: ['Notify'],
   reviewTo: 'carlos@carlosetejada.com',   // reviewDigest(): the Sunday review reads this account through personal
   unsubscribe: UNSUBSCRIBED,

@@ -25,6 +25,17 @@ function rdWrite_(name, obj) {
 }
 function rdMe_() { return Session.getActiveUser().getEmail().toLowerCase(); }
 
+/**
+ * The inbox category a rule's mail gets when CONFIG.categorize is on. Mimestream can notify only for a whole inbox
+ * or its Primary category, so Notify mail goes to Primary and other mail a rule leaves in the inbox goes to Updates.
+ * Mail no rule touches keeps Gmail's own category. A rule can set `category` itself.
+ */
+function rdCategory_(r) {
+  if (!CONFIG.categorize || r.trash || r.archive) return null;
+  if (r.category) return r.category;
+  return (r.labels || []).indexOf('Notify') >= 0 ? 'CATEGORY_PERSONAL' : 'CATEGORY_UPDATES';
+}
+
 /** Expand CONFIG.rules into concrete Gmail filters (one per label, so parent labels work). */
 function rdFilters_() {
   const out = [];
@@ -40,6 +51,7 @@ function rdFilters_() {
         if (rem.length) action.removeLabelIds = rem;
         if (r.star) action.addLabelIds.push('STARRED');
         if (r.trash) action.addLabelIds.push('TRASH');
+        if (rdCategory_(r)) action.addLabelIds.push(rdCategory_(r));
       }
       out.push({ id: r.id, query: r.query, action: action });
     });
@@ -130,7 +142,7 @@ function applyFilters() {
   rdFilters_().forEach(function (f) {
     const action = JSON.parse(JSON.stringify(f.action));
     action.addLabelIds = (action.addLabelIds || []).map(function (n) {
-      if (['STARRED', 'TRASH', 'IMPORTANT', 'INBOX', 'UNREAD'].indexOf(n) >= 0) return n;
+      if (['STARRED', 'TRASH', 'IMPORTANT', 'INBOX', 'UNREAD'].indexOf(n) >= 0 || n.indexOf('CATEGORY_') === 0) return n;
       if (!map[n]) throw new Error('Missing label ' + n + ' for rule ' + f.id);
       return map[n];
     });
