@@ -27,13 +27,27 @@ chezmoi doesn't deploy this folder (`.chezmoiroot` is `home`).
   domain also sends marketing. Each exclusion is its own `-term`, because
   negation doesn't distribute.
 - Deletes go to Trash, which keeps mail for 30 days. Deletes are sender lists,
-  plus multi-word phrases for legal notices and surveys.
+  plus multi-word phrases for legal notices and surveys. Each delete also adds
+  the hidden label `_deleted`, so `has:nouserlabels in:trash` finds only mail
+  deleted by hand.
 - A child label is applied together with its parent.
 - `_fwd/*` labels are hidden hand-offs. Every 10 minutes, `router()` forwards
   that mail and removes the label, so no forwarding address needs verifying.
 - `expireDays` trashes old mail daily, except mail that is starred or labelled
   Todoist.
 - Every client thread stays in the inbox, even when Carlos is only CC'd.
+
+## Notifications
+
+Mimestream notifies for a whole inbox or only its Primary category, never for a
+label. So with `categorize: true`, a rule that applies Notify also puts the mail
+in Primary, and any other rule that leaves mail in the inbox puts it in Updates.
+Mimestream, set to notify for Primary Inbox, then pings for Notify mail. Mail
+no rule touches keeps Gmail's own category, so people writing in usually ping
+too.
+
+Notify rules: on personal, money problems, travel changes, delivery problems
+and health changes; on work, every client and delivery problems.
 
 ## Secrets
 
