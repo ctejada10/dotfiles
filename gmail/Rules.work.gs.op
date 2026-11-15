@@ -52,6 +52,7 @@ const CONFIG = {
   labels: [
     'Clients'].concat(CLIENTS.map(function (c) { return 'Clients/' + c.label; })).concat([
     'Suppliers', 'Deliveries', 'Security', 'Security/Codes', 'Security/Sign-ins',
+    'Work orders', 'Work orders/Done', 'Work orders/Needs review',   // applied by hand; no rule files into them
     { name: 'Notify', hidden: true },
   ]),
   oldLabels: [],
