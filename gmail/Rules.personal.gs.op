@@ -290,7 +290,7 @@ const CONFIG = {
       query: '(to:carlos@karejucar.com OR cc:carlos@karejucar.com) -to:' + TODOIST_ADDRESS },
     { id: 'dad-forward', labels: ['_fwd/Dad'], archive: true, read: true,
       query: 'from:' + {{ op://Private/gmail-rules/family-mortgage-sender }} },
-    { id: 'review-data', labels: ['_review'], archive: true, read: true, expireDays: 35,   // the work account's weekly digest
+    { id: 'review-data', labels: ['_review'], archive: true, read: true, notSpam: true, expireDays: 35,   // the work account's weekly digest
       query: 'from:carlos@karejucar.com subject:"Gmail review data"' },
     { id: 'todoist-in', labels: ['Todoist'], archive: true,
       query: 'to:' + TODOIST_ADDRESS },

@@ -13,6 +13,8 @@
  *   reviewDigest()      mails CONFIG.reviewTo a week of evidence for the Sunday review (if set)
  */
 const RD_FOLDER = 'Gmail Redesign';
+// Delete rules tag what they trash, so has:nouserlabels in:trash finds only what Carlos deleted by hand.
+const RD_DELETED = '_deleted';
 
 function rdFolder_() {
   const it = DriveApp.getFoldersByName(RD_FOLDER);
@@ -48,6 +50,7 @@ function rdFilters_() {
         if (r.archive) rem.push('INBOX');
         if (r.read) rem.push('UNREAD');
         if (r.notImportant) rem.push('IMPORTANT');
+        if (r.notSpam) rem.push('SPAM');
         if (rem.length) action.removeLabelIds = rem;
         if (r.star) action.addLabelIds.push('STARRED');
         if (r.trash) action.addLabelIds.push('TRASH');
@@ -57,9 +60,10 @@ function rdFilters_() {
     });
     if (!labels.length) {
       const action = { addLabelIds: [], removeLabelIds: [] };
-      if (r.trash) action.addLabelIds.push('TRASH');
+      if (r.trash) action.addLabelIds.push(RD_DELETED, 'TRASH');
       if (r.archive) action.removeLabelIds.push('INBOX');
       if (r.read) action.removeLabelIds.push('UNREAD');
+      if (r.notSpam) action.removeLabelIds.push('SPAM');
       out.push({ id: r.id, query: r.query, action: action });
     }
   });
@@ -116,10 +120,16 @@ function rdLabelMap_() {
   (Gmail.Users.Labels.list('me').labels || []).forEach(function (l) { map[l.name] = l.id; });
   return map;
 }
+function rdLabels_() {
+  const deletes = CONFIG.rules.some(function (r) { return r.trash && !(r.labels || []).length; });
+  return CONFIG.labels.concat(deletes ? [{ name: RD_DELETED, hidden: true }] : []);
+}
+
 function applyLabels() {
   const map = rdLabelMap_();
   let made = 0;
-  CONFIG.labels.forEach(function (l) {
+  const labels = rdLabels_();
+  labels.forEach(function (l) {
     const name = typeof l === 'string' ? l : l.name;
     if (map[name]) return;
     const body = { name: name, labelListVisibility: 'labelShow', messageListVisibility: 'show' };
@@ -128,7 +138,7 @@ function applyLabels() {
     map[name] = Gmail.Users.Labels.create(body, 'me').id;
     made++;
   });
-  Logger.log('LABELS OK: %s created, %s total', made, CONFIG.labels.length);
+  Logger.log('LABELS OK: %s created, %s total', made, labels.length);
 }
 
 /* ---------------- filters ---------------- */
