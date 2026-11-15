@@ -13,7 +13,7 @@ chezmoi doesn't deploy this folder (`.chezmoiroot` is `home`).
   its labels, forwards and rules. A rule becomes one filter per label.
 - `Engine.gs`: shared by both accounts. Its header lists the entry points:
   `dryRun`, `applyLabels`, `applyFilters`, `backfill`, `router`,
-  `housekeeping`, `installTriggers` and `unsubscribe`.
+  `housekeeping`, `installTriggers`, `reviewDigest` and `unsubscribe`.
 - `Survey.gs`: the read-only backup and sender inventory the redesign started
   from. It is the personal project's `Code.gs`.
 - `appsscript.json`: the manifest. It lists every scope explicitly, because
@@ -67,8 +67,15 @@ template. To add a field, add its reference here and to the item.
 
 ## The weekly review
 
-On Sunday mornings, a scheduled Claude task reads the personal account's past
-week. It looks for mail that no rule caught but that Carlos archived, deleted
-or left in the inbox, and for rules that may have misfired. It puts its
-proposals in one Todoist task and changes nothing. When a proposed sender
-belongs to a 1Password list, the task names the field.
+On Sunday mornings, a scheduled Claude task reviews both accounts. It
+looks for mail that no rule caught but that Carlos archived, deleted or left in
+the inbox, and for rules that may have misfired. It puts its proposals in one
+Todoist task and changes nothing. When a proposed sender belongs to a
+1Password list, the task names the field.
+
+The task can only reach the personal account, so at 6 AM the work project's
+`reviewDigest()` mails the personal account the same evidence about the work
+account, as JSON. That evidence is what no rule caught, plus what rules
+archived or deleted. The personal rule `review-data` files it under the hidden
+label `_review`, and the mail goes to Trash after 35 days. An account sends a
+digest only when its `CONFIG.reviewTo` is set.
