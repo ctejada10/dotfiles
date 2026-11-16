@@ -266,9 +266,10 @@ The deploy key that can only ask the gate for a deploy goes in, in this order.
    `/etc/rivendell/op-token`, readable by root and `deploy` only.
 2. Make the new key in 1Password, one per repo:
    `op item create --category "SSH Key" --title "hurin deploy key" --vault Private --ssh-generate-key ed25519`.
-   Rivendell's is "rivendell deploy key". Put its public half
-   (`op read "op://Private/hurin deploy key/public key"`) in the host file's
-   `deploy_public_key` and run.
+   Rivendell's is "rivendell deploy key". Set the host file's
+   `deploy_public_key_ref` to its public half,
+   `op://Private/hurin deploy key/public key`, and run: the run reads it from
+   1Password on the laptop. A host file never holds the key itself.
 3. In the repo's settings, make an environment named `production` whose
    deployment branches are limited to `main` (Settings → Environments → New
    environment, then Deployment branches and tags → Selected branches →

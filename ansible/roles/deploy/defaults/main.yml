@@ -15,3 +15,7 @@ deploy_git_host_keys: "{{ pins.github_ssh_host_keys }}"
 # and the file the run writes it to for deploy. Empty leaves 1Password off.
 deploy_op_token_ref: ""
 deploy_op_token_file: ""
+
+# The 1Password reference to the public half of the key GitHub Actions deploys
+# with, read on the laptop when the run starts. Empty authorizes no such key.
+deploy_public_key_ref: ""
