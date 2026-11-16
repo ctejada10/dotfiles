@@ -6,7 +6,8 @@
 # It accepts one request, "deploy <full commit sha>", for a commit on
 # {{ deploy_repo }}'s origin/{{ deploy_branch }}. It checks that commit out
 # and runs that commit's own scripts/deploy.sh, which decrypts with this
-# server's age key; no secret ever comes from GitHub. A deploy that has started
+# server's age key or reads 1Password with its own service account; no secret
+# ever comes from GitHub. A deploy that has started
 # finishes even if the client disconnects; the last one's output is in
 # ~deploy/.local/state/deploy-gate/last-deploy.log.
 #

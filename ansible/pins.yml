@@ -17,6 +17,14 @@ pins:
     sha256:
       amd64: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
       arm64: 53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
+  # 1Password's CLI, on servers whose deploy reads 1Password. Checked 16 Nov
+  # 2026: 2.42.0 is the release 1Password's update check offers, and these
+  # are the zips cache.agilebits.com serves for it.
+  op:
+    version: 2.42.0
+    sha256:
+      amd64: 261fe3844a43e7e83a3d85e8a9f36411729436a1d3add1dc7dd46cbbceebe9e5
+      arm64: e56c379fabafb393ce699258e484694abe464870fb41f35ce1b5c3f17868ba61
   # GitHub's SSH host keys, which deploy trusts when it fetches. Checked 26 Oct
   # 2026: api.github.com/meta and an ssh-keyscan of github.com gave the same
   # three keys, and each matches the fingerprint GitHub publishes.

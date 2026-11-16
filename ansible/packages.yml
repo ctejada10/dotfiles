@@ -25,9 +25,10 @@ shared:
 per_host:
   dor-lomin: []
   # Rivendell's deploy runs rivendell.py with the system Python, which needs
-  # click.
+  # click. unzip unpacks 1Password's CLI.
   rivendell:
     - python3-click
+    - unzip
   esgaroth: []
 
 # Installed only where the release packages them: Ubuntu 24.04 and later,

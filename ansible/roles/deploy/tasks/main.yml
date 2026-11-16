@@ -70,6 +70,67 @@
       .sops.yaml in each repo that deploys here, then re-seal.
   when: not ansible_check_mode
 
+# 1Password's CLI and a read-only service account's token, for a deploy that
+# reads its secrets from 1Password. The token comes from 1Password on the
+# laptop, where the run starts, so it never passes through GitHub, and only
+# root and deploy can read it. Each version unpacks to its own folder, so a
+# new pin replaces the link and nothing else.
+- name: Install 1Password's CLI and the deploy token
+  when: deploy_op_token_ref | length > 0
+  block:
+    - name: Fetch 1Password's CLI {{ pins.op.version }}
+      ansible.builtin.get_url:
+        url: "https://cache.agilebits.com/dist/1P/op2/pkg/v{{ pins.op.version }}/op_linux_{{ deb_arch }}_v{{ pins.op.version }}.zip"
+        dest: "/var/cache/op_linux_{{ deb_arch }}_v{{ pins.op.version }}.zip"
+        checksum: "sha256:{{ pins.op.sha256[deb_arch] }}"
+        mode: "0644"
+
+    - name: Make 1Password's CLI folder for {{ pins.op.version }}
+      ansible.builtin.file:
+        path: /opt/1password-cli/{{ pins.op.version }}
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Not under --check, which fetched nothing to unpack.
+    - name: Unpack 1Password's CLI
+      ansible.builtin.unarchive:
+        src: "/var/cache/op_linux_{{ deb_arch }}_v{{ pins.op.version }}.zip"
+        dest: /opt/1password-cli/{{ pins.op.version }}
+        remote_src: true
+        include: [op]
+        creates: /opt/1password-cli/{{ pins.op.version }}/op
+        owner: root
+        group: root
+        mode: "0755"
+      when: not ansible_check_mode
+
+    - name: Put 1Password's CLI on the PATH
+      ansible.builtin.file:
+        src: /opt/1password-cli/{{ pins.op.version }}/op
+        dest: /usr/local/bin/op
+        state: link
+      when: not ansible_check_mode
+
+    - name: Make the deploy token's folder
+      ansible.builtin.file:
+        path: "{{ deploy_op_token_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the service account's token, readable by root and deploy only
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.pipe', 'op read ' ~ (deploy_op_token_ref | quote)) }}\n"
+        dest: "{{ deploy_op_token_file }}"
+        owner: root
+        group: deploy
+        mode: "0440"
+      no_log: true
+      diff: false
+
 - name: Install the deploy gate, the only command GitHub Actions' key can run
   ansible.builtin.template:
     src: deploy-gate.j2
