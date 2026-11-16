@@ -161,6 +161,18 @@
     group: root
     mode: "0755"
 
+- name: Read GitHub Actions' deploy key from 1Password on the laptop
+  ansible.builtin.set_fact:
+    deploy_public_key: "{{ lookup('ansible.builtin.pipe', 'op read ' ~ (deploy_public_key_ref | quote)) }}"
+  when: deploy_public_key_ref | length > 0
+
+- name: Refuse a deploy key from 1Password that isn't a public key
+  ansible.builtin.assert:
+    that: deploy_public_key is match('ssh-[a-z0-9-]+ AAAA')
+    fail_msg: "{{ deploy_public_key_ref }} didn't read as an SSH public key. Nothing was authorized."
+    quiet: true
+  when: deploy_public_key_ref | length > 0
+
 - name: Authorize GitHub Actions' key, limited to the deploy gate
   ansible.posix.authorized_key:
     user: deploy

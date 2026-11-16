@@ -42,14 +42,14 @@ deploy_branch: main
 deploy_github_repo: ctejada10/rivendell
 deploy_submodule_repos: [ctejada10/arwen]
 deploy_owned_dirs: []
-# The public half of the key GitHub Actions deploys with, which can only ask
-# the gate for a deploy. Its private half is in 1Password as "rivendell
-# deploy key" and in the repo's production environment as VPS_SSH_KEY.
-deploy_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJwQuNZDFlAYNluKM9uvLhDyIJPQkHerc2hr3CYz1HL8 rivendell deploy key"
-# Public halves of keys to take out of deploy's authorized_keys. The old
-# workflow's unrestricted key: main's Deploy workflow no longer uses it.
-deploy_retired_keys:
-  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB1+9eJCsDIEGYe832c30wZKlNg+HoG9AGyUbmRN1Ikk github-actions-rivendell 2026-10-26"
+# The key GitHub Actions deploys with, which can only ask the gate for a
+# deploy. The run reads its public half from 1Password on the laptop; its
+# private half is the repo's production environment secret VPS_SSH_KEY.
+deploy_public_key: ""
+deploy_public_key_ref: "op://Private/rivendell deploy key/public key"
+# Public halves of keys to take out of deploy's authorized_keys. Empty: the old
+# workflow's unrestricted key (github-actions-rivendell) is taken out by hand.
+deploy_retired_keys: []
 # Rivendell's scripts/deploy.sh reads the Rivendell vault with this read-only
 # service account. The run reads its token from 1Password on the laptop and
 # writes it to deploy_op_token_file, where deploy.sh looks for it.

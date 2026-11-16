@@ -72,6 +72,9 @@ for name in $(sed -n '/^hosts:/,/^[a-z]/s/^  \([a-z0-9-]*\):$/\1/p' "$REPO/home/
     grep -qE '^deploy_github_repo: [a-z0-9-]+/[A-Za-z0-9._-]+$' "$dir/hosts/$name.yml" \
       && pass "$name names the repo deploy fetches" || fail "$name names the repo deploy fetches"
   fi
+  # Deploy keys live in 1Password; a host file names them, never holds one.
+  found=$(grep -nE 'ssh-[a-z0-9-]+ AAAA' "$dir/hosts/$name.yml")
+  [ -z "$found" ] && pass "$name holds no SSH key" || fail "$name holds no SSH key" "$found"
 done
 
 section "GitHub's pinned host keys"
