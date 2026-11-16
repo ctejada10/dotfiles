@@ -50,3 +50,8 @@ deploy_public_key: ""
 # workflow deploys with the key above, today's unrestricted one
 # (github-actions-rivendell) goes here.
 deploy_retired_keys: []
+# Rivendell's scripts/deploy.sh reads the Rivendell vault with this read-only
+# service account. The run reads its token from 1Password on the laptop and
+# writes it to deploy_op_token_file, where deploy.sh looks for it.
+deploy_op_token_ref: "op://Private/rivendell-deploy service account/credential"
+deploy_op_token_file: /etc/rivendell/op-token

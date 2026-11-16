@@ -210,7 +210,11 @@ the old checkout* replaces that login.
   tmpfs, out of sight and never cleared, so empty it of anything large
   before you reboot.
 - A deploy part on the servers that deploy: the `deploy` user, sops, age,
-  and an age key made on the server, whose public half the run prints. Its
+  and an age key made on the server, whose public half the run prints. Where
+  the host file sets `deploy_op_token_ref` (Rivendell), also 1Password's CLI,
+  pinned by checksum, and the service account token that reference names,
+  read from 1Password on the laptop. A run therefore asks the laptop's
+  1Password to unlock, `--check` included. Its
   deploy gate runs a commit's `scripts/deploy.sh` to the end even when the
   workflow's connection drops, so cancelling a run doesn't stop a deploy
   half-way; the last deploy's output is in
@@ -252,7 +256,14 @@ The deploy key that can only ask the gate for a deploy goes in, in this order.
 
 1. Add the age key the run printed to the deploy repo's `.sops.yaml` and
    [re-seal](#re-sealing-secrets), since the gate decrypts with the server's
-   own key.
+   own key. Rivendell reads 1Password instead, and skips the re-seal: its
+   values go in the vault "Rivendell", and a read-only service account,
+   `rivendell-deploy`, may read that vault and nothing else. Make it with
+   `op service-account create rivendell-deploy --vault Rivendell:read_items`
+   and keep its token in your Private vault as the `credential` field of
+   "rivendell-deploy service account", which `deploy_op_token_ref` names. The
+   run reads it there, on the laptop, and writes it to
+   `/etc/rivendell/op-token`, readable by root and `deploy` only.
 2. Make the new key in 1Password, one per repo:
    `op item create --category "SSH Key" --title "hurin deploy key" --vault Private --ssh-generate-key ed25519`.
    Rivendell's is "rivendell deploy key". Put its public half

@@ -9,3 +9,9 @@ deploy_owned_dirs: []
 # points these at a stand-in for GitHub.
 deploy_git_host: github.com
 deploy_git_host_keys: "{{ pins.github_ssh_host_keys }}"
+
+# A server whose deploy reads its secrets from 1Password: the reference to a
+# read-only service account's token, read on the laptop when the run starts,
+# and the file the run writes it to for deploy. Empty leaves 1Password off.
+deploy_op_token_ref: ""
+deploy_op_token_file: ""
