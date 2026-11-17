@@ -95,6 +95,13 @@ if [ -n {{ .hermes.hurin.bridge.tag | squote }} ]; then
 fi
 {{ end -}}
 
+{{ if .hermes.rivendell.enabled -}}
+mkdir -p "$HOME/.hermes/skills/rivendell/events"
+if ! cmp -s "$data/rivendell/SKILL.md" "$HOME/.hermes/skills/rivendell/events/SKILL.md"; then
+  cp "$data/rivendell/SKILL.md" "$HOME/.hermes/skills/rivendell/events/SKILL.md" && say "updated the rivendell skill" && changed=1
+fi
+{{ end -}}
+
 if [ -n "$changed" ]; then
   if launchctl print "gui/$(id -u)/ai.hermes.gateway" >/dev/null 2>&1; then
     "$hermes" gateway restart >/dev/null 2>&1 && say "restarted the Hermes gateway" || warn "couldn't restart the Hermes gateway"
@@ -136,6 +143,9 @@ checklist=$(
   todo beeper "Confirm Beeper Desktop's local API is on and read-only"
   todo tailscale "Log in to Tailscale and tag this Mac tag:agent (the ACL grants are in the Hurin repo)"
   todo approvals "Confirm in a Hermes chat that the five pre-approved hurin_act tools run without a prompt and any other act tool prompts"
+{{- end }}
+{{- if .hermes.rivendell.enabled }}
+  todo rivendell-grant "Let rivendell reach this Mac on tcp:{{ .hermes.rivendell.webhookPort }} in the Tailscale policy, as docs/setup-mini.md says"
 {{- end }}
 )
 if [ -n "$checklist" ]; then

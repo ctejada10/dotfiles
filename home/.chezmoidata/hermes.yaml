@@ -31,3 +31,17 @@ hermes:
       dropFolder: ""
       messagesDb: ""
       beeperApiUrl: ""
+  # Off until both copies of Rivendell's webhook secret exist: the Hermes vault's
+  # Rivendell item and the Rivendell vault's Hermes item hold the same value
+  # (docs/setup-mini.md). While off, no rivendell route, secret or skill reaches
+  # this Mac. Rivendell's hermes-relay posts signed events to
+  # http://<webhookHost>:<webhookPort>/webhooks/rivendell.
+  rivendell:
+    enabled: false
+    # This Mac's tailnet address, which Hermes's webhook listener binds. Hermes
+    # has one listener, so with Hurin on too both blocks name the same host and
+    # port.
+    webhookHost: ""
+    webhookPort: 8644
+    # Empty delivers to Telegram's home channel, Carlos's own chat.
+    telegramChatId: ""
