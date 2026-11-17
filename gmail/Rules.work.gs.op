@@ -1,0 +1,96 @@
+/**
+ * Rules — carlos@karejucar.com
+ * Source of truth: ctejada10/dotfiles → gmail/Rules.work.gs.op
+ * Template: client names and domains come from 1Password (vault Private, item gmail-rules,
+ * field work-clients, a JSON array). Render with gmail/render.
+ *
+ * Conventions: same as Rules.personal.gs.
+ *  - Every client thread stays in the INBOX, including ones where Carlos is only CC'd. Client labels are for retrieval.
+ *  - A client not in work-clients has no label: search by PO / store number.
+ *  - Work emails reach Todoist by forwarding them to the personal account's Todoist address.
+ */
+function OR_(arr) { return '(' + arr.join(' OR ') + ')'; }
+function FROM_(arr) { return 'from:' + OR_(arr); }
+function ANY_(arr) { return OR_(arr.map(function (d) { return 'from:' + d + ' OR to:' + d + ' OR cc:' + d; })); }
+function SUBJ_(arr) { return 'subject:' + OR_(arr.map(function (s) { return /\s|[:&']/.test(s) ? '"' + s + '"' : s; })); }
+function NOT_SUBJ_(arr) { return arr.map(function (s) { return '-subject:"' + s + '"'; }).join(' '); }
+
+const NOW_PHRASES = ['ready for pickup', 'ready to pick up', 'pick up your', 'out for delivery', 'has been delivered',
+  'was delivered', 'arriving today', 'delivered:'];
+const PROBLEM_PHRASES = ['delivery delayed', 'delivery exception', 'unable to deliver', 'delivery attempt', 'attempted delivery',
+  'problem with your order', 'shipment exception', 'out of stock', 'backorder', 'back order'];
+// Unsubscribed 2026-11-15; trashed on arrival in case a list keeps sending.
+const UNSUBSCRIBED = ['noreply@bidnet.com', 'njtmarketing@njtransit.com', 'intakeunit@njtransit.com', 'specials@e.uline.com',
+  'hello@canarymail.io'];
+
+/* ---------- from 1Password ---------- */
+// [{ id, label, domains: [...], paperwork?: { from, subject } }]. Every client thread stays in the inbox and
+// notifies; a paperwork sender's notices are archived under the same label.
+const CLIENTS = {{ op://Private/gmail-rules/work-clients }};
+
+function clientRules_() {
+  const out = [];
+  CLIENTS.forEach(function (c) {
+    const labels = ['Clients/' + c.label, 'Clients'];
+    out.push({ id: c.id, labels: labels.concat(['Notify']),
+      query: ANY_(c.domains) + (c.paperwork ? ' -from:' + c.paperwork.from : '') });
+    if (c.paperwork) out.push({ id: c.id + '-paperwork', labels: labels, archive: true, read: true,
+      query: 'from:' + c.paperwork.from + ' ' + SUBJ_([c.paperwork.subject]) });
+  });
+  return out;
+}
+
+const CONFIG = {
+  account: 'carlos@karejucar.com',
+  dryRunWindow: 'newer_than:365d',
+  backfillWindow: '',
+  categorize: true,              // Notify mail to Primary, other inbox rules to Updates (see rdCategory_)
+  noBackfill: ['Notify'],
+  reviewTo: 'carlos@carlosetejada.com',   // reviewDigest(): the Sunday review reads this account through personal
+  unsubscribe: UNSUBSCRIBED,
+
+  labels: [
+    'Clients'].concat(CLIENTS.map(function (c) { return 'Clients/' + c.label; })).concat([
+    'Suppliers', 'Deliveries', 'Security', 'Security/Codes', 'Security/Sign-ins',
+    'Work orders', 'Work orders/Done', 'Work orders/Needs review',   // applied by hand; no rule files into them
+    { name: 'Notify', hidden: true },
+  ]),
+  oldLabels: [],
+  forwards: [],
+
+  rules: clientRules_().concat([
+    /* ---------------- Suppliers ---------------- */
+    { id: 's-orders', labels: ['Suppliers'], archive: true, read: true,
+      query: FROM_(['customer.service@uline.com', 'sales@wallguard.com', 'cabinetparts.com', 'notifications@paytrace.com']) + ' ' +
+        SUBJ_(['order confirmation', 'order acknowledgement', 'thanks for your order', 'has shipped', 'shipping confirmation',
+          'has been processed', 'invoice for your order', 'transaction receipt', 'customer number', 'return']) + ' ' +
+        NOT_SUBJ_(NOW_PHRASES) + ' ' + NOT_SUBJ_(PROBLEM_PHRASES) },
+    { id: 's-people', labels: ['Suppliers'],      // humans and pay requests at suppliers stay in the inbox
+      query: FROM_(['mmistorage.com', 'mobilemediastorage.com', 'wallguard.com', 'uline.com', 'cabinetparts.com', 'paytrace.com']) +
+        ' -from:specials@e.uline.com' },
+
+    /* ---------------- Deliveries ---------------- */
+    { id: 'dl-now', labels: ['Deliveries'], query: SUBJ_(NOW_PHRASES) },
+    { id: 'dl-problem', labels: ['Deliveries', 'Notify'], star: true, query: SUBJ_(PROBLEM_PHRASES) },
+    { id: 'dl-tracking', labels: ['Deliveries'], archive: true, read: true, expireDays: 30,
+      query: FROM_(['trackingupdates@fedex.com', 'pkginfo@ups.com', 'mcinfo@ups.com', 'usps.com', 'dhl.com']) + ' ' +
+        NOT_SUBJ_(NOW_PHRASES) + ' ' + NOT_SUBJ_(PROBLEM_PHRASES) },
+
+    /* ---------------- Security ---------------- */
+    { id: 'sec-codes', labels: ['Security/Codes', 'Security'], expireDays: 7,
+      query: SUBJ_(['verification code', 'security code', 'one-time code', 'your code is', 'sign-in code', 'login code',
+        'magic link', 'password reset', 'reset your password', 'verify your email']) },
+    { id: 'sec-signins', labels: ['Security/Sign-ins', 'Security'], archive: true, read: true,
+      query: '((from:no-reply@accounts.google.com subject:"security alert") OR ' + SUBJ_(['new sign-in', 'new sign in',
+        'new login', 'sign-in alert']) + ') -subject:password -subject:recovery' },
+
+    /* ---------------- Delete on arrival ---------------- */
+    { id: 'noise-unsubscribed', trash: true, query: FROM_(UNSUBSCRIBED) },
+    { id: 'noise-reviews', trash: true,
+      query: FROM_(['survey@resellerratings.com', 'no-reply@cabinetparts.com']) + ' ' +
+        SUBJ_(['how was your experience', 'did cabinetparts.com deliver', 'checking in', "we'd love to hear", 'write a review']) },
+    { id: 'noise-notices', trash: true,
+      query: SUBJ_(['terms of use', 'terms of service', 'terms & conditions', 'terms and conditions', 'privacy policy',
+        'privacy notice', 'legal terms', 'updates to our terms']) + ' -from:me -is:starred' },
+  ]),
+};
