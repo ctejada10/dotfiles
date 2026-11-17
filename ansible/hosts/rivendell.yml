@@ -28,8 +28,8 @@ tailscale: true
 samba: true
 
 reboot_time: "05:00"
-# The kernel reboot waits a day while rivendell-warden says a restart would cut
-# off a Plex stream (exit 1). Any other failure reboots anyway.
+# The kernel reboot waits a day, for 3 days at most, while rivendell-warden says
+# a restart would cut off a Plex stream (exit 1). Any other failure reboots.
 reboot_check: runuser -u deploy -- /usr/local/bin/rivendell-warden busy
 # Off, as on dor-lomin (decided 26 Oct). Only Húrin's plex-collection-suggest
 # logged in with a password, twice a year; its Rivendell step fails until the

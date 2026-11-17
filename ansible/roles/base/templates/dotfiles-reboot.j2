@@ -1,15 +1,18 @@
 #!/bin/sh
 # Written by the dotfiles playbook. Reboots for a new kernel at reboot_time,
 # in place of unattended-upgrades' own reboot, once this server's check says
-# nothing would be cut off. Busy waits for the same time tomorrow.
+# nothing would be cut off. Busy waits for the same time tomorrow, for 3 days
+# at most since the last package that asked for a reboot.
 [ -f /var/run/reboot-required ] || exit 0
 {{ reboot_check }}
 status=$?
 if [ "$status" -eq 1 ]; then
-  echo "A new kernel waits: the check says the server is busy. Trying again tomorrow."
-  exit 0
+  if [ -z "$(find /var/run/reboot-required -mmin +4320)" ]; then
+    echo "A new kernel waits: the check says the server is busy. Trying again tomorrow."
+    exit 0
+  fi
+  echo "The check says the server is busy, but a new kernel has waited 3 days. Rebooting anyway."
 fi
-# Any other failure reboots anyway, so a broken check can't hold a kernel back
-# for good.
-[ "$status" -eq 0 ] || echo "The check failed (exit $status). Rebooting anyway."
+# Any other failure reboots anyway, so a broken check can't hold a kernel back.
+[ "$status" -le 1 ] || echo "The check failed (exit $status). Rebooting anyway."
 exec systemctl reboot

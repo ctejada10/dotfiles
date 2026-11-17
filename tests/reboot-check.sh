@@ -36,6 +36,15 @@ else
   fail "busy: waits a day" "$out"
 fi
 
+touch -t "$(date -v-4d +%Y%m%d%H%M 2>/dev/null || date -d '4 days ago' +%Y%m%d%H%M)" "$work/reboot-required"
+out="$(run 1)"
+if rebooted && grep -q "3 days" <<< "$out"; then
+  pass "busy for over 3 days: reboots anyway"
+else
+  fail "busy for over 3 days: reboots anyway" "$out"
+fi
+touch "$work/reboot-required"
+
 out="$(run 2)"
 if rebooted && grep -q "exit 2" <<< "$out"; then
   pass "a check that fails otherwise: reboots anyway"
