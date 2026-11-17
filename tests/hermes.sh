@@ -114,6 +114,13 @@ section "role agent-mini, rivendell on"
 default=$(cz cat "$SANDBOX/home/.local/share/dotfiles/hermes/config.json")
 python3 -c 'import json,sys; w=json.load(sys.stdin)["platforms.webhook"]; assert list(w["extra"]["routes"])==["rivendell"] and w["extra"]["host"].startswith("100."), w' <<<"$default" \
   && pass "the data turns the rivendell route on, bound to a tailnet address" || fail "the data turns the rivendell route on, bound to a tailnet address" "$default"
+# Hermes renders an empty chat_id as the whole event, which Telegram can't find,
+# so a route for the home channel must leave deliver_extra out.
+python3 -c 'import json,sys; r=json.load(sys.stdin)["platforms.webhook"]["extra"]["routes"]["rivendell"]; assert "deliver_extra" not in r, r' <<<"$default" \
+  && pass "an empty telegramChatId sends rivendell events to the home channel" || fail "an empty telegramChatId sends rivendell events to the home channel" "$default"
+home_hurin=$(cz --override-data "$(sed 's/"telegramChatId":"1"/"telegramChatId":""/' <<<"$ON")" execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl")
+python3 -c 'import json,sys; r=json.load(sys.stdin)["platforms.webhook"]["extra"]["routes"]["hurin"]; assert "deliver_extra" not in r, r' <<<"$home_hurin" \
+  && pass "an empty telegramChatId sends hurin events to the home channel" || fail "an empty telegramChatId sends hurin events to the home channel" "$home_hurin"
 riv=$(cz --override-data "$RIV" execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl")
 python3 -c '
 import json,sys
