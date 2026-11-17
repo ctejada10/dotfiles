@@ -30,6 +30,7 @@ run tests/dock.sh
 run tests/hermes.sh
 run tests/personal-backup.sh
 run tests/cf-amonsul.sh
+run tests/deploy-gate.sh
 run tests/ansible.sh
 run tests/apply-twice.sh
 run tests/zsh-baseline.sh
