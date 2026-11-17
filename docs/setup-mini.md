@@ -782,7 +782,7 @@ The gateway is Hermes's own LaunchAgent, which starts at login, so it needs
 auto-login on and FileVault off; turning FileVault on leaves the mini with no
 network after a reboot until someone unlocks it.
 
-`hermes.yaml` has two switches:
+`hermes.yaml` has three switches:
 
 - **`secrets.enabled`, on:** each apply renders the items named in
   `home/.chezmoitemplates/hermes-secrets.op` from the Hermes vault into a
@@ -804,6 +804,29 @@ network after a reboot until someone unlocks it.
   bridge release. Fill in the rest of that block first, and check the skill and
   the bridge's provisional setting names against what Hurin ships. Until then
   no Hurin server, route, allowlist entry, skill or bridge reaches the mini.
+- **`rivendell.enabled`, off:** the `rivendell` webhook route, through which
+  Rivendell's `hermes-relay` sends Carlos every message from the server:
+  deploy results and, later, failed backups and services down. Hermes runs
+  each event with the `rivendell-events` skill and delivers it on Telegram.
+  The route has no tool that acts on Rivendell. Before turning it on:
+
+  1. Make one random value and store it twice in 1Password, on the laptop: in
+     the Hermes vault as item `Rivendell`, field `webhook-secret`, and in the
+     Rivendell vault as item `Hermes`, field `webhook-secret`. Keep both fields
+     out of any named section. Rivendell's next deploy fails until its copy
+     exists, since `op run` can't resolve the reference.
+  2. In `hermes.yaml`, set `rivendell.webhookHost` to the mini's tailnet
+     address (`tailscale ip -4` on the mini), keep `webhookPort` at 8644 unless
+     Hurin's route uses another, and set `enabled: true`. With Hurin on too,
+     both blocks must name the same host and port, since Hermes has one webhook
+     listener; the apply refuses otherwise.
+  3. Apply on the mini. `hermes-health` then checks that the webhook answers.
+  4. In the Tailscale policy, let Rivendell reach the mini on that port only:
+     `{"src": ["rivendell"], "dst": ["amon-sul"], "ip": ["tcp:8644"]}`.
+     Nothing else lists amon-sul as a destination on that port.
+  5. In Rivendell's repo, set `HERMES_URL` in `stacks/ops/compose.yaml` to
+     `http://<the mini's tailnet address>:8644/webhooks/rivendell` and deploy.
+     Until then the relay keeps every event queued.
 
 To upgrade: run `hermes update`, change the pin, apply, re-check every key
 against the new version's docs, then create a paused canary cron job, run it

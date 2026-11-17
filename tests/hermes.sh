@@ -10,6 +10,8 @@ set -uo pipefail
 
 sync=$REPO/home/dot_local/bin/executable_hermes-config-sync
 ON='{"hermes":{"secrets":{"enabled":true},"hurin":{"enabled":true,"host":"dor-lomin.test","port":8000,"webhookHost":"100.64.0.1","telegramChatId":"1","bridge":{"tag":"bridge-v1","port":8001}}}}'
+RIV='{"hermes":{"secrets":{"enabled":true},"rivendell":{"enabled":true,"webhookHost":"100.64.0.1","telegramChatId":"7"}}}'
+BOTH='{"hermes":{"secrets":{"enabled":true},"hurin":{"enabled":true,"host":"dor-lomin.test","port":8000,"webhookHost":"100.64.0.1","telegramChatId":"1","bridge":{"tag":"bridge-v1","port":8001}},"rivendell":{"enabled":true,"webhookHost":"100.64.0.1","telegramChatId":"7"}}}'
 
 roles=(ci laptop)
 [ "$(uname)" = Linux ] && roles=(ci server)
@@ -91,7 +93,7 @@ fi
 section "role agent-mini, switches off"
 sandbox agent-mini >/dev/null 2>&1
 list=$(cz managed --include=files 2>/dev/null)
-for f in .local/bin/hermes-config-sync .local/bin/hermes-health .local/share/dotfiles/hermes/SKILL.md Library/LaunchAgents/com.carlosetejada.hermes-logs.plist; do
+for f in .local/bin/hermes-config-sync .local/bin/hermes-health .local/share/dotfiles/hermes/SKILL.md .local/share/dotfiles/hermes/rivendell/SKILL.md Library/LaunchAgents/com.carlosetejada.hermes-logs.plist; do
   grep -qx "$f" <<<"$list" && pass "manages $f" || fail "manages $f"
 done
 grep -q 'hurin-bridge\|bridge.env' <<<"$list" && fail "has no bridge" || pass "has no bridge"
@@ -99,9 +101,42 @@ grep -q '^\.hermes' <<<"$list" && fail "manages nothing in ~/.hermes" "$(grep '^
 off=$(cz cat "$SANDBOX/home/.local/share/dotfiles/hermes/config.json")
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["command_allowlist"]==[] and d["approvals.mode"]=="smart" and not any("hurin" in k or k.startswith("platforms") for k in d)' <<<"$off" \
   && pass "config has no Hurin keys and an empty allowlist" || fail "config has no Hurin keys and an empty allowlist" "$off"
+grep -qi rivendell <<<"$off" && fail "config has no rivendell route" "$off" || pass "config has no rivendell route"
 off_script=$(cz --override-data '{"hermes":{"secrets":{"enabled":true}}}' execute-template <"$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl")
 grep -q 'op://Hermes/Telegram' <<<"$off_script" && pass "renders the Telegram secrets" || fail "renders the Telegram secrets"
 grep -q 'op://Hermes/Hurin' <<<"$off_script" && fail "renders no Hurin secrets" || pass "renders no Hurin secrets"
+grep -q 'op://Hermes/Rivendell' <<<"$off_script" && fail "renders no Rivendell secret" || pass "renders no Rivendell secret"
+grep -q 'skills/rivendell' <<<"$off_script" && fail "installs no rivendell skill" || pass "installs no rivendell skill"
+
+section "role agent-mini, rivendell on"
+riv=$(cz --override-data "$RIV" execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl")
+python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+w=d["platforms.webhook"]
+assert w["enabled"] is True and w["extra"]["host"]=="100.64.0.1" and w["extra"]["port"]==8644, w
+assert list(w["extra"]["routes"])==["rivendell"], w
+r=w["extra"]["routes"]["rivendell"]
+assert r=={"secret":"${RIVENDELL_WEBHOOK_SECRET}","skills":["rivendell-events"],"prompt":"{__raw__}","deliver":"telegram","deliver_extra":{"chat_id":"7"},"mirror_to_session":True}, r
+assert d["command_allowlist"]==[] and not any("hurin" in k for k in d), d
+' <<<"$riv" && pass "config has only the rivendell route, signed with its own secret, to Carlos's chat" || fail "config has only the rivendell route, signed with its own secret, to Carlos's chat" "$riv"
+riv_script=$(cz --override-data "$RIV" execute-template <"$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl")
+grep -q '^RIVENDELL_WEBHOOK_SECRET=op://Hermes/Rivendell/webhook-secret$' <<<"$riv_script" && pass "renders the Rivendell secret" || fail "renders the Rivendell secret"
+grep -q 'op://Hermes/Hurin' <<<"$riv_script" && fail "still renders no Hurin secrets" || pass "still renders no Hurin secrets"
+grep -q 'skills/rivendell/events/SKILL.md' <<<"$riv_script" && pass "installs the rivendell skill" || fail "installs the rivendell skill"
+bash -n <<<"$riv_script" && pass "its apply script parses" || fail "its apply script parses"
+both=$(cz --override-data "$BOTH" execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl")
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert sorted(d["platforms.webhook"]["extra"]["routes"])==["hurin","rivendell"]' <<<"$both" \
+  && pass "with Hurin on too, one listener serves both routes" || fail "with Hurin on too, one listener serves both routes" "$both"
+apart=$(sed 's/"rivendell":{"enabled":true,"webhookHost":"100.64.0.1"/"rivendell":{"enabled":true,"webhookHost":"100.64.0.9"/' <<<"$BOTH")
+out=$(cz --override-data "$apart" execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl" 2>&1)
+grep -q 'one webhook listener' <<<"$out" && pass "refuses two routes that disagree on the one listener" || fail "refuses two routes that disagree on the one listener" "$out"
+out=$(cz --override-data '{"hermes":{"rivendell":{"enabled":true}}}' execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl" 2>&1)
+grep -q "webhookHost must be this Mac's tailnet address" <<<"$out" && pass "refuses to bind every interface" || fail "refuses to bind every interface" "$out"
+skill=$REPO/home/dot_local/share/dotfiles/hermes/rivendell/SKILL.md
+grep -q '^name: rivendell-events$' "$skill" && pass "the skill is rivendell-events" || fail "the skill is rivendell-events"
+grep -q 'notify' "$skill" && grep -q 'investigate' "$skill" && grep -q 'facts' "$skill" \
+  && pass "the skill covers notify, investigate and facts" || fail "the skill covers notify, investigate and facts"
 
 section "role agent-mini, switches on"
 script=$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl
@@ -117,7 +152,7 @@ assert "s3" not in json.dumps(d) and "${HURIN_MCP_ACT_TOKEN}" in json.dumps(d)
 ' <<<"$on" && pass "config has the five allowlist entries, both servers and the bound route" || fail "config has the five allowlist entries, both servers and the bound route" "$on"
 python3 -c 'import json,sys; assert json.load(sys.stdin)["tools.connectors.enabled"] is False' <<<"$on" && pass "config turns off hosted connectors" || fail "config turns off hosted connectors" "$on"
 for t in "$script" "$REPO/home/dot_local/bin/executable_hermes-health.tmpl" "$REPO/home/.chezmoiscripts/run_after_59-launch-agents.sh.tmpl"; do
-  for data in '{}' "$ON"; do
+  for data in '{}' "$ON" "$RIV" "$BOTH"; do
     cz --override-data "$data" execute-template <"$t" | bash -n && pass "$(basename "$t") parses" || fail "$(basename "$t") parses"
   done
 done
@@ -202,6 +237,17 @@ before=$(cksum <"$F/home/.hermes/.env")
 out=$(apply)
 grep -q "couldn't render.*op says no" <<<"$out" && pass "shows op's error when it can't render" || fail "shows op's error when it can't render" "$out"
 [ "$before" = "$(cksum <"$F/home/.hermes/.env")" ] && pass "leaves .env alone when op fails" || fail "leaves .env alone when op fails"
+mv "$F/stub/op.ok" "$F/stub/op"
+mkdir -p "$F/home/.local/share/dotfiles/hermes/rivendell"
+cp "$REPO/home/dot_local/share/dotfiles/hermes/rivendell/SKILL.md" "$F/home/.local/share/dotfiles/hermes/rivendell/"
+cz --override-data "$RIV" execute-template <"$script" >"$rendered"
+restarts=$(grep -c restart "$F/restarts")
+apply >/dev/null
+cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/rivendell/SKILL.md" "$F/home/.hermes/skills/rivendell/events/SKILL.md" \
+  && pass "rivendell on installs its skill" || fail "rivendell on installs its skill"
+[ "$(grep -c restart "$F/restarts")" = $((restarts + 1)) ] && pass "and restarts the gateway for it" || fail "and restarts the gateway for it"
+apply >/dev/null
+[ "$(grep -c restart "$F/restarts")" = $((restarts + 1)) ] && pass "and not again on a second run" || fail "and not again on a second run"
 rm -rf "$F"
 cleanup_sandbox
 summary

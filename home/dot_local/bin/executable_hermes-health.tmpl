@@ -43,4 +43,9 @@ check "the bridge answers" curl -fsS --max-time 5 "http://{{ .hermes.hurin.webho
 {{- else }}
 echo "  off   Hurin MCP, webhook and bridge: hermes.hurin.enabled is false"
 {{- end }}
+{{- if .hermes.rivendell.enabled }}
+check "the rivendell webhook answers" curl -fsS --max-time 5 "http://{{ .hermes.rivendell.webhookHost }}:{{ .hermes.rivendell.webhookPort }}/health"
+{{- else }}
+echo "  off   Rivendell webhook route: hermes.rivendell.enabled is false"
+{{- end }}
 exit "$bad"
