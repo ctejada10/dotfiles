@@ -58,6 +58,9 @@ trap '' HUP
 out=${XDG_STATE_HOME:-$HOME/.local/state}/deploy-gate
 mkdir -p "$out"
 rc=0
-./scripts/deploy.sh "$sha" 2>&1 | tee -p "$out/last-deploy.log" || rc=$?
+# 9>&-: the lock stays the gate's own. A process deploy.sh leaves running, such
+# as op's cache daemon, would otherwise hold it after the gate exits, and every
+# later deploy would wait half an hour and be refused.
+./scripts/deploy.sh "$sha" 9>&- 2>&1 | tee -p "$out/last-deploy.log" 9>&- || rc=$?
 if [ "$rc" = 0 ]; then log "deployed $sha"; else log "deploy of $sha failed (exit $rc)"; fi
 exit "$rc"
