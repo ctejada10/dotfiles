@@ -53,9 +53,10 @@ minutes from the laptop, most of it the `nmap` scan.
    key (Settings → Deploy keys), then run again: that run clones the checkout
    at `deploy_repo` and makes the folders its containers write in
    (`deploy_owned_dirs`). A key taken off GitHub later sends that repo's
-   fetches back the way they went before, at the next run. Add the age key
-   the run printed to the repo's `.sops.yaml` and [re-seal](#re-sealing-secrets)
-   its secrets.
+   fetches back the way they went before, at the next run. For Húrin, add
+   the age key the run printed to the repo's `.sops.yaml` and
+   [re-seal](#re-sealing-secrets) its secrets. Rivendell reads 1Password and
+   has no sealed secrets.
 
 Until a first run has finished, the admin user has no password, so a provider
 console can't log in; after it, the console takes the sudo password.
@@ -161,17 +162,14 @@ Read-only checks, each for something a replica couldn't show:
   the next `apt upgrade` by hand offers Docker 29 and restarts dockerd; hold
   the packages or plan for it.
 
-On Rivendell, also before that first run, move `deploy`'s existing age key
-aside, so the run makes the server a fresh one:
-`sudo -u deploy mv ~deploy/.config/sops/age/keys.txt ~deploy/.config/sops/age/keys.txt.old`.
-It dates from the day `SOPS_AGE_KEY` went into GitHub, and nothing records
-where it came from. Today's deploy doesn't read it (it writes GitHub's key to
-`/tmp`), so moving it breaks nothing. Delete the `.old` file once the first
-deploy through the gate passes. Then look in your own home there:
-`ls -la ~/.config/sops/age/`. A `keys.txt` there is a copy of a personal age
-key, and that `~/.config` is mode 777, so any account on the server can
-replace what's in it. Delete it once the re-seal has dropped the old keys, and
-take the write bit off for others: `chmod go-w ~/.config`.
+On Rivendell, `deploy`'s old age key, from the day `SOPS_AGE_KEY` went into
+GitHub, is already moved aside, and the deploy reads 1Password instead of
+SOPS. Delete `~deploy/.config/sops/age/keys.txt.old` if it is still there.
+Then look in your own home there: `ls -la ~/.config/sops/age/`. A `keys.txt`
+there is a copy of a personal age key, and that `~/.config` is mode 777, so
+any account on the server can replace what's in it. Nothing on Rivendell reads
+it, so delete it and take the write bit off for others:
+`chmod go-w ~/.config`.
 
 The old tilde's secure-mode timer restarts sshd every minute on dor-lomin until
 the run stops it, so a run can stop early as unreachable; run it again. After
@@ -371,38 +369,38 @@ the admin user and its sudo password, also in 1Password.
 
 ## Re-sealing secrets
 
-Once each repo's first re-seal is done, every sealed file in Húrin and
-Rivendell opens with two keys: the personal age key, which lives only in
-1Password as "dotfiles age key" (its public half is in
-`home/.chezmoidata/keys.yaml`), and the key of the server it deploys to, which
-the playbook makes on that server and whose public half its run prints. No Mac
-keeps the personal key on disk. On the mini, 1Password's CLI integration stays
-off except during a re-seal or a MonoLisa upgrade, Claude Code denies `op`, and
-the rules every agent there reads (`~/.codex/AGENTS.md`, Codex's and Claude
-Code's alike) forbid it. To add a server's key, replace a server or drop an
-old key:
+Rivendell reads 1Password and has no sealed files, so this section is Húrin's
+alone. Once Húrin's first re-seal is done, every sealed file in it opens with
+two keys: the personal age key, which lives only in 1Password as "dotfiles age
+key" (its public half is in `home/.chezmoidata/keys.yaml`), and the key of the
+server it deploys to, which the playbook makes on that server and whose public
+half its run prints. No Mac keeps the personal key on disk. On the mini,
+1Password's CLI integration stays off except during a re-seal or a MonoLisa
+upgrade, Claude Code denies `op`, and the rules every agent there reads
+(`~/.codex/AGENTS.md`, Codex's and Claude Code's alike) forbid it. To add a
+server's key, replace a server or drop an old key:
 
 1. In a worktree of the repo on the mini, put the new public half in
    `.sops.yaml` next to the one it replaces.
 2. Turn 1Password's CLI integration back on on the mini for this step, then in
    that worktree run
    `SOPS_AGE_KEY="$(op read 'op://Private/dotfiles age key/password')" make secrets-reseal`
-   and turn the integration off again. The first re-seal of each repo is the
+   and turn the integration off again. Húrin's first re-seal is the
    exception: until then the personal key doesn't open its blobs. Tilde's old
-   key (`age1qmu9…`), kept in the note of "tilde age key", opens both repos',
+   key (`age1qmu9…`), kept in the note of "tilde age key", opens Húrin's,
    so that run reads `op://Private/tilde age key/notesPlain` instead, and the
-   old keys step 3 removes are that one and, in Húrin, `age198t3…`.
+   old keys step 3 removes are that one and `age198t3…`.
 3. Commit, push and open the PR. Once a deploy passes with the new key, remove
    the old one from `.sops.yaml` and re-seal the same way.
 
-Neither repo has a `secrets-reseal` target yet; it comes with the work that
-moves each repo's deploy to the gate. It runs `sops updatekeys -y` on every
-sealed file, which never writes a plaintext to disk, and two things come
-first. sops picks a `.sops.yaml` rule by the name it's given, here the sealed
-file's, and Rivendell's rule and Húrin's rules for the job list and the two
-settings files match only the plaintext names, so `updatekeys` stops with "no
-matching creation rules found". And Húrin's whole-file blobs need
-`--input-type binary`, or sops writes them back as YAML, which the deploy's
+Húrin has no `secrets-reseal` target yet; it comes with the work that moves
+its deploy to the gate. It runs `sops updatekeys -y` on every sealed file,
+which never writes a plaintext to disk, and two things come first. sops picks
+a `.sops.yaml` rule by the name it's given, here the sealed file's, and
+Húrin's rules for the job list and the two settings files match only the
+plaintext names, so `updatekeys` stops with "no matching creation rules
+found". And Húrin's whole-file blobs need `--input-type binary`, or sops
+writes them back as YAML, which the deploy's
 `sops --decrypt --input-type=binary` can't read.
 
 ## Adding or renaming a server

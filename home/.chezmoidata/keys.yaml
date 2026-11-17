@@ -36,10 +36,10 @@ ssh:
 email: "carlos@carlosetejada.com"
 
 # The personal age key, in 1Password only. It is read with op when re-sealing
-# on the mini and is never written to disk on any machine. Once each repo's
-# first re-seal is done, every Hurin and Rivendell blob is sealed to its public
-# half and to that server's own key; until then tilde's old key opens them
-# (README, "Re-sealing secrets").
+# on the mini and is never written to disk on any machine. Once Hurin's first
+# re-seal is done, every Hurin blob is sealed to its public half and to
+# dor-lomin's own key; until then tilde's old key opens them (README,
+# "Re-sealing secrets"). Rivendell has no blobs: it reads 1Password.
 age:
   item: "dotfiles age key"
   vault: "Private"
