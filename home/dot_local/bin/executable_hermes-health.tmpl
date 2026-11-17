@@ -23,9 +23,15 @@ check "auto-login is on, so the gateway starts after a reboot" defaults read /Li
 check "FileVault is off, which auto-login needs" sh -c "fdesetup status | grep -q 'is Off'"
 check "Tailscale is up" "$tailscale" status
 {{- if .hermes.secrets.enabled }}
-OP_SERVICE_ACCOUNT_TOKEN=$(security find-generic-password -a "$USER" -s hermes-op-service-account -w 2>/dev/null)
-export OP_SERVICE_ACCOUNT_TOKEN
-check "op can reach the Hermes vault" op vault get Hermes
+OP_SERVICE_ACCOUNT_TOKEN=$(security find-generic-password -a "$USER" -s hermes-op-service-account -w 2>/dev/null) || OP_SERVICE_ACCOUNT_TOKEN=
+if [ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
+  export OP_SERVICE_ACCOUNT_TOKEN
+  check "op can reach the Hermes vault" op vault get Hermes
+else
+  # Without a token op asks to add an account. Over SSH the login keychain is
+  # locked: security unlock-keychain first.
+  no "1Password's token is in the login keychain (over SSH, run security unlock-keychain first)"
+fi
 {{- else }}
 echo "  off   secrets: hermes.secrets.enabled is false"
 {{- end }}
