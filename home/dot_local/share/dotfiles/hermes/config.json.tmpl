@@ -17,7 +17,9 @@
   "cron.model" $h.cronModel
   "cron.model_provider" $h.cronProvider
 -}}
-{{- /* Hermes has one webhook listener; each enabled block adds its route. */ -}}
+{{- /* Hermes has one webhook listener; each enabled block adds its route. A
+       route with no telegramChatId has no deliver_extra, so Hermes uses the
+       home channel: it renders an empty chat_id as the whole event. */ -}}
 {{- $routes := dict -}}
 {{- $listen := dict -}}
 {{- if $h.hurin.enabled -}}
@@ -27,9 +29,11 @@
         "skills" (list "hurin-events")
         "prompt" "{__raw__}"
         "deliver" "telegram"
-        "deliver_extra" (dict "chat_id" $h.hurin.telegramChatId)
         "mirror_to_session" true
 -}}
+{{-   if $h.hurin.telegramChatId -}}
+{{-     $_ := set $route "deliver_extra" (dict "chat_id" $h.hurin.telegramChatId) -}}
+{{-   end -}}
 {{-   $_ := set $desired "command_allowlist" (list
         "mcp:hurin_act/event_reply"
         "mcp:hurin_act/commitment_record"
@@ -58,13 +62,17 @@
 {{-     fail "hermes.hurin and hermes.rivendell must name the same webhookHost and webhookPort: Hermes has one webhook listener" -}}
 {{-   end -}}
 {{-   $listen = $at -}}
-{{-   $_ := set $routes "rivendell" (dict
+{{-   $route := dict
         "secret" "${RIVENDELL_WEBHOOK_SECRET}"
         "skills" (list "rivendell-events")
         "prompt" "{__raw__}"
         "deliver" "telegram"
-        "deliver_extra" (dict "chat_id" $h.rivendell.telegramChatId)
-        "mirror_to_session" true) -}}
+        "mirror_to_session" true
+-}}
+{{-   if $h.rivendell.telegramChatId -}}
+{{-     $_ := set $route "deliver_extra" (dict "chat_id" $h.rivendell.telegramChatId) -}}
+{{-   end -}}
+{{-   $_ := set $routes "rivendell" $route -}}
 {{- end -}}
 {{- if $routes -}}
 {{-   $_ := set $desired "platforms.webhook" (dict
