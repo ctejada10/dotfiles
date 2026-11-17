@@ -533,3 +533,7 @@
   loop_control:
     label: "{{ item.path }}"
   when: deploy_checkout.stat.exists
+
+- name: Set up rivendell-warden
+  ansible.builtin.include_tasks: warden.yml
+  when: warden | default(false)

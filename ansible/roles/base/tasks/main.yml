@@ -63,6 +63,36 @@
     dest: /etc/apt/apt.conf.d/52dotfiles-upgrades
     mode: "0644"
 
+# A server with a reboot_check reboots from its own timer instead, and only
+# once the check says nothing would be cut off: on Rivendell, a Plex stream.
+- name: Reboot from a timer that asks reboot_check first
+  when: reboot_check | default('') | length > 0
+  block:
+    - name: Install the reboot script
+      ansible.builtin.template:
+        src: dotfiles-reboot.j2
+        dest: /usr/local/sbin/dotfiles-reboot
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the reboot's service and timer
+      ansible.builtin.template:
+        src: "dotfiles-reboot.{{ item }}.j2"
+        dest: "/etc/systemd/system/dotfiles-reboot.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+      register: reboot_units
+
+    - name: Start the reboot's timer
+      ansible.builtin.systemd_service:
+        name: dotfiles-reboot.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ reboot_units is changed }}"
+
 - name: Record a Lynis baseline before the first hardening
   ansible.builtin.command:
     cmd: >-

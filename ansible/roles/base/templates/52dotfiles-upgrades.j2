@@ -4,9 +4,10 @@
 // Security updates install every day, but a new kernel only runs after a
 // reboot, which Ubuntu never does on its own. A server whose containers don't
 // restart themselves turns it off with automatic_reboot: false.
+// A server with a reboot_check reboots from dotfiles-reboot.timer instead.
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
-Unattended-Upgrade::Automatic-Reboot "{{ 'true' if automatic_reboot | default(true) else 'false' }}";
+Unattended-Upgrade::Automatic-Reboot "{{ 'true' if automatic_reboot | default(true) and not reboot_check | default('') else 'false' }}";
 Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
 Unattended-Upgrade::Automatic-Reboot-Time "{{ reboot_time }}";
 
