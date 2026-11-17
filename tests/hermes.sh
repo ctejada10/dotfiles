@@ -9,7 +9,9 @@ set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
 sync=$REPO/home/dot_local/bin/executable_hermes-config-sync
-ON='{"hermes":{"secrets":{"enabled":true},"hurin":{"enabled":true,"host":"dor-lomin.test","port":8000,"webhookHost":"100.64.0.1","telegramChatId":"1","bridge":{"tag":"bridge-v1","port":8001}}}}'
+# The data turns the rivendell route on, so the cases that want it off say so.
+OFF='{"hermes":{"rivendell":{"enabled":false}}}'
+ON='{"hermes":{"secrets":{"enabled":true},"rivendell":{"enabled":false},"hurin":{"enabled":true,"host":"dor-lomin.test","port":8000,"webhookHost":"100.64.0.1","telegramChatId":"1","bridge":{"tag":"bridge-v1","port":8001}}}}'
 RIV='{"hermes":{"secrets":{"enabled":true},"rivendell":{"enabled":true,"webhookHost":"100.64.0.1","telegramChatId":"7"}}}'
 BOTH='{"hermes":{"secrets":{"enabled":true},"hurin":{"enabled":true,"host":"dor-lomin.test","port":8000,"webhookHost":"100.64.0.1","telegramChatId":"1","bridge":{"tag":"bridge-v1","port":8001}},"rivendell":{"enabled":true,"webhookHost":"100.64.0.1","telegramChatId":"7"}}}'
 
@@ -98,17 +100,20 @@ for f in .local/bin/hermes-config-sync .local/bin/hermes-health .local/share/dot
 done
 grep -q 'hurin-bridge\|bridge.env' <<<"$list" && fail "has no bridge" || pass "has no bridge"
 grep -q '^\.hermes' <<<"$list" && fail "manages nothing in ~/.hermes" "$(grep '^\.hermes' <<<"$list")" || pass "manages nothing in ~/.hermes"
-off=$(cz cat "$SANDBOX/home/.local/share/dotfiles/hermes/config.json")
+off=$(cz --override-data "$OFF" cat "$SANDBOX/home/.local/share/dotfiles/hermes/config.json")
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["command_allowlist"]==[] and d["approvals.mode"]=="smart" and not any("hurin" in k or k.startswith("platforms") for k in d)' <<<"$off" \
   && pass "config has no Hurin keys and an empty allowlist" || fail "config has no Hurin keys and an empty allowlist" "$off"
 grep -qi rivendell <<<"$off" && fail "config has no rivendell route" "$off" || pass "config has no rivendell route"
-off_script=$(cz --override-data '{"hermes":{"secrets":{"enabled":true}}}' execute-template <"$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl")
+off_script=$(cz --override-data '{"hermes":{"secrets":{"enabled":true},"rivendell":{"enabled":false}}}' execute-template <"$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl")
 grep -q 'op://Hermes/Telegram' <<<"$off_script" && pass "renders the Telegram secrets" || fail "renders the Telegram secrets"
 grep -q 'op://Hermes/Hurin' <<<"$off_script" && fail "renders no Hurin secrets" || pass "renders no Hurin secrets"
 grep -q 'op://Hermes/Rivendell' <<<"$off_script" && fail "renders no Rivendell secret" || pass "renders no Rivendell secret"
 grep -q 'skills/rivendell' <<<"$off_script" && fail "installs no rivendell skill" || pass "installs no rivendell skill"
 
 section "role agent-mini, rivendell on"
+default=$(cz cat "$SANDBOX/home/.local/share/dotfiles/hermes/config.json")
+python3 -c 'import json,sys; w=json.load(sys.stdin)["platforms.webhook"]; assert list(w["extra"]["routes"])==["rivendell"] and w["extra"]["host"].startswith("100."), w' <<<"$default" \
+  && pass "the data turns the rivendell route on, bound to a tailnet address" || fail "the data turns the rivendell route on, bound to a tailnet address" "$default"
 riv=$(cz --override-data "$RIV" execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl")
 python3 -c '
 import json,sys
@@ -131,7 +136,7 @@ python3 -c 'import json,sys; d=json.load(sys.stdin); assert sorted(d["platforms.
 apart=$(sed 's/"rivendell":{"enabled":true,"webhookHost":"100.64.0.1"/"rivendell":{"enabled":true,"webhookHost":"100.64.0.9"/' <<<"$BOTH")
 out=$(cz --override-data "$apart" execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl" 2>&1)
 grep -q 'one webhook listener' <<<"$out" && pass "refuses two routes that disagree on the one listener" || fail "refuses two routes that disagree on the one listener" "$out"
-out=$(cz --override-data '{"hermes":{"rivendell":{"enabled":true}}}' execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl" 2>&1)
+out=$(cz --override-data '{"hermes":{"rivendell":{"enabled":true,"webhookHost":""}}}' execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl" 2>&1)
 grep -q "webhookHost must be this Mac's tailnet address" <<<"$out" && pass "refuses to bind every interface" || fail "refuses to bind every interface" "$out"
 skill=$REPO/home/dot_local/share/dotfiles/hermes/rivendell/SKILL.md
 grep -q '^name: rivendell-events$' "$skill" && pass "the skill is rivendell-events" || fail "the skill is rivendell-events"
@@ -203,7 +208,7 @@ printf '#!/bin/sh\nprintf " sleep 0 (sleep prevented by sharingd, powerd)\\n dis
 printf '#!/bin/sh\n[ "$1" = -n ] && shift\n[ "$1" = true ] && exit 0\necho "$*" >>"%s/root"\n' "$F" >"$F/stub/sudo"
 chmod +x "$F"/stub/*
 rendered=$F/apply.sh
-cz --override-data '{"hermes":{"secrets":{"enabled":true}}}' execute-template <"$script" >"$rendered"
+cz --override-data '{"hermes":{"secrets":{"enabled":true},"rivendell":{"enabled":false}}}' execute-template <"$script" >"$rendered"
 apply() { HOME="$F/home" PATH="$F/stub:$PATH" bash "$rendered" </dev/null 2>&1; }
 state=$F/home/.local/state/dotfiles/hermes
 
