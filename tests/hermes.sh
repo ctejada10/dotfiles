@@ -179,6 +179,12 @@ grep -q 'ok    one gateway service' <<<"$out" && pass "a wrapper chain is one ga
 printf '10 1\n11 10\n12 11\n20 1\n21 20\n' >"$H/procs"
 out=$(HOME=$H bash "$H/health" 2>&1)
 grep -q 'FAIL  2 gateway services' <<<"$out" && pass "two chains are two gateways" || fail "two chains are two gateways" "$out"
+printf '#!/bin/bash\nexit 44\n' >"$H/.local/bin/security"
+printf '#!/bin/bash\necho called >>"%s/op-called"\n' "$H" >"$H/.local/bin/op"
+chmod +x "$H/.local/bin/"*
+out=$(HOME=$H bash "$H/health" 2>&1)
+grep -q "FAIL  1Password's token is in the login keychain" <<<"$out" && pass "names a missing keychain token" || fail "names a missing keychain token" "$out"
+[ -e "$H/op-called" ] && fail "and never runs op without it, which would ask to add an account" || pass "and never runs op without it, which would ask to add an account"
 rm -rf "$H"
 
 section "the apply script"
