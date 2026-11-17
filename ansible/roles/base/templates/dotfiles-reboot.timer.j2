@@ -1,0 +1,12 @@
+# Written by the dotfiles playbook. Server time, as unattended-upgrades reads
+# reboot_time. Not Persistent: a reboot missed while the server was down has
+# happened already.
+[Unit]
+Description=Reboot for a new kernel at {{ reboot_time }}
+
+[Timer]
+OnCalendar=*-*-* {{ reboot_time }}:00
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,8 @@
+# Written by the dotfiles playbook.
+[Unit]
+Description=Reboot for a new kernel once nothing would be cut off
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dotfiles-reboot
+TimeoutStartSec=10min

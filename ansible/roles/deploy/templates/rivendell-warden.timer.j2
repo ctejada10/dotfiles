@@ -1,0 +1,12 @@
+# Written by the dotfiles playbook. Every 15 minutes: the warden itself knows
+# its update windows, 03:30 to 06:00 and 13:30 to 16:00 New York time, and
+# between them only keeps track of paused Plex sessions.
+[Unit]
+Description=rivendell-warden every 15 minutes
+
+[Timer]
+OnCalendar=*:00/15
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

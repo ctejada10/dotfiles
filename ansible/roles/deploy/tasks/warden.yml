@@ -1,0 +1,36 @@
+# rivendell-warden, which decides when a merged commit reaches Rivendell's
+# running containers. Its code is the checkout's warden/warden.py; the run
+# gives it a state folder, a timer, and a command on the PATH.
+
+- name: Make the warden's state folder, deploy's alone
+  ansible.builtin.file:
+    path: /var/lib/rivendell
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0750"
+
+- name: Put rivendell-warden on the PATH
+  ansible.builtin.template:
+    src: rivendell-warden.j2
+    dest: /usr/local/bin/rivendell-warden
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the warden's service and timer
+  ansible.builtin.template:
+    src: "rivendell-warden.{{ item }}.j2"
+    dest: "/etc/systemd/system/rivendell-warden.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+  register: warden_units
+
+- name: Start the warden's timer
+  ansible.builtin.systemd_service:
+    name: rivendell-warden.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ warden_units is changed }}"

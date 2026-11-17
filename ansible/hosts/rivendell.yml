@@ -28,6 +28,9 @@ tailscale: true
 samba: true
 
 reboot_time: "05:00"
+# The kernel reboot waits a day, for 3 days at most, while rivendell-warden says
+# a restart would cut off a Plex stream (exit 1). Any other failure reboots.
+reboot_check: runuser -u deploy -- /usr/local/bin/rivendell-warden busy
 # Off, as on dor-lomin (decided 26 Oct). Only Húrin's plex-collection-suggest
 # logged in with a password, twice a year; its Rivendell step fails until the
 # task *Stop Húrin writing into the old checkout* replaces that login. The run
@@ -55,3 +58,6 @@ deploy_retired_keys: []
 # writes it to deploy_op_token_file, where deploy.sh looks for it.
 deploy_op_token_ref: "op://Private/rivendell-deploy service account/credential"
 deploy_op_token_file: /etc/rivendell/op-token
+# rivendell-warden, the checkout's update window: its state folder, its timer
+# every 15 minutes, and the rivendell-warden command.
+warden: true
