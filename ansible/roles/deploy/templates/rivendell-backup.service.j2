@@ -14,6 +14,12 @@ User=deploy
 # other right of root's.
 AmbientCapabilities=CAP_DAC_READ_SEARCH
 ExecStart=/bin/bash {{ deploy_repo }}/scripts/backup.sh backup
-# The SQLite apps are stopped while restic reads. A run stopped at this limit
-# starts them again on its way out.
+# The SQLite apps are stopped while restic reads. The run lists them first and
+# starts them again on its way out; recover runs after the run however it
+# ended, killed at this limit or by systemctl stop included, and starts any
+# the run left down.
 TimeoutStartSec=4h
+ExecStopPost=/bin/bash {{ deploy_repo }}/scripts/backup.sh recover
+# Time for the run's own cleanup, and then for recover, to wait out a docker
+# stop still in flight and retry the starts.
+TimeoutStopSec=10min
