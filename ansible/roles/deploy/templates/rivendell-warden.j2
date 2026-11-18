@@ -2,6 +2,7 @@
 # Written by the dotfiles playbook. The checkout's rivendell-warden, with the
 # server paths from its rivendell.env. Run it as deploy:
 #   sudo -u deploy rivendell-warden status
+#   sudo -u deploy rivendell-warden apply --force
 set -a
 . {{ deploy_repo }}/rivendell.env
 set +a

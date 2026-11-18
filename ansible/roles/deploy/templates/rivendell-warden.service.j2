@@ -9,5 +9,6 @@ Type=oneshot
 User=deploy
 EnvironmentFile={{ deploy_repo }}/rivendell.env
 ExecStart=/usr/bin/python3 {{ deploy_repo }}/warden/warden.py tick
-# Two reads of Plex 90 seconds apart, and git.
-TimeoutStartSec=10min
+# Two reads of Plex 90 seconds apart, then an apply through deploy-gate,
+# which waits up to 30 minutes for its lock and up to 10 for the containers.
+TimeoutStartSec=1h
