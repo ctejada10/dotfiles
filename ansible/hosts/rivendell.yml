@@ -39,6 +39,9 @@ password_login: false
 # The checkout the deploy gate deploys, and the branch a commit must be on.
 deploy_repo: /home/deploy/rivendell
 deploy_branch: main
+# A merged commit is staged for rivendell-warden, and a rollback is a revert
+# on main, so the gate refuses an older commit or a merged branch's own.
+deploy_forward_only: true
 # The repo deploy fetches, which the run clones there once GitHub takes the
 # read key it prints, and its arwen submodule, which needs a read key of its
 # own. The deploy brings arwen in itself.

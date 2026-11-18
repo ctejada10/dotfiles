@@ -13,6 +13,19 @@
 # finishes even if the client disconnects; the last one's output is in
 # ~deploy/.local/state/deploy-gate/last-deploy.log.
 #
+# Before the requested commit's code runs, the checked-out commit's own
+# scripts/deploy-hook, when it has one, vets the request ("vet <verb> <sha>",
+# refused unless it exits 0, its output the reason), and hears of each refused
+# request from GitHub ("refused <sha> <reason>", best effort), so the code that
+# runs now judges what comes next.
+#
+# deploy.sh's exit status: 0 when it applied the commit, which stays checked
+# out. 90 when it staged it and applied nothing, and 91 when it failed before
+# changing anything: the gate checks the commit that was checked out before
+# back out, so the checkout stays what the containers run, and answers 0 for
+# 90 and 1 for 91. Any other status is a deploy that failed part-way, and the
+# commit stays checked out.
+#
 # The request arrives in SSH_ORIGINAL_COMMAND under the restricted key, and as
 # arguments when the workflow still connects with an older, unrestricted key
 # and runs /usr/local/bin/deploy-gate itself, so a deploy works on either side
@@ -22,10 +35,23 @@ set -euo pipefail
 
 repo={{ deploy_repo | quote }}
 branch={{ deploy_branch | quote }}
+# Forward only: a commit must be on the branch's own line (its first parents)
+# and no older than the checked-out one, so the key can't bring back old code.
+forward_only={{ deploy_forward_only | ternary('true', 'false') }}
 lock=/run/lock/deploy-gate.lock
 
 log() { logger -t deploy-gate -- "$*" 2>/dev/null || true; printf 'deploy-gate: %s\n' "$*" >&2; }
-refuse() { log "refused: $*"; exit 1; }
+refuse() {
+  log "refused: $*"
+  # The warden reports its own refused applies, which never come through the key.
+  if { [ -n "${SSH_ORIGINAL_COMMAND:-}" ] || [ "${verb:-}" != apply ]; } && [ -x "$repo/scripts/deploy-hook" ]; then
+    local id=unknown
+    [[ ${sha:-} =~ ^[0-9a-f]{40}$ ]] && id=$sha
+    (cd "$repo" && timeout 30 ./scripts/deploy-hook refused "$id" "$*" 9>&-) \
+      || log "could not report the refusal through scripts/deploy-hook"
+  fi
+  exit 1
+}
 
 request=${SSH_ORIGINAL_COMMAND:-$*}
 request=${request#/usr/local/bin/deploy-gate }
@@ -42,14 +68,30 @@ esac
 [ -z "${extra:-}" ] || refuse "only 'deploy <sha>' is accepted"
 [[ "${sha:-}" =~ ^[0-9a-f]{40}$ ]] || refuse "the sha must be a full 40-character commit id"
 
-# One deploy at a time; a second waits up to half an hour for the first.
+# One deploy at a time; a second waits up to half an hour for the first. The
+# warden's apply waits 10 seconds, then exits 75 and asks again next tick.
 exec 9> "$lock"
-flock -w 1800 9 || refuse "another deploy is still running"
+if [ "$verb" = apply ]; then
+  flock -w 10 9 || { log "another deploy is still running; ask again later"; exit 75; }
+else
+  flock -w 1800 9 || refuse "another deploy is still running"
+fi
 
 cd "$repo"
 # A GitHub that doesn't answer fails the deploy rather than holding the lock.
 timeout 300 git fetch --quiet origin "$branch" || refuse "couldn't fetch origin/$branch (exit $?)"
 git merge-base --is-ancestor "$sha" "origin/$branch" || refuse "$sha is not on origin/$branch"
+before=$(git rev-parse HEAD)
+if [ "$forward_only" = true ]; then
+  # Without -q grep reads to the end, so rev-list never dies of a closed pipe.
+  git rev-list --first-parent "origin/$branch" | grep -xF "$sha" > /dev/null \
+    || refuse "$sha is not on $branch's own line of commits, only on a branch merged into it"
+  [ "$sha" = "$before" ] || ! git merge-base --is-ancestor "$sha" "$before" \
+    || refuse "$sha is older than the checked-out $before"
+fi
+if [ -x scripts/deploy-hook ] && ! why=$(./scripts/deploy-hook vet "$verb" "$sha" 9>&-); then
+  refuse "${why:-scripts/deploy-hook of the checked-out commit refused $sha}"
+fi
 # Checked in the commit, before the checkout: the running containers may read
 # the checkout, so a refused request must leave it where it was.
 [ "$(git ls-tree "$sha" scripts/deploy.sh | cut -d' ' -f1)" = 100755 ] \
@@ -70,5 +112,18 @@ rc=0
 # as op's cache daemon, would otherwise hold it after the gate exits, and every
 # later deploy would wait half an hour and be refused.
 ./scripts/deploy.sh "${mode[@]}" "$sha" 9>&- 2>&1 | tee -p "$out/last-deploy.log" 9>&- || rc=$?
-if [ "$rc" = 0 ]; then log "deployed $sha"; else log "deploy of $sha failed (exit $rc)"; fi
+case $rc in
+  0) log "deployed $sha" ;;
+  90)
+    git checkout --quiet "$before"
+    log "staged $sha; $before stays checked out"
+    rc=0
+    ;;
+  91)
+    git checkout --quiet "$before"
+    log "deploy of $sha failed before changing anything; $before stays checked out"
+    rc=1
+    ;;
+  *) log "deploy of $sha failed (exit $rc)" ;;
+esac
 exit "$rc"
