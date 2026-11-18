@@ -537,3 +537,7 @@
 - name: Set up rivendell-warden
   ansible.builtin.include_tasks: warden.yml
   when: warden | default(false)
+
+- name: Set up Rivendell's backup
+  ansible.builtin.include_tasks: backup.yml
+  when: backup | default(false)

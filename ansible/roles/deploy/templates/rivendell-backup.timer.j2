@@ -1,0 +1,12 @@
+# Written by the dotfiles playbook. Before Kometa's 03:00 run and the warden's
+# 03:30 update window, when the fewest people watch Plex. Not Persistent: a
+# backup missed while the server was down would stop Plex at boot instead.
+[Unit]
+Description=Rivendell's backup every night at 02:30 New York time
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 America/New_York
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

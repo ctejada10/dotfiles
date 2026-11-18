@@ -1,0 +1,15 @@
+# Written by the dotfiles playbook. The code is the checkout's, so it changes
+# with each deploy. Skipped until a deploy brings scripts/backup.sh in. The
+# script reports its own failures through hermes-relay.
+[Unit]
+Description=Rivendell's weekly check of its backups on B2
+ConditionPathExists={{ deploy_repo }}/scripts/backup.sh
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+ExecStart=/bin/bash {{ deploy_repo }}/scripts/backup.sh check
+# Reads 5% of the repository's data back from B2.
+TimeoutStartSec=4h

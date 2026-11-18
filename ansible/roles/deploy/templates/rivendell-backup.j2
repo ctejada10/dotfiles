@@ -1,0 +1,7 @@
+#!/bin/sh
+# Written by the dotfiles playbook. The checkout's scripts/backup.sh. Run it as
+# deploy, which can read the 1Password token, for any restic command:
+#   sudo -u deploy rivendell-backup restic snapshots
+# Start a backup through its unit, never as root:
+#   sudo systemctl start rivendell-backup.service
+exec /bin/bash {{ deploy_repo }}/scripts/backup.sh "$@"
