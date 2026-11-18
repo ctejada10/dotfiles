@@ -25,9 +25,10 @@ shared:
 per_host:
   dor-lomin: []
   # Rivendell's deploy runs rivendell.py with the system Python, which needs
-  # click. unzip unpacks 1Password's CLI.
+  # click. unzip unpacks 1Password's CLI. restic runs its backup.
   rivendell:
     - python3-click
+    - restic
     - unzip
   esgaroth: []
 

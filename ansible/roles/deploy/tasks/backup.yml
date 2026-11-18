@@ -1,0 +1,33 @@
+# The nightly backup of Rivendell's app_configs to B2, and its weekly check.
+# The code is the checkout's scripts/backup.sh; the run gives it two timers
+# and a command on the PATH. restic itself is in packages.yml.
+
+- name: Put rivendell-backup on the PATH
+  ansible.builtin.template:
+    src: rivendell-backup.j2
+    dest: /usr/local/bin/rivendell-backup
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the backup's services and timers
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - rivendell-backup.service
+    - rivendell-backup.timer
+    - rivendell-backup-check.service
+    - rivendell-backup-check.timer
+  register: backup_units
+
+- name: Start the backup's timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: "{{ backup_units is changed }}"
+  loop: [rivendell-backup.timer, rivendell-backup-check.timer]

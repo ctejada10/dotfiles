@@ -61,3 +61,6 @@ deploy_op_token_file: /etc/rivendell/op-token
 # rivendell-warden, the checkout's update window: its state folder, its timer
 # every 15 minutes, and the rivendell-warden command.
 warden: true
+# The checkout's scripts/backup.sh: app_configs to B2 every night, and a check
+# of the repository every week, with the rivendell-backup command.
+backup: true
