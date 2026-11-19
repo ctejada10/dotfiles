@@ -20,6 +20,8 @@ run tests/migrate-bin.sh
 run tests/lint.sh
 run tests/check-roles.sh
 run tests/guard-git.sh
+run tests/merge-check.sh
+run tests/merge-notify.sh
 run tests/guard-vault.sh
 run tests/warn-risky.sh
 run tests/agent-gate.sh
