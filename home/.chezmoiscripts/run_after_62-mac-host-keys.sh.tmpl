@@ -1,0 +1,36 @@
+{{- if eq .role "laptop" -}}
+#!/bin/bash
+# Readies `ssh amonsul` without a host key prompt: pins each Mac's host key in
+# known_hosts under its alias. known_hosts isn't managed by chezmoi, so only
+# each pinned alias's lines change.
+
+set -uo pipefail
+SCRIPT=mac-host-keys
+{{ template "script-lib.sh" . }}
+
+kh="$HOME/.ssh/known_hosts"
+pin() {
+  local alias="$1" want="$1 $2"
+  [ "$(ssh-keygen -F "$alias" -f "$kh" 2>/dev/null | grep -v '^#')" = "$want" ] && return
+  [ -e "$kh" ] && ssh-keygen -R "$alias" -f "$kh" >/dev/null 2>&1
+  printf '%s\n' "$want" >> "$kh" && chmod 600 "$kh" && say "pinned $alias's host key in known_hosts"
+}
+# The mini's other names, whose entries ssh no longer reads, so completion
+# stops offering them.
+forget() {
+  local name
+  for name in "$@"; do
+    [ -n "$(ssh-keygen -F "$name" -f "$kh" 2>/dev/null)" ] || continue
+    ssh-keygen -R "$name" -f "$kh" >/dev/null 2>&1 && say "forgot $name in known_hosts; use $alias_now"
+  done
+}
+{{- range $name, $mac := .macs }}
+{{-   with $mac.alias }}
+pin {{ . | squote }} {{ $mac.hostKey | squote }}
+alias_now={{ . | squote }}
+forget {{ $name | squote }} {{ printf "%s.local" $name | squote }}
+{{-   end }}
+{{- end }}
+
+exit 0
+{{ end -}}
