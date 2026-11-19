@@ -120,7 +120,10 @@
 {{- /* The mini runs agents nobody is watching. An ask rule still prompts in
        T3's full-access mode, and T3 holds the prompt with no time limit, so
        the mini has none: what its rules forbid is denied instead, and the
-       rest runs. hooks/guard-git.py blocks the Git forms a prefix misses.
+       rest runs. hooks/guard-git.py blocks the Git forms a prefix misses,
+       and gates gh pr merge and gh pr ready on Carlos's "merge when safe" and
+       on hooks/merge-check.py, which a deny rule here would override;
+       hooks/merge-notify.py tells Carlos on Telegram when a merge lands.
        gc, repack, prune and maintenance aren't here: they are fine in the
        clones in ~/src, and guard-git.py refuses them in Dropbox. JXA through
        osascript runs; plain AppleScript asks. */ -}}
@@ -146,17 +149,18 @@
         "Bash(env)" "Bash(printenv)") -}}
 {{- /* The deployed agent and shell config, which the rules say never to
        edit. An Edit rule covers Edit, Write and NotebookEdit. The dotfiles
-       source that makes them is guarded by hooks/guard-paths.sh instead. */ -}}
+       source that makes them is guarded by hooks/guard-paths.sh instead.
+       Session transcripts too, since guard-git.py reads the merge grant
+       from them. */ -}}
 {{-   range $path := list ".codex/**" ".claude/settings.json" ".claude/CLAUDE.md" ".claude/attended.md"
-        ".claude/hooks/**" ".claude/skills/**" ".claude/agents/**" ".claude/plugins/**"
+        ".claude/hooks/**" ".claude/skills/**" ".claude/agents/**" ".claude/plugins/**" ".claude/projects/**/*.jsonl"
         ".local/share/claude-plugins/**" ".gitconfig" ".zshrc" ".zshenv" ".zprofile" ".zsh/**" -}}
 {{-     $deny = append $deny (printf "Edit(/%s/%s)" $home $path) -}}
 {{-   end -}}
 {{-   $deny = concat $deny (list
         "Skill(superpowers:using-superpowers)"
         "Bash(git push --force-with-lease:*)" "Bash(git push --force-if-includes:*)"
-        "Bash(git push origin main:*)" "Bash(git push origin master:*)"
-        "Bash(gh pr merge:*)" "Bash(gh pr ready:*)") -}}
+        "Bash(git push origin main:*)" "Bash(git push origin master:*)") -}}
 {{- end -}}
 
 {{- $s = setValueAtPath (list "permissions" "allow") $allow $s -}}
@@ -178,12 +182,14 @@
        entry or event, stay where they are. */ -}}
 {{- $hookDir := printf "%s/.claude/hooks" $home -}}
 {{- $shipped := list -}}
-{{- range $name := list "guard-paths.sh" "warn-risky.sh" "guard-git.py" "guard-vault.py" "worktree.sh create" "worktree.sh remove" "agent-gate.sh" -}}
+{{- range $name := list "guard-paths.sh" "warn-risky.sh" "guard-git.py" "guard-vault.py" "worktree.sh create" "worktree.sh remove" "agent-gate.sh" "merge-notify.py" -}}
 {{-   $shipped = append $shipped (printf "%s/%s" $hookDir $name) -}}
 {{- end -}}
 {{- $bashHooks := list (dict "type" "command" "command" (printf "%s/warn-risky.sh" $hookDir) "timeout" 10) -}}
 {{- if .isAgent -}}
-{{-   $bashHooks = append $bashHooks (dict "type" "command" "command" (printf "%s/guard-git.py" $hookDir) "timeout" 10) -}}
+{{- /* guard-git.py is the merge gate, so a hook that fails or times out
+       blocks the command instead of letting it through. */ -}}
+{{-   $bashHooks = append $bashHooks (dict "type" "command" "command" (printf "%s/guard-git.py" $hookDir) "timeout" 60 "onFailure" "block") -}}
 {{- end -}}
 {{- if $laptop -}}
 {{-   $bashHooks = append $bashHooks (dict "type" "command" "command" (printf "%s/guard-vault.py" $hookDir) "timeout" 10) -}}
@@ -204,8 +210,10 @@
 {{-   $gate := dict "type" "command" "command" (printf "%s/agent-gate.sh" $hookDir) "timeout" 10 -}}
 {{-   $_ := set $ours "PreToolUse" (append (get $ours "PreToolUse") (dict "matcher" "Skill|AskUserQuestion" "hooks" (list $gate))) -}}
 {{-   $_ := set $ours "SessionStart" (list (dict "matcher" "startup|resume|clear|compact|fork" "hooks" (list $gate))) -}}
+{{-   $_ := set $ours "PostToolUse" (list (dict "matcher" "Bash" "hooks" (list
+        (dict "type" "command" "command" (printf "%s/merge-notify.py" $hookDir) "timeout" 30)))) -}}
 {{- end -}}
-{{- range $event := list "PreToolUse" "SessionStart" "WorktreeCreate" "WorktreeRemove" -}}
+{{- range $event := list "PreToolUse" "PostToolUse" "SessionStart" "WorktreeCreate" "WorktreeRemove" -}}
 {{-   $kept := list -}}
 {{-   range $entry := (get (get $s "hooks" | default dict) $event | default list) -}}
 {{-     $left := list -}}
