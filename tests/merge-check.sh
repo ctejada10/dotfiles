@@ -22,6 +22,12 @@ git -C "$work/repo" remote set-head origin main
 git -C "$work/repo" switch -q -c feature
 git -C "$work/repo" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m work
 head=$(git -C "$work/repo" rev-parse HEAD)
+# wf: a branch whose head has a CI workflow.
+git -C "$work/repo" switch -q -c wf
+mkdir -p "$work/repo/.github/workflows" && echo 'on: push' > "$work/repo/.github/workflows/ci.yml"
+git -C "$work/repo" add .github && git -C "$work/repo" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m ci
+wfhead=$(git -C "$work/repo" rev-parse HEAD)
+git -C "$work/repo" switch -q feature
 
 # The stand-in gh: pr view and api graphql print $fake/<name>.json, exit with
 # $fake/<name>.status if it exists, and first sleep $fake/<name>.sleep seconds.
@@ -45,6 +51,7 @@ reset() {
   rm -f "$fake"/*.status "$fake"/*.sleep
   jq -n --arg h "$head" '{number: 12, url: "https://github.com/ctejada10/scripts/pull/12",
       headRefName: "feature", headRefOid: $h, baseRefName: "main", isCrossRepository: false,
+      state: "OPEN", isDraft: false,
       files: [{path: "src/app.py"}], changedFiles: 1, reviewDecision: "APPROVED",
       statusCheckRollup: [{__typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS"},
                           {__typename: "StatusContext", context: "ci/legacy", state: "SUCCESS"}]}' > "$fake/pr.json"
@@ -88,6 +95,7 @@ check unsafe "on the default branch" "default branch"
 reset; git -C "$work/repo" switch -q --detach feature
 check unsafe "a detached HEAD" "detached"
 reset; pr '.headRefName = "other"'; check unsafe "a PR for another branch" "other"
+reset; pr '.headRefName = "other"'; check unsafe "a PR for another branch says the names must match" "same name as the PR's branch"
 reset; pr '.isCrossRepository = true'; check unsafe "a PR from a fork" "fork"
 reset; pr '.baseRefName = "release"'; check unsafe "a PR into another base" "release"
 git init -q -b master "$work/plain"
@@ -98,6 +106,13 @@ reset; pr ".headRefOid = \"$plainhead\" | .baseRefName = \"master\""
 printf 'MERGE %s\n' "$plainhead" > "$verdict"
 out=$(HOME="$work/home" PATH="$work/bin:$PATH" FAKE_GH="$fake" /usr/bin/python3 -B "$script" "$work/plain" merge "$plainhead" 2>&1) \
   && pass "safe: no origin, so main or master is the default" || fail "safe: no origin, so main or master is the default" "$out"
+
+section "the PR's state"
+reset; pr '.state = "MERGED"'; check unsafe "a PR already merged" "MERGED"
+reset; pr '.state = "CLOSED"'; check unsafe "a closed PR" "CLOSED"
+reset; pr '.isDraft = true'; check unsafe "merging a draft" "Mark it ready with gh pr ready in an earlier command first"
+reset; pr '.isDraft = true'; check safe "readying a draft" "" ready ""
+reset; pr 'del(.isDraft)'; check unsafe "merging a PR gh says nothing about drafts for" "draft"
 
 section "the grant's PR numbers"
 reset; check unsafe "a PR the grant doesn't name" "#12" merge "$head" 9 13
@@ -110,7 +125,14 @@ reset; check unsafe "--match-head-commit names no SHA" "match-head-commit" merge
 reset; check unsafe "--match-head-commit names too short a SHA" "match-head-commit" merge "${head:0:6}"
 
 section "checks"
-reset; pr '.statusCheckRollup = []'; check safe "no checks at all"
+reset; pr '.statusCheckRollup = []'; check safe "no checks at all on a head with no workflows"
+reset; git -C "$work/repo" switch -q wf
+pr ".headRefName = \"wf\" | .headRefOid = \"$wfhead\" | .statusCheckRollup = []"
+mkdir -p "$work/home/agent-drafts/scripts/wf"; printf 'MERGE %s\n' "$wfhead" > "$work/home/agent-drafts/scripts/wf/merge-verdict.txt"
+check unsafe "no checks yet on a head with workflows" "No checks have reported on this head yet" merge "$wfhead"
+reset; git -C "$work/repo" switch -q wf
+pr ".headRefName = \"wf\" | .headRefOid = \"$wfhead\""
+check safe "green checks on a head with workflows" "" merge "$wfhead"
 reset; pr '.statusCheckRollup[0].conclusion = "NEUTRAL" | .statusCheckRollup += [{__typename: "CheckRun", name: "docs", status: "COMPLETED", conclusion: "SKIPPED"}]'
 check safe "neutral and skipped checks"
 reset; pr '.statusCheckRollup[0].conclusion = "FAILURE"'; check unsafe "a failed check" "test"
@@ -143,12 +165,28 @@ reset; pr '.url = "https://github.com/ctejada10/dotfiles/pull/12" | .files = [{p
 mkdir -p "$work/home/agent-drafts/dotfiles/feature"; printf 'MERGE %s\n' "$head" > "$work/home/agent-drafts/dotfiles/feature/merge-verdict.txt"
 check unsafe "any dotfiles change" "README.md"
 reset; pr '.changedFiles = 300'; check unsafe "more files than gh lists" "300"
+for path in sub/pyproject.toml config/.env.prod Secrets.md docs/SECRET_NOTES.txt web/package.json \
+            environment.yml conda/environment.yaml bun.lockb go.mod go.sum Cargo.toml setup.py setup.cfg Pipfile Pipfile.lock; do
+  reset; pr ".files = [{path: \"$path\"}]"; check unsafe "$path, by its full path or its name, in any case" "$path"
+done
 
 section "the verdict"
 reset; rm "$verdict"; check unsafe "no verdict" "cross-family reviewer"
 reset; printf 'WAIT the diff touches auth\n' > "$verdict"; check unsafe "a WAIT verdict" "cross-family reviewer"
 reset; printf 'MERGE 0000000000000000000000000000000000000000\n' > "$verdict"; check unsafe "a verdict on another head" "cross-family reviewer"
 reset; printf 'MERGE %s\n' "${head:0:12}" > "$verdict"; check unsafe "a verdict naming a short SHA" "cross-family reviewer"
+reset; rm "$verdict"; check unsafe "no verdict names both paths it tried" "agent-drafts/repo/feature/merge-verdict.txt"
+reset; rm "$verdict"; check unsafe "no verdict names the repo's path too" "agent-drafts/scripts/feature/merge-verdict.txt"
+reset; rm "$verdict"; mkdir -p "$work/home/agent-drafts/repo/feature"
+printf 'MERGE %s\n' "$head" > "$work/home/agent-drafts/repo/feature/merge-verdict.txt"
+check safe "a verdict under the main checkout's folder name"
+git -C "$work/repo" worktree add -q "$work/wt" -b wt2 feature
+reset; pr '.headRefName = "wt2"'; rm "$verdict"; mkdir -p "$work/home/agent-drafts/repo/wt2"
+printf 'MERGE %s\n' "$head" > "$work/home/agent-drafts/repo/wt2/merge-verdict.txt"
+out=$(HOME="$work/home" PATH="$work/bin:$PATH" FAKE_GH="$fake" /usr/bin/python3 -B "$script" "$work/wt" merge "$head" 2>&1) \
+  && pass "safe: in a worktree, a verdict under the main checkout's folder name" \
+  || fail "safe: in a worktree, a verdict under the main checkout's folder name" "$out"
+rm -rf "$work/home/agent-drafts/repo"
 
 section "gh failing"
 reset; printf '1' > "$fake/pr.status"; check unsafe "gh pr view fails" "gh pr view"

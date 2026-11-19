@@ -149,9 +149,11 @@
         "Bash(env)" "Bash(printenv)") -}}
 {{- /* The deployed agent and shell config, which the rules say never to
        edit. An Edit rule covers Edit, Write and NotebookEdit. The dotfiles
-       source that makes them is guarded by hooks/guard-paths.sh instead. */ -}}
+       source that makes them is guarded by hooks/guard-paths.sh instead.
+       Session transcripts too, since guard-git.py reads the merge grant
+       from them. */ -}}
 {{-   range $path := list ".codex/**" ".claude/settings.json" ".claude/CLAUDE.md" ".claude/attended.md"
-        ".claude/hooks/**" ".claude/skills/**" ".claude/agents/**" ".claude/plugins/**"
+        ".claude/hooks/**" ".claude/skills/**" ".claude/agents/**" ".claude/plugins/**" ".claude/projects/**"
         ".local/share/claude-plugins/**" ".gitconfig" ".zshrc" ".zshenv" ".zprofile" ".zsh/**" -}}
 {{-     $deny = append $deny (printf "Edit(/%s/%s)" $home $path) -}}
 {{-   end -}}

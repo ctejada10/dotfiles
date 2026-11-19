@@ -5,15 +5,19 @@ merge under Carlos's grant:
 
     merge-check.py <cwd> <ready|merge> <sha, or ""> [PR numbers the grant names]
 
-It exits 0 when every check passes and 2 otherwise, with one reason per
-failed check on stderr. The PR must be the branch's own, from this repo, into
-the default branch, on the local HEAD, and one of the grant's PRs when it names
-some; a merge's --match-head-commit SHA must be that head. Every check on
-GitHub is green, no review requests changes, no review thread is unresolved,
-and the base has no merge queue. No changed file is on the wait list in
-merge-wait.json beside this file. The cross-family reviewer's verdict in
-~/agent-drafts/<repo>/<branch>/merge-verdict.txt opens with MERGE and the
-PR's full head SHA. Anything gh or git can't answer counts as a failure.
+It exits 0 when every check passes, printing {"repo": "owner/name", "head":
+sha} on stdout, and 2 otherwise, with one reason per failed check on stderr.
+The PR must be open, the branch's own under the same name, from this repo,
+into the default branch, on the local HEAD, and one of the grant's PRs when it
+names some; a merge's PR is no draft, and its --match-head-commit SHA must be
+that head. Every check on GitHub is green, and some check has reported when
+the head has workflows in .github/workflows. No review requests changes, no
+review thread is unresolved, and the base has no merge queue. No changed file
+is on the wait list in merge-wait.json beside this file, by its full path or
+its name, in any case. The cross-family reviewer's verdict in
+~/agent-drafts/<name>/<branch>/merge-verdict.txt, where name is the GitHub
+repo's or the main checkout's folder's, opens with MERGE and the PR's full
+head SHA. Anything gh or git can't answer counts as a failure.
 """
 
 import fnmatch
@@ -74,8 +78,9 @@ def waits(repo, paths):
     """The changed paths that the wait list holds for Carlos, in any repo or in this one."""
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "merge-wait.json"), encoding="utf-8") as f:
         table = {key.lower(): value for key, value in json.load(f).items()}
-    globs = table.get("*", []) + table.get(repo.lower(), [])
-    return [p for p in paths if any(fnmatch.fnmatchcase(p, g) for g in globs)]
+    globs = [g.lower() for g in table.get("*", []) + table.get(repo.lower(), [])]
+    return [p for p in paths if any(fnmatch.fnmatchcase(p.lower(), g) or fnmatch.fnmatchcase(
+        os.path.basename(p).lower(), g) for g in globs)]
 
 
 def problems(cwd, action, sha, allowed):
@@ -101,8 +106,8 @@ def problems(cwd, action, sha, allowed):
         found.append(f"{branch} is the default branch. Run this from the PR's own branch.")
     local = ask(run, "git", "rev-parse", "HEAD")
     pr = ask(run_json, "gh", "pr", "view", "--json",
-             "number,url,headRefName,headRefOid,baseRefName,isCrossRepository,files,changedFiles,"
-             "statusCheckRollup,reviewDecision")
+             "number,url,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,files,"
+             "changedFiles,statusCheckRollup,reviewDecision")
     if not isinstance(pr, dict):
         if pr is not None:
             found.append("`gh pr view` printed something other than a PR.")
@@ -114,8 +119,13 @@ def problems(cwd, action, sha, allowed):
         found.append(f"The PR's URL, {pr.get('url')}, is not a GitHub PR's.")
         return found
     owner, name = url.groups()
+    if pr.get("state") != "OPEN":
+        found.append(f"The PR is {pr.get('state')}, not open.")
+    if action == "merge" and pr.get("isDraft") is not False:
+        found.append("The PR is a draft. Mark it ready with gh pr ready in an earlier command first.")
     if branch and pr.get("headRefName") != branch:
-        found.append(f"The PR is for {pr.get('headRefName')}, not the checked-out {branch}.")
+        found.append(f"The PR is for {pr.get('headRefName')}, not the checked-out {branch}. The local branch "
+                     "must have the same name as the PR's branch.")
     if pr.get("isCrossRepository") is not False:
         found.append("The PR comes from a fork or another repo.")
     if pr.get("baseRefName") not in defaults:
@@ -129,6 +139,8 @@ def problems(cwd, action, sha, allowed):
     bad = checks_failing(pr.get("statusCheckRollup"))
     if bad:
         found.append(f"Not every check is green: {', '.join(bad)}.")
+    if not pr.get("statusCheckRollup") and ask(run, "git", "ls-tree", "--name-only", "HEAD", ".github/workflows"):
+        found.append("No checks have reported on this head yet. Wait for CI and check again.")
     if pr.get("reviewDecision") == "CHANGES_REQUESTED":
         found.append("A review requests changes.")
 
@@ -159,16 +171,23 @@ def problems(cwd, action, sha, allowed):
         if held:
             found.append(f"These files wait for Carlos (merge-wait.json): {', '.join(held)}.")
 
-    path = os.path.expanduser(f"~/agent-drafts/{name}/{pr.get('headRefName')}/merge-verdict.txt")
+    common = ask(run, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
+    folders = dict.fromkeys([name] + ([os.path.basename(os.path.dirname(common))] if common else []))
+    paths = [os.path.expanduser(f"~/agent-drafts/{d}/{pr.get('headRefName')}/merge-verdict.txt") for d in folders]
+    if f"MERGE {head}" not in (verdict_line(p) for p in paths):
+        found.append(f"The cross-family reviewer's verdict on this head is required: {' or '.join(paths)} must "
+                     f"open with `MERGE {head}`, and opens with {' and '.join(repr(verdict_line(p)) for p in paths)}.")
+    if not found:
+        print(json.dumps({"repo": f"{owner}/{name}", "head": head}))
+    return found
+
+
+def verdict_line(path):
     try:
         with open(path, encoding="utf-8") as f:
-            first = f.readline().rstrip("\n")
+            return f.readline().rstrip("\n")
     except OSError:
-        first = ""
-    if first != f"MERGE {head}":
-        found.append(f"The cross-family reviewer's verdict on this head is required: {path} must open with "
-                     f"`MERGE {head}`, and has {first!r}.")
-    return found
+        return ""
 
 
 def main(argv):
