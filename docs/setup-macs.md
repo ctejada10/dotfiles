@@ -114,13 +114,11 @@ name.
 The laptop's SSH config comes from `home/.chezmoidata/hosts.yaml`, so every
 machine there answers by name:
 
-- `ssh amonsul` reaches the mini, at home or away, through its Cloudflare
-  Tunnel, and so does its address, `amonsul.middlearth.io`. The apply pins its
-  host key in `~/.ssh/known_hosts` and drops entries under its old names
-  (`amon-sul`, `amon-sul.local`). Cloudflare Access lets the tunnel in only
-  with the `amonsul-ssh` service token: the first attended apply asks for its
-  Client ID and Secret and keeps them in the Keychain. When the token is
-  renewed, run `cf-token rotate`.
+- `ssh amonsul` reaches the mini over the tailnet, at its tailnet name
+  `amon-sul`, so Tailscale has to be connected, at home or away. `ssh amon-sul`
+  works the same way. The apply pins its host key in `~/.ssh/known_hosts`
+  under `amonsul` and drops entries under its other names (`amon-sul`,
+  `amon-sul.local`).
 - `open vnc://amon-sul` opens Screen Sharing. Sign in with the mini's macOS
   account name and password, not a separate VNC password.
 - `ssh dor-lomin`, `ssh rivendell` and `ssh esgaroth` reach the servers, on the

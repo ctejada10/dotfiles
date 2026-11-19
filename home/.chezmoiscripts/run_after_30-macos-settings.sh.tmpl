@@ -424,8 +424,8 @@ only_me screensharing "Screen Sharing"
 # once Remote Login is on and has made its host keys, without which sshd -t
 # fails whatever the file says.
 #
-# The rest is for SSH published through a Cloudflare Tunnel, where sshd is the
-# last line of defence: fewer tries and less time to log in, idle sessions
+# The rest makes sshd its own last line of defence, whatever network reaches
+# it: fewer tries and less time to log in, idle sessions
 # dropped after ten minutes, and no agent forwarding, which would lend the mini
 # the client's keys. TCP forwarding stays on for local forwards only, so
 # ssh -L can still reach Screen Sharing on localhost:5900. No Port or
