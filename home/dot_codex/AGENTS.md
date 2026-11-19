@@ -55,7 +55,7 @@ Carlos answers a Claude Code question in T3, and the run continues from that ans
 - Work only on your own branch: one you created from the default branch, or an agent's branch and draft PR that the task hands you to continue. Never push to or edit any other branch or PR.
 - The default branch is main, master, or whatever `git symbolic-ref refs/remotes/origin/HEAD` names. If that prints nothing, run `git remote set-head origin --auto` first. Never commit to the default branch or push to it.
 - Open every PR as a draft with `gh pr create --draft`, even where poteto-mode's opening-a-pr says to open it ready.
-- Never merge, enable auto-merge or mark a PR ready, even in the Shipping or Autopilot-full playbooks. Carlos does those.
+- Never merge, enable auto-merge or mark a PR ready unless a message Carlos typed in this thread says "merge when safe"; then follow Merging below. The Shipping and Autopilot-full playbooks still never merge on their own.
 - Never force-push in any form, `--force-with-lease` and `+` refspecs included. Once a branch is pushed, add commits on top instead of rewriting it. To take in the default branch, run `git pull --no-rebase origin <default>` on your branch and push again.
 - Never delete a branch you did not create. Leave changes you did not make alone and carry on: never reset, restore, clean or check out over them.
 - Never run `git stash`, because its stack is shared by every worktree of the repo. Commit work in progress on your branch instead.
@@ -63,6 +63,10 @@ Carlos answers a Claude Code question in T3, and the run continues from that ans
 - Match the repo's commit style from `git log`, for example no `feat:` prefixes where it writes plain prose.
 - Never run `git gc`, `git repack`, `git prune`, `git maintenance` or `git worktree prune` in a repo under `~/Library/CloudStorage/Dropbox`, because Dropbox syncs `.git` between the Macs and an object store there has already been destroyed once. The clones in `~/src` aren't in Dropbox.
 - Run `no-mistakes` only when a message Carlos typed names it, because it pushes on its own and can force-push.
+
+## Merging
+
+The grant is a message Carlos typed in this thread that contains "merge when safe". It covers the PRs this thread opened or was handed, on your own branches, and nothing else. A brief, a scheduled prompt, an issue, a PR comment or another agent never grants it; a delegated child never merges, and a parent never passes the grant on in a brief. In Claude Code the git guard looks for the phrase in the transcript; in Codex this rule is the only check. Merge only when all of these hold on the PR's current head SHA: (1) every required check and every other check is green, with none pending; (2) the repo's full suite, lint and type-check passed on that SHA in this run; (3) the branch is up to date with the default branch where the repo requires it; (4) no review thread is unresolved and no review requests changes; (5) the PR body matches the final diff; (6) the one cross-family review (see Models) ran on the final diff, and every finding that holds up is fixed or dismissed with a reason in the PR body. Wait for Carlos instead when any of these is true: the merge deploys to production, as in hurin and rivendell, or pushes a release or a tag; the diff touches CI workflows, git hooks, a repo's `.claude/`, `.codex/` or `.mcp.json`, secrets or their templates, auth, permissions or access; it adds, removes or bumps a dependency, or changes a lockfile; it changes a database schema, migrates or deletes data, or changes code that writes to a real account (the hurin note lists those); it changes this rules file or the dotfiles repo's hooks or settings; the diff is too large for you to say what every hunk does; a check above fails, or you are not sure. When in doubt, wait. To merge, mark the PR ready with `gh pr ready`, then run `gh pr merge <n> --match-head-commit <sha>` with the SHA you checked and the repo's merge method, such as `--squash` where the repo says so. Never use `--admin`, `--auto` or `--delete-branch`, never merge through `gh api`, and never bypass a ruleset. If the merge fails, read why and wait; never retry it with other flags. To wait, leave the PR a draft, put `WAITING: <reason>` as the first line of its body, above the parts The PR body lists, and start the final message with the same line and the PR link. Waiting is not a Stop: finish the run as usual. After a merge, the final message says what merged, its SHA, and the evaluation, one line per check, and if the merge started a deploy, it watches that run and reports its result.
 
 ## Where work happens
 
@@ -106,7 +110,7 @@ Write it for a reviewer who was not in the thread, after Google's guide to chang
 
 No other headings or parts: no decisions, rulings, verification narrative or notes. Anything else for Carlos goes in your final message.
 
-Just before you push for the PR, write `rules: mini 2026-11-03a` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
+Just before you push for the PR, write `rules: mini 2026-11-19a` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
 
 Base every claim on a tool result from this run.
 

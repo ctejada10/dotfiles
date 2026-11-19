@@ -9,6 +9,14 @@ master, or whatever the repo's origin says it is.
 t3-pstack's Shipping and Autopilot-full playbooks do several of these by
 default.
 
+gh pr ready and gh pr merge run only under Carlos's grant: a message he typed
+into this session's transcript says "merge when safe". Text he pasted, a
+system reminder, a skill's text, a tool result and a subagent's turn never
+count, and neither a Claude Code subagent nor a FirstMate crew, which sets
+FM_TASK_ID, ever holds it. Even then a merge must name the head it checked
+with --match-head-commit and may not use --admin, --auto or --delete-branch.
+A merge or ready through gh api, or through xargs, stays blocked.
+
 A repo in Dropbox's repositories folder, the repos' old home, is online-only
 on this Mac and never used here, attended or not: no git command runs in it,
 not even to read, since a status or diff would rewrite its index, and no gh
@@ -190,6 +198,15 @@ SRC = os.path.realpath(os.path.join(HOME, "src"))
 DROPBOX = os.path.realpath(os.path.join(HOME, "Library/CloudStorage/Dropbox"))
 DROPBOX_REPOS = os.path.realpath(os.path.join(HOME, "Library/CloudStorage/Dropbox/repositories"))
 DOTFILES = os.path.realpath(os.path.join(HOME, ".local/share/chezmoi"))
+# Whether this session holds Carlos's grant to merge; main() sets it.
+MERGE_GRANTED = False
+GRANT = re.compile(r"merge when safe", re.I)
+# What reached a user turn without Carlos typing it: a paste, whose closing
+# tag repeats the opening tag's id, or a system reminder. One left open runs
+# to the end of the text.
+UNTYPED = re.compile(r"<pasted_content\b([^>]*)>.*?(?:</pasted_content\1>|\Z)"
+                     r"|<system-reminder>.*?(?:</system-reminder>|\Z)", re.S)
+SHA = re.compile(r"[0-9a-fA-F]{7,40}")
 
 
 def block(reason):
@@ -1288,8 +1305,12 @@ def check_gh(words, cwd, blind=False):
             never_written(*lands_in(resolve_dest(cwd, path)), "`gh repo clone`")
     if group == "pr":
         if action in ("merge", "ready"):
-            block(f"`gh pr {action}`. PRs from here stay drafts; Carlos marks them "
-                  "ready and merges them.")
+            if not MERGE_GRANTED or blind:
+                block(f"`gh pr {action}`. PRs from here stay drafts; Carlos marks them ready and "
+                      'merges them, unless he typed "merge when safe" in this thread.')
+            if action == "merge" and not safe_merge(words):
+                block("`gh pr merge` in this form. Merges must name the reviewed head with "
+                      "--match-head-commit <sha> and may not use --admin, --auto or --delete-branch.")
         if action in ("create", "new") and not any(w == "-d" or w.startswith("--draft") for w in words):
             block(f"`gh pr {action}` without --draft. Open it again with --draft, even "
                   "where a playbook says to open it ready.")
@@ -1323,6 +1344,52 @@ def check_gh(words, cwd, blind=False):
         if re.search(r"/pulls/\d+/merge|/merges\b", joined) or re.search(
                 r"mergePullRequest|markPullRequestReadyForReview|enablePullRequestAutoMerge", joined):
             block("`gh api` call that merges or readies a PR. PRs from here stay drafts.")
+
+
+def safe_merge(words):
+    """Whether gh pr merge names the head it checked, by its SHA, and leaves
+    out the flags that bypass a ruleset, defer the merge or delete the branch."""
+    banned = ("--admin", "--auto", "--disable-auto", "--delete-branch")
+    shas = []
+    for n, w in enumerate(words):
+        # -d, alone or among other short flags as in -sd, deletes the branch.
+        if w.split("=", 1)[0] in banned or re.fullmatch(r"-[A-Za-z]*d[A-Za-z]*", w):
+            return False
+        if w == "--match-head-commit":
+            shas.append(words[n + 1] if n + 1 < len(words) else "")
+        elif w.startswith("--match-head-commit="):
+            shas.append(w.split("=", 1)[1])
+    return bool(shas) and all(SHA.fullmatch(s) for s in shas)
+
+
+def merge_granted(payload):
+    """Whether Carlos typed "merge when safe" into this session. A subagent's
+    payload carries agent_id, and a FirstMate crew sets FM_TASK_ID; neither
+    holds the grant. Only a user turn that is no skill's text, no subagent's
+    and no tool result counts, and a line that won't parse is skipped."""
+    path = payload.get("transcript_path")
+    if "agent_id" in payload or os.environ.get("FM_TASK_ID") or not isinstance(path, str) or not path:
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "merge when safe" not in line.lower():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("type") != "user" or entry.get("isMeta") or entry.get("isSidechain"):
+                        continue
+                    content = entry["message"]["content"]
+                    if isinstance(content, list) and content and all(
+                            isinstance(b, dict) and b.get("type") == "text" for b in content):
+                        content = "\n".join(str(b.get("text", "")) for b in content)
+                    if isinstance(content, str) and GRANT.search(UNTYPED.sub("", content)):
+                        return True
+                except (ValueError, AttributeError, KeyError, TypeError):
+                    continue
+    except OSError:
+        pass
+    return False
 
 
 def applies(words):
@@ -1725,6 +1792,7 @@ def check(command, cwd, depth=0, env=None, blind=False, outer=None, zsh=True):
 
 
 def main():
+    global MERGE_GRANTED
     try:
         payload = json.load(sys.stdin)
     except ValueError:
@@ -1733,6 +1801,9 @@ def main():
         command = (payload.get("tool_input") or {}).get("command") or ""
         cwd = payload.get("cwd") or os.getcwd()
         if command:
+            # Reading the transcript costs time on every command, so only one
+            # that could merge or ready a PR reads it.
+            MERGE_GRANTED = bool(re.search(r"merge|ready", command)) and merge_granted(payload)
             check(command, cwd)
     except RecursionError:
         block("this command nests too deeply to check. Split it into separate commands.")

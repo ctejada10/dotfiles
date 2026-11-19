@@ -1121,7 +1121,11 @@ rules, in `~/.hermes/SOUL.md`.
 Agents commit, push and open draft PRs on their own branches without asking;
 never on the default branch, never a force-push, a merge or a PR opened ready.
 Claude Code's `hooks/guard-git.py` blocks the ordinary forms of each, and
-refuses a commit or PR that credits an AI.
+refuses a commit or PR that credits an AI. The one exception is a merge you
+grant: type "merge when safe" in a thread, and its agent may ready and merge
+its own PR with `gh pr merge --match-head-commit <sha>` after it checks the
+PR against the Merging rules, or leave it a draft with a `WAITING:` line.
+Subagents and FirstMate crews never hold the grant.
 
 A draft PR's body lists the work, one line per change, plus the `STOP:` text
 when a run stopped and a line for each gate that failed or was skipped. No
