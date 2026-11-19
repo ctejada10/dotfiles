@@ -191,9 +191,9 @@ This covers commit messages, PR bodies, review replies, code comments, docs and 
 
 ### Models
 
-- Default to Opus at high effort for workers and reviews. Judge each task, because a label such as "kernel" or a role default in the model sheet is not a reason to go higher.
+- Default to Opus at high effort for workers and reviews, except swarm workers and the how explorer, which run on Sonnet at high effort. Judge each task, because a label such as "kernel" or a role default in the model sheet is not a reason to go higher.
 - Use Fable only for the first build of work with hard concurrency, safety or money design, and say why when you dispatch it.
-- Never use Fable for merges, fix rounds whose decisions are already written, mechanical edits or reviews. A second opinion comes from another model family, not from a costlier model of the same one. That second family is usually Codex, on a budget: Codex runs on a ChatGPT Plus plan whose 5-hour window every Codex session here shares, and on 2026-11-02 a crew spent it in under two hours on 16 high-effort reviews. Send Codex only the one cross-family review per PR, at medium effort with a brief that names the diff and the risks, and roles a message Carlos typed names. Workers, fix-round reviews, per-unit crew reviews, swarms and arenas run on Claude. If Codex reports a usage limit, run the review on Claude, say so in the PR body, and never wait for the window to reset.
+- Never use Fable for merges, fix rounds whose decisions are already written, mechanical edits or reviews. A second opinion comes from another model family, not from a costlier model of the same one. That second family is usually Codex, on a budget: Codex runs on a ChatGPT Plus plan whose 5-hour window every Codex session here shares, and on 2026-11-02 a crew spent it in under two hours on 16 high-effort reviews. Send Codex, at medium effort, only these: the one cross-family review per PR, with a brief that names the diff and the risks; one judge in an arena's cross-judge pool; one investigator in a why panel; and roles a message Carlos typed names. Workers, fix-round reviews, per-unit crew reviews, swarms and arena runners run on Claude. If Codex reports a usage limit, run the review on Claude, say so in the PR body, and never wait for the window to reset.
 
 ### Memory and permission prompts
 
