@@ -23,14 +23,14 @@ Host {{ $name }}{{ if ne $host.address $name }} {{ $host.address }}{{ end }}
 {{- end }}
 {{- if eq .role "laptop" }}
 {{-   range $name, $mac := .macs }}
-{{-     with $mac.tunnel }}
+{{-     with $mac.alias }}
 
-# The mini, from anywhere, home included: through its Cloudflare Tunnel. The
-# helper hands cloudflared the Access service token from the Keychain. The
-# mini refuses agent forwarding, and Host * keeps it off.
-Host {{ .alias }} {{ .hostname }}
-  HostName {{ .hostname }}
-  HostKeyAlias {{ .alias }}
+# The mini, over the tailnet, by its alias or its tailnet name. Both check the
+# host key pinned under the alias. The mini refuses agent forwarding, and
+# Host * keeps it off.
+Host {{ . }}{{ if ne $mac.address . }} {{ $mac.address }}{{ end }}
+  HostName {{ $mac.address }}
+  HostKeyAlias {{ . }}
   User {{ $mac.user }}
   IdentityFile ~/.ssh/login.pub
   IdentitiesOnly yes
@@ -38,7 +38,6 @@ Host {{ .alias }} {{ .hostname }}
   AddKeysToAgent yes
   ServerAliveInterval 30
   ServerAliveCountMax 3
-  ProxyCommand ~/.ssh/cf-amonsul.sh %h
 {{-     else }}
 
 Host {{ $name }}
