@@ -1304,7 +1304,8 @@ def check_gh(words, cwd, blind=False):
             path = names[1] if len(names) > 1 else re.sub(r"\.git$", "", re.split(r"[/:]", names[0].rstrip("/"))[-1])
             never_written(*lands_in(resolve_dest(cwd, path)), "`gh repo clone`")
     if group == "pr":
-        if action in ("merge", "ready"):
+        # gh pr ready --undo turns a PR back into a draft, which is always fine.
+        if action == "merge" or (action == "ready" and "--undo" not in words):
             if not MERGE_GRANTED or blind:
                 block(f"`gh pr {action}`. PRs from here stay drafts; Carlos marks them ready and "
                       'merges them, unless he typed "merge when safe" in this thread.')

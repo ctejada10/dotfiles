@@ -91,6 +91,7 @@ section "merging or readying PRs"
 expect blocked feature 'gh pr merge 12 --squash'
 expect blocked feature 'gh -R ctejada10/hurin pr merge 12'
 expect blocked feature 'gh pr ready 12'
+expect allowed feature 'gh pr ready 12 --undo'
 expect blocked feature 'gh pr create --title "Add the parser" --body x'
 expect blocked feature 'gh api -X PUT repos/ctejada10/hurin/pulls/12/merge'
 expect blocked feature $'gh api graphql -f query=\'mutation{mergePullRequest(input:{pullRequestId:"PR_x"}){clientMutationId}}\''
