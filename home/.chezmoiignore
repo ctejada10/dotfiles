@@ -89,6 +89,9 @@ Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 .claude/agents/ecc-*
 .claude/agents/rpi-*
 .claude/hooks/guard-git.py
+.claude/hooks/merge-check.py
+.claude/hooks/merge-notify.py
+.claude/hooks/merge-wait.json
 .claude/hooks/worktree.sh
 .claude/hooks/agent-gate.sh
 .local/bin/worktree-ttl

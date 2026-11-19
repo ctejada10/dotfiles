@@ -180,6 +180,7 @@ for role in "${roles[@]}"; do
     laptop)
       # Personal work and job hunting only; development happens on the mini.
       lacks "$list" ".claude/hooks/guard-git.py" && pass "laptop has no git guard" || fail "laptop has no git guard"
+      grep -q 'claude/hooks/merge-' <<< "$list" && fail "laptop has no merge hooks" || pass "laptop has no merge hooks"
       grep -q 'claude-plugins\|agent-gate\|attended.md' <<< "$list" && fail "laptop has no superpowers" || pass "laptop has no superpowers"
       grep -qE '^\.local/bin/worktree-ttl$|LaunchAgents/com\.carlosetejada\.worktree-ttl' <<< "$list" \
         && fail "laptop has no worktree cleanup job" || pass "laptop has no worktree cleanup job"
@@ -223,6 +224,12 @@ for role in "${roles[@]}"; do
       jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.command | endswith("/guard-git.py"))' <<< "$settings" >/dev/null \
         && pass "the mini runs the git guard" || fail "the mini runs the git guard"
       has "$list" ".claude/hooks/guard-git.py" && pass "the mini has the git guard" || fail "the mini has the git guard"
+      jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.command | endswith("/guard-git.py")) | select(.onFailure == "block" and .timeout == 60)' <<< "$settings" >/dev/null \
+        && pass "a git guard that fails or times out blocks the command" || fail "a git guard that fails or times out blocks the command"
+      jq -e '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.command | endswith("/merge-notify.py"))' <<< "$settings" >/dev/null \
+        && pass "the mini tells Carlos after a merge" || fail "the mini tells Carlos after a merge"
+      has "$list" ".claude/hooks/merge-check.py" && has "$list" ".claude/hooks/merge-wait.json" && has "$list" ".claude/hooks/merge-notify.py" \
+        && pass "the mini has the merge check, its wait list and the merge notice" || fail "the mini has the merge check, its wait list and the merge notice"
       # Every deployed agent or shell file is behind an Edit deny.
       uncovered=$(grep -E '^(\.codex/|\.claude/(settings\.json|CLAUDE\.md|attended\.md|hooks/|skills/|agents/)|\.local/share/claude-plugins/|\.gitconfig$|\.zshrc$|\.zshenv$|\.zprofile$|\.zsh/)' <<< "$list" | while read -r path; do
         jq -e --arg p "$path" --arg h "$HOME" '[.permissions.deny[] | select(startswith("Edit(/"))
