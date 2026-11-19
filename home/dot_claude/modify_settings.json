@@ -153,7 +153,7 @@
        Session transcripts too, since guard-git.py reads the merge grant
        from them. */ -}}
 {{-   range $path := list ".codex/**" ".claude/settings.json" ".claude/CLAUDE.md" ".claude/attended.md"
-        ".claude/hooks/**" ".claude/skills/**" ".claude/agents/**" ".claude/plugins/**" ".claude/projects/**"
+        ".claude/hooks/**" ".claude/skills/**" ".claude/agents/**" ".claude/plugins/**" ".claude/projects/**/*.jsonl"
         ".local/share/claude-plugins/**" ".gitconfig" ".zshrc" ".zshenv" ".zprofile" ".zsh/**" -}}
 {{-     $deny = append $deny (printf "Edit(/%s/%s)" $home $path) -}}
 {{-   end -}}

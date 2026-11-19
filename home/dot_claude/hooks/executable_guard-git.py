@@ -24,9 +24,9 @@ PR. A merge it lets through is recorded in
 ~/.local/state/agent-merge-pending/<tool_use_id>.json for merge-notify.py. A
 merge or ready through gh api, or through xargs, stays blocked, and so does
 any gh alias or extension, which could hide one, and a GraphQL query read
-from a file. Nothing writes under ~/.claude/projects, where the transcripts
-the grant is read from live, and no interpreter runs on a command that names
-it.
+from a file. A command that names ~/.claude/projects, where the transcripts
+the grant is read from live, may not write there or run an interpreter. That
+is a pattern check like the rest: a script file or a symlink gets past it.
 
 A repo in Dropbox's repositories folder, the repos' old home, is online-only
 on this Mac and never used here, attended or not: no git command runs in it,
@@ -214,21 +214,28 @@ DOTFILES = os.path.realpath(os.path.join(HOME, ".local/share/chezmoi"))
 MERGE_GRANTED = False
 MERGE_ALLOWED = None
 GRANT = re.compile(r"merge when safe(?:\s*:\s*(#?\d+(?:[\s,]+#?\d+)*))?", re.I)
-REVOKE = re.compile(r"(?:don['\u2019]t merge|do not merge|stop merging|no merging)[.!]?", re.I)
+# A revoke counts anywhere in a typed line, since a missed revoke costs more
+# than a false one.
+REVOKE = re.compile(r"\b(?:don['\u2019]?t merge|do not merge|stop merging|no merging)\b", re.I)
 # The PreToolUse call's id, which names the record a let-through merge leaves.
 TOOL_USE_ID = ""
+# The folder of the merge this command makes, once merge-check passed it.
+MERGES = []
 # gh's own commands. Any other first word is an alias or an extension.
 GH_CORE = {"auth", "browse", "codespace", "gist", "issue", "org", "pr", "project", "release", "repo", "cache",
            "run", "workflow", "alias", "api", "attestation", "completion", "config", "extension", "gpg-key",
            "label", "preview", "ruleset", "search", "secret", "ssh-key", "status", "variable", "help",
-           "version", "agent-task", "copilot"}
+           "version", "agent-task", "copilot", "ext", "extensions"}
 # Session transcripts, which the grant is read from: ~/.claude/projects named
 # by ~, $HOME or its full path, and the commands that could write a file there.
 PROJECTS = os.path.join(os.path.expanduser("~"), ".claude", "projects")
 TRANSCRIPTS = re.compile(r"(?:~|\$\{?HOME\}?|" + "|".join(re.escape(h) for h in {
     os.path.expanduser("~"), os.path.realpath(os.path.expanduser("~"))}) + r")[\"']?/+\.claude/+projects(?![\w.-])")
-WRITERS = re.compile(r"(?:^|[\s;&|()`])(?:[^\s;&|()`'\"<>]*/)?(?:tee|cp|mv|ln|rm|truncate|dd|python[\d.]*|perl|ruby|node"
-                     r"|osascript)(?=$|[\s;&|()`])|\bsed\b[^;&|\n]*\s(?:-[A-Za-z]*i|--in-place)|(?<![\w-])-delete\b")
+# In command position only, so a grep for the word python still reads.
+WRITERS = re.compile(r"(?:^|[;&|()`]|\$\()\s*(?:(?:sudo|env|command|exec|xargs|nohup|time)\s+(?:-\S+\s+|\w+=\S*\s+)*)*"
+                     r"(?:[^\s;&|()`'\"<>]*/)?(?:tee|cp|mv|ln|rm|truncate|dd|install|rsync|awk|gawk|sh|bash|zsh"
+                     r"|python[\d.]*|perl|ruby|node|osascript)(?=$|[\s;&|()`])"
+                     r"|\bsed\b[^;&|\n]*\s(?:-[A-Za-z]*i|--in-place)|(?<![\w-])-delete\b")
 OUTPUT = re.compile(r"(?:&>>?|>>|>\||>)(?!&)[ \t]*([^\s;&|()<>]+)")
 # gh pr merge's options that take the next word as their value.
 MERGE_VALUES = {"-t", "--subject", "-b", "--body", "-F", "--body-file", "-A", "--author-email",
@@ -1323,7 +1330,8 @@ def check_gh(words, cwd, blind=False):
         block("a gh command whose action xargs or find supplies when it runs. Name the action.")
     named = [w for n, w in enumerate(words[1:], 1) if not w.startswith("-") and words[n - 1] not in ("-R", "--repo")]
     if named and (named[0] not in GH_CORE or named[:2] in (["alias", "set"], ["alias", "import"],
-                                                          ["extension", "exec"])):
+                                                          ["extension", "exec"], ["ext", "exec"],
+                                                          ["extensions", "exec"])):
         block("gh aliases and extensions aren't followed here; spell out the full gh command.")
     kind, name = owner_of(cwd)
     if kind in ("dropbox", "unknown") and (group, action) != ("repo", "clone"):
@@ -1352,9 +1360,11 @@ def check_gh(words, cwd, blind=False):
             if names_a_pr(words, action):
                 block(f"`gh pr {action}` naming a PR or repo. Run it from the PR's own branch, with no PR "
                       "number or repo, so the merge check sees the PR it acts on.")
-            found = merge_check(cwd, action, head_commit(words) if action == "merge" else "")
+            merge_check(cwd, action, head_commit(words) if action == "merge" else "")
             if action == "merge":
-                record_merge(cwd, found, head_commit(words))
+                if MERGES:
+                    block("two merges in one command. Run each gh pr merge as its own command.")
+                MERGES.append(os.path.abspath(cwd))
         if action in ("create", "new") and not any(w == "-d" or w.startswith("--draft") for w in words):
             block(f"`gh pr {action}` without --draft. Open it again with --draft, even "
                   "where a playbook says to open it ready.")
@@ -1383,7 +1393,7 @@ def check_gh(words, cwd, blind=False):
                         pass
             if AI_CREDIT.search("\n".join(text)):
                 block("this PR credits an AI. Nothing here is credited to an AI agent: drop the line and try again.")
-    if group == "api" and "graphql" in words:
+    if group == "api" and any(re.search(r"graphql", w, re.I) for w in words):
         for n, w in enumerate(words):
             if w in ("-f", "-F", "--field", "--raw-field"):
                 value = words[n + 1] if n + 1 < len(words) else ""
@@ -1471,15 +1481,16 @@ def merge_check(cwd, action, sha):
     return found if isinstance(found, dict) else {}
 
 
-def record_merge(cwd, found, sha):
+def record_merge(cwd):
     """Leave merge-notify.py the folder this merge runs in, under this tool
-    call's id, since a cd earlier in the command moves it from the session's."""
+    call's id, since a cd earlier in the command moves it from the session's.
+    main() calls it only once the whole command has passed."""
     if not re.fullmatch(r"[A-Za-z0-9_-]+", TOOL_USE_ID):
         return
     folder = os.path.join(HOME, ".local", "state", "agent-merge-pending")
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, f"{TOOL_USE_ID}.json"), "w", encoding="utf-8") as f:
-        json.dump({"cwd": os.path.abspath(cwd), "repo": found.get("repo"), "head": found.get("head") or sha}, f)
+        json.dump({"cwd": cwd}, f)
 
 
 def no_transcript_writes(command, cwd):
@@ -1491,8 +1502,10 @@ def no_transcript_writes(command, cwd):
         return
     masked = mask_quotes(command)
     targets = [command[m.start(1):m.end(1)].strip("'\"") for m in OUTPUT.finditer(masked)]
+    # A relative target is only a worry when the command could have moved into it.
+    moved = inside.startswith(os.path.realpath(PROJECTS) + os.sep) or re.search(r"(?:^|[;&|()\s])(?:cd|pushd)\s", masked)
     if WRITERS.search(masked) or any(
-            TRANSCRIPTS.search(t) or not (t.startswith(("/", "~", "$HOME", "${HOME}"))) for t in targets):
+            TRANSCRIPTS.search(t) or (moved and not t.startswith(("/", "~", "$HOME", "${HOME}"))) for t in targets):
         block("a command that names ~/.claude/projects, where session transcripts live, and writes a file or runs "
               "an interpreter. Read them with cat, grep or head, and write what you keep to an absolute path "
               "outside it.")
@@ -1541,7 +1554,7 @@ def merge_granted(payload):
                     continue
                 for typed in text.splitlines():
                     match = GRANT.fullmatch(typed.strip())
-                    if REVOKE.fullmatch(typed.strip()):
+                    if REVOKE.search(typed):
                         granted, anyone, numbers = False, False, set()
                     elif match:
                         granted, anyone = True, anyone or not match.group(1)
@@ -1968,6 +1981,8 @@ def main():
             if re.search(r"merge|ready", command):
                 MERGE_GRANTED, MERGE_ALLOWED = merge_granted(payload)
             check(command, cwd)
+            for folder in MERGES:
+                record_merge(folder)
     except RecursionError:
         block("this command nests too deeply to check. Split it into separate commands.")
     except Exception as error:

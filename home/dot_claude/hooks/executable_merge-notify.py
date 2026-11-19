@@ -25,7 +25,7 @@ import sys
 
 LOG = os.path.expanduser("~/.local/state/agent-merges.log")
 PENDING = os.path.expanduser("~/.local/state/agent-merge-pending")
-TIMEOUT = 10
+TIMEOUT = 6
 
 
 def pending(payload):

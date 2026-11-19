@@ -1126,8 +1126,8 @@ grant: type "merge when safe" on a line of its own in a thread, or
 "merge when safe: #59" for just that PR, and its agent may ready and merge
 its own PR from its branch with `gh pr merge --match-head-commit <sha>` after
 it checks the PR against the Merging rules, or leave it a draft with a
-`WAITING:` line. A later line of "don't merge", "do not merge", "stop
-merging" or "no merging" takes the grant back. Before the merge runs,
+`WAITING:` line. A later line that says "don't merge", "do not merge",
+"stop merging" or "no merging" anywhere takes the grant back. Before the merge runs,
 `hooks/merge-check.py` checks the PR on GitHub (checks, review threads, merge
 queue, the reviewer's verdict in
 `~/agent-drafts/<repo>/<branch>/merge-verdict.txt`, and the paths in
@@ -1141,7 +1141,9 @@ the check proves a verdict was recorded, not that a reviewer wrote it. A T3
 scheduled prompt or a `t3_thread_send` message reaches the transcript as a
 typed turn, so it can grant or revoke like you, and the guard knows a T3
 delegated child only by the "Act as the ... sub-agent for this task" opening
-T3 gives its first turn.
+T3 gives its first turn. The guard's block on writing the transcripts in
+`~/.claude/projects` reads commands, so a script file or a symlink gets past
+it.
 
 A draft PR's body lists the work, one line per change, plus the `STOP:` text
 when a run stopped and a line for each gate that failed or was skipped. No

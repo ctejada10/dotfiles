@@ -139,6 +139,7 @@ log revokepasted "$(typed 'merge when safe')" "$(typed $'See <pasted_content id=
 log revokedelegated "$(typed 'merge when safe')" "$(typed $'Delegated task finished: it says\ndon\'t merge')"
 log revokereminder "$(typed 'merge when safe')" "$(typed $'Go. <system-reminder>\nstop merging\n</system-reminder>')"
 log revokesentence "$(typed 'merge when safe')" "$(typed "Don't merge yet, I want to look first? No, go ahead.")"
+log revokeloose "$(typed 'merge when safe')" "$(typed 'wait, dont merge #12 yet')"
 
 # The guard runs merge-check.py from its own folder, so these run a copy of it
 # beside a stand-in check that logs its arguments, one per line after a
@@ -228,7 +229,8 @@ merges blocked grant $'gh api graphql -f query=\'mutation{markPullRequestReadyFo
 merges blocked grant 'echo 12 | xargs gh pr merge --squash --match-head-commit abc1234'
 
 section "Carlos takes the grant back"
-for name in revoked revokedcurly revokedcaps revokedstop revokedno; do
+# A revoke counts anywhere in a typed line, since a missed one costs more.
+for name in revoked revokedcurly revokedcaps revokedstop revokedno revokesentence revokeloose; do
   merges blocked "$name" "$ok"
   merges blocked "$name" 'gh pr ready'
 done
@@ -236,7 +238,7 @@ merges allowed regranted "$ok"
 checked "$work/repo|merge|abc1234|14"
 merges allowed regrantedany "$ok"
 checked "$work/repo|merge|abc1234"
-for name in revokepasted revokedelegated revokereminder revokesentence; do
+for name in revokepasted revokedelegated revokereminder; do
   merges allowed "$name" "$ok"
 done
 
@@ -257,14 +259,14 @@ pends grant toolu_1 "cd $work/repo && $ok"
 rec="$pending/toolu_1.json"
 # The record's folder is normalized, and $work may hold a // where TMPDIR ends in /.
 [ "$status" -eq 0 ] && [ "$(jq -r .cwd "$rec" 2>/dev/null)" = "${work//\/\///}/repo" ] \
-  && [ "$(jq -r '.repo, .head' "$rec" | tr '\n' ' ')" = "null abc1234 " ] \
-  && pass "a merge after cd records the folder it ran in, and the head it named" \
-  || fail "a merge after cd records the folder it ran in, and the head it named" "exit $status: $(cat "$rec" 2>/dev/null)"
-printf '{"repo": "ctejada10/scripts", "head": "0123456789abcdef0123456789abcdef01234567"}' > "$work/hooks/out"
-pends grant toolu_2 "cd $work/repo && $ok"
-[ "$(jq -r '.repo, .head' "$pending/toolu_2.json" 2>/dev/null | tr '\n' ' ')" = "ctejada10/scripts 0123456789abcdef0123456789abcdef01234567 " ] \
-  && pass "and the repo and full head the merge check found" || fail "and the repo and full head the merge check found" "$(cat "$pending/toolu_2.json" 2>/dev/null)"
-rm "$work/hooks/out"
+  && pass "a merge after cd records the folder it ran in" \
+  || fail "a merge after cd records the folder it ran in" "exit $status: $(cat "$rec" 2>/dev/null)"
+pends grant toolu_2 "cd $work/repo && $ok && git push --force"
+[ "$status" -eq 2 ] && [ ! -e "$pending/toolu_2.json" ] \
+  && pass "a merge in a command blocked later on records nothing" || fail "a merge in a command blocked later on records nothing" "exit $status"
+pends grant toolu_5 "cd $work/repo && $ok; cd $work/repo && $ok"
+[ "$status" -eq 2 ] && [ ! -e "$pending/toolu_5.json" ] \
+  && pass "two merges in one command are blocked" || fail "two merges in one command are blocked" "exit $status"
 pends grant toolu_3 "cd $work/repo && gh pr ready"
 [ "$status" -eq 0 ] && [ ! -e "$pending/toolu_3.json" ] && pass "gh pr ready records nothing" || fail "gh pr ready records nothing" "exit $status"
 printf '2' > "$work/hooks/status"
@@ -1217,23 +1219,28 @@ for cmd in 'echo x >> ~/.claude/projects/p/s.jsonl' 'printf x > "$HOME/.claude/p
            "ruby -e 'p 1' ~/.claude/projects/p/s.jsonl" "node -e '1' ~/.claude/projects/p/s.jsonl" \
            "/usr/bin/osascript -e 'x' ~/.claude/projects/p/s.jsonl" 'cd ~/.claude/projects/p && echo x >> s.jsonl' \
            "find ~/.claude/projects -name '*.jsonl' -delete" 'bash -c "echo x >> ~/.claude/projects/p/s.jsonl"' \
-           "echo x >> \"$home/.claude/projects/p/s.jsonl\""; do
+           "echo x >> \"$home/.claude/projects/p/s.jsonl\"" 'install /tmp/x ~/.claude/projects/p/s.jsonl' \
+           'rsync /tmp/x ~/.claude/projects/p/s.jsonl' "awk 'BEGIN{print 1}' ~/.claude/projects/p/s.jsonl" \
+           'zsh -c "cat" ~/.claude/projects/p/s.jsonl'; do
   at blocked "$work/repo" 0 "$cmd"
 done
 for cmd in 'cat ~/.claude/projects/p/s.jsonl' 'grep -c merge ~/.claude/projects/p/s.jsonl 2>/dev/null' \
            'head -n 5 ~/.claude/projects/p/s.jsonl > /tmp/out.txt' 'ls ~/.claude/projects' \
            'tail -n 1 "$HOME/.claude/projects/p/s.jsonl" | jq .type' 'echo x >> ~/.claude/notes.txt' \
-           "python3 -c 'print(1)' ~/src/x.py"; do
+           "python3 -c 'print(1)' ~/src/x.py" 'grep -rl python ~/.claude/projects' \
+           'ls -t ~/.claude/projects > notes.txt'; do
   at allowed "$work/repo" 0 "$cmd"
 done
 says "$work/repo" 'echo x >> ~/.claude/projects/p/s.jsonl' 'Read them with cat, grep or head'
 
 section "gh aliases and extensions aren't followed"
 for cmd in "gh alias set co 'pr merge --squash'" 'gh alias import aliases.yml' 'gh co 12' 'gh merge-it' \
-           'gh -R ctejada10/scripts co' 'gh --repo=ctejada10/scripts land' 'gh extension exec land'; do
+           'gh -R ctejada10/scripts co' 'gh --repo=ctejada10/scripts land' 'gh extension exec land' \
+           'gh ext exec land' 'gh api /graphql -F query=@q.graphql' \
+           'gh api https://api.github.com/graphql -F query=@q.graphql'; do
   at blocked "$work/repo" 0 "$cmd"
 done
-for cmd in 'gh alias list' 'gh extension list' 'gh --version' 'gh help' 'gh run list' 'gh auth status' \
+for cmd in 'gh alias list' 'gh extension list' 'gh ext list' 'gh --version' 'gh help' 'gh run list' 'gh auth status' \
            'gh -R ctejada10/scripts pr view 12' 'gh status'; do
   at allowed "$work/repo" 0 "$cmd"
 done
