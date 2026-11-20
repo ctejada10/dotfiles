@@ -2,12 +2,12 @@
 # Written by the dotfiles playbook. The warden/warden.py of the commit the
 # containers run, with the server paths from its rivendell.env: .live's once a
 # deploy has made it, and the checkout's before that, since the deploy gate
-# checks out each commit it stages. The warden's unit runs it too. Run it as
-# deploy:
+# checks out each commit it stages. A half-made .live, with no warden.py yet,
+# doesn't count. The warden's unit runs it too. Run it as deploy:
 #   sudo -u deploy rivendell-warden status
 #   sudo -u deploy rivendell-warden apply --force
 repo={{ deploy_repo }}
-[ -e "$repo/.live/.git" ] && repo=$repo/.live
+[ -f "$repo/.live/warden/warden.py" ] && repo=$repo/.live
 set -a
 . "$repo/rivendell.env"
 set +a

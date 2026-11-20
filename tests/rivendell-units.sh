@@ -47,8 +47,17 @@ out="$(run rivendell-warden tick)"
 [ "$out" = "warden checkout/state tick" ] && pass "a .live with no .git is not run" \
   || fail "a .live with no .git is not run" "$out"
 
-checkout "$repo/.live" live
+# A kill during the first deploy's git worktree add leaves .live/.git and no
+# files; until the next deploy repairs it, the checkout's scripts still run.
 echo "gitdir: $repo/.git/worktrees/live" > "$repo/.live/.git"
+out="$(run rivendell-warden tick)"
+[ "$out" = "warden checkout/state tick" ] && pass "a half-made .live with only .git is not run by the warden" \
+  || fail "a half-made .live with only .git is not run by the warden" "$out"
+out="$(run rivendell-backup backup)"
+[ "$out" = "backup checkout backup" ] && pass "a half-made .live with only .git is not run by the backup" \
+  || fail "a half-made .live with only .git is not run by the backup" "$out"
+
+checkout "$repo/.live" live
 out="$(run rivendell-warden tick)"
 [ "$out" = "warden live/state tick" ] && pass "once a deploy made .live, the warden runs its scripts and settings" \
   || fail "once a deploy made .live, the warden runs its scripts and settings" "$out"
