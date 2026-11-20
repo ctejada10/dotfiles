@@ -1,0 +1,11 @@
+# Written by the dotfiles playbook. Far from the nightly backup, whose prune
+# needs the repository to itself.
+[Unit]
+Description=Rivendell's backup check every Sunday at 11:00 New York time
+
+[Timer]
+OnCalendar=Sun *-*-* 11:00:00 America/New_York
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

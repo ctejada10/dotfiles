@@ -1,0 +1,51 @@
+# The nightly backup of Rivendell's app_configs to B2, and its weekly check.
+# The code is the checkout's scripts/backup.sh; the run gives it two timers,
+# a unit that starts at boot the apps an interrupted backup left stopped, a
+# state folder and a command on the PATH. restic itself is in packages.yml.
+
+# The backup lists the apps it stops in BACKUP_STATE, in this folder. The
+# warden's tasks make the same folder; either runs without the other.
+- name: Make the backup's state folder, deploy's alone
+  ansible.builtin.file:
+    path: /var/lib/rivendell
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0750"
+
+- name: Put rivendell-backup on the PATH
+  ansible.builtin.template:
+    src: rivendell-backup.j2
+    dest: /usr/local/bin/rivendell-backup
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the backup's services and timers
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - rivendell-backup.service
+    - rivendell-backup.timer
+    - rivendell-backup-check.service
+    - rivendell-backup-check.timer
+    - rivendell-backup-recover.service
+  register: backup_units
+
+- name: Start the backup's timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: "{{ backup_units is changed }}"
+  loop: [rivendell-backup.timer, rivendell-backup-check.timer]
+
+# Enabled, not started: it is for boot, and a playbook run never starts apps.
+- name: Enable the backup's recovery at boot
+  ansible.builtin.systemd_service:
+    name: rivendell-backup-recover.service
+    enabled: true

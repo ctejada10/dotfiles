@@ -20,8 +20,8 @@ old tilde until its cutover, and no server has had the playbook yet.
   repos it clones only scripts, which its Raycast and Hazel run, and it's the
   only machine with 1Password's SSH agent and Ansible.
 - **The mini** is where all development happens, run by agents in T3 Code, and
-  where Hermes, the everyday assistant, lives. It runs on your Claude and
-  ChatGPT subscriptions, headless after its first setup.
+  where Hermes, the everyday assistant, lives. It runs on your AI
+  subscriptions, headless after its first setup.
 - **The servers** run Húrin (dor-lomin) and Rivendell's services, and esgaroth
   sits at home. The Ansible playbook sets them up, and applies this repo as
   its last step.

@@ -13,7 +13,7 @@ set -uo pipefail
 sandbox laptop >/dev/null 2>&1
 cz apply --exclude=scripts,externals >/dev/null 2>&1
 HOMEDIR="$SANDBOX/home"
-# known_hosts as the playbook and the tunnel apply leave it.
+# known_hosts as the playbook and the host key pin leave it.
 printf '%s\n' '[dor-lomin.middlearth.io]:6969 ssh-ed25519 AAAA' '[rivendell.middlearth.io]:69 ssh-ed25519 AAAA' \
   'amonsul ssh-ed25519 AAAA' > "$HOMEDIR/.ssh/known_hosts"
 
@@ -35,7 +35,7 @@ complete() {
 }
 
 section "ssh completes each box to its name"
-for name in $(cz execute-template '{{ range $n, $h := .hosts }}{{ $n }} {{ end }}{{ range $n, $m := .macs }}{{ with $m.tunnel }}{{ .alias }} {{ end }}{{ end }}'); do
+for name in $(cz execute-template '{{ range $n, $h := .hosts }}{{ $n }} {{ end }}{{ range $n, $m := .macs }}{{ with $m.alias }}{{ . }} {{ end }}{{ end }}'); do
   got=$(complete "${name:0:3}")
   [ "$got" = "ssh $name" ] && pass "${name:0:3} -> $name" || fail "${name:0:3} -> $name" "got: $got"
 done

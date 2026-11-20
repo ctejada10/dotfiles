@@ -82,8 +82,6 @@ Library/CloudStorage/Dropbox
 .local/bin/personal-backup
 .local/share/dotfiles/personal-backup.conf
 Library/LaunchAgents/com.carlosetejada.personal-backup.plist
-.ssh/cf-amonsul.sh
-.local/bin/cf-token
 {{- end }}
 
 {{- /* The mini: where all development happens. */}}
@@ -91,8 +89,15 @@ Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 .claude/agents/ecc-*
 .claude/agents/rpi-*
 .claude/hooks/guard-git.py
+.claude/hooks/merge-check.py
+.claude/hooks/merge-notify.py
+.claude/hooks/merge-wait.json
 .claude/hooks/worktree.sh
 .claude/hooks/agent-gate.sh
+.claude/hooks/route-reminder.sh
+.claude/agents/adversarial-reviewer.md
+.claude/skills/pack-*
+.claude/routing.md
 .local/bin/worktree-ttl
 .local/bin/repo-snapshots
 .local/bin/hermes-config-sync

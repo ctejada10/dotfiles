@@ -3,15 +3,17 @@
 The mini is amon-sul ("Amon Sûl"), a Mac mini at home with the `agent-mini`
 role. It runs the agents with nobody watching:
 
-- **Coding happens in T3 Code.** Claude Code plans and reviews, Codex writes
-  the code, and t3-pstack routes the work between them. The same threads show
+- **Coding happens in T3 Code.** Claude Code plans and writes the code,
+  Codex and Gemini 4 Neon review and judge it from other model families, and
+  t3-pstack routes the work between them. The same threads show
   on the iPhone, the iPad and the laptop, and a push notification says when a
   turn finishes.
 - **Everything else goes through Hermes**, an assistant you reach through its
   Telegram bot, Bree, read in Beeper. It reads Gmail, adds calendar events,
   keeps Todoist and Monarch, edits the vault and sends scheduled briefs.
 - **It all runs on your subscriptions:** Claude Code on your Claude account,
-  Codex and Hermes on ChatGPT. There is no Anthropic API key on the mini.
+  Codex and Hermes on ChatGPT, and Antigravity on a personal Google
+  account. There is no Anthropic API key on the mini.
 
 Once set up, it has no screen or keyboard. You reach it from the laptop over
 SSH and Screen Sharing, from Blink on the iPhone and iPad over Tailscale, from
@@ -375,7 +377,8 @@ The apply installs it.
   `~/.local/bin`, which is already first on PATH, so it leaves the shell alone.
   If an installer ever adds lines to `~/.zshrc`, see
   [When an installer changes the shell](../README.md#when-an-installer-changes-the-shell).
-- `codex --version` is 0.159 or later.
+- `codex --version` is 0.166 or later, the first that lists GPT-6.2 Sol and
+  Astra. On an older one, run the install line again.
 - `codex login` → **Sign in with ChatGPT**.
 - On chatgpt.com: Settings → Data Controls → turn off **Improve the model for
   everyone**.
@@ -402,7 +405,8 @@ a commit.
 
 ### No API key
 
-Everything runs on your Claude and ChatGPT subscriptions. There's no Anthropic
+Everything runs on subscriptions: your Claude and ChatGPT plans, and a Google
+plan for Antigravity's review seats. There's no Anthropic
 Console workspace, no API key and no "Claude API" instance in T3, and when
 ChatGPT's limit runs out, Codex's work waits for it.
 
@@ -471,6 +475,46 @@ The attended instance is for design conversations. On it, agents stop and ask
 you; on the default instance they run unattended, and `hooks/agent-gate.sh`
 has them decide anything they'd ask and carry on. `~/.claude/attended.md` is
 the prompt the repo keeps for it.
+
+### Antigravity: Gemini 4 Neon for reviews
+
+Antigravity gives pstack a third model family, Gemini 4 Neon, for its review
+and judge seats ([Seat the roles](#seat-the-roles)). Those seats spend Google's
+quota instead of the ChatGPT window every Codex session shares. It never runs a
+thread of its own.
+
+It signs in with a personal Google account on a paid Google AI plan, not a
+trial: trials leave models out. Workspace accounts can't hold that plan, and a
+Workspace sign-in gets only a starter quota without Neon. A separate account
+also keeps any enforcement mistake on Google's side away from your other
+accounts.
+
+1. Settings → Providers → Add provider → **Antigravity** → **Install
+   Antigravity**. That installs T3's managed copy of Google's official
+   `antigravity-acp` runtime. Never point it at another binary or a wrapper.
+2. Sign-in method: **Google account**, and sign in with that personal
+   account.
+3. **Refresh provider status.** The model list shows `gemini-4-neon`.
+4. Run t3-pstack's `update` again ([Install t3-pstack](#install-t3-pstack)):
+   it copies the plugin into the profile T3 keeps for each Antigravity
+   instance, and only a run after the instance exists can do that.
+
+Google's staff said on its developer forum on 2 Nov 2026 that T3 running the
+unmodified `antigravity-acp` with its own sign-in, for one person's
+interactive work, is permitted. Their FAQ still says otherwise, so keep to
+exactly that: no OpenCode or Hermes Antigravity plugins on this account, no
+second account to rotate to, and no scripts polling `/usage`.
+
+T3's Antigravity provider has open bugs, so it only ever runs as a child:
+
+- Threads started on Antigravity can lose `delegate_task` (t3code #38123).
+- When the quota runs out, the turn can end as "completed" with "Usage Limit
+  Reached" in its text and no limit banner (#28658). The rules treat that
+  reply as a failure.
+- The Usage page can show 100% left while the quota is spent (#22876).
+  Antigravity's own `/usage` is the one to trust.
+- A model switch on a resumed thread is ignored (#38312), so start a new
+  thread instead.
 
 ### Settings
 
@@ -583,16 +627,19 @@ superpowers was ever installed, `claude plugin uninstall superpowers@claude-plug
 ### Install t3-pstack
 
 ```sh
-npx -y github:chhoumann/t3-pstack#v2.1.0 install && npx -y github:chhoumann/t3-pstack#v2.1.0 doctor
+npx -y github:chhoumann/t3-pstack#v2.5.0 update && npx -y github:chhoumann/t3-pstack#v2.5.0 doctor
 ```
 
-The tag in that line pins only the installer. Its marketplace comes from
-`chhoumann/t3-pstack` with no tag, so Claude Code and Codex install whatever
-main holds; on 27 Oct that was exactly v2.1.0, so installer and plugin agreed.
-Before installing a later version, check that main is still at the tag you
-name (#3). The installer adds t3-pstack to both Claude Code (`~/.claude`,
-which the attended instance shares) and Codex (`~/.codex`), and trusts its
-Codex session hook.
+`install` and `update` are the same command, and a second run changes
+nothing. The tag in that line pins only the installer. Claude Code's
+marketplace comes from `chhoumann/t3-pstack` with no tag, so it installs
+whatever main holds; before running it, check that main is still at the tag
+you name (#3). Codex's marketplace is pinned to the release's tag. The
+installer adds t3-pstack to Claude Code (`~/.claude`, which the attended
+instance shares), to Codex (`~/.codex`), and to the profile T3 keeps for each
+Antigravity instance, and trusts its Codex session hook again. Codex drops
+that trust whenever the plugin's files change, so run `update` after every
+t3-pstack release and after adding a provider instance.
 
 Then, before any T3 thread:
 
@@ -604,7 +651,8 @@ Then, before any T3 thread:
 
 From then on doctor reports `FAIL marketplace auto-update: false`. That's the
 repo's choice. Don't follow its fix: rerunning the installer turns auto-update
-back on.
+back on. Every other line passes, including the Codex hook's trust and the
+Antigravity profile.
 
 ### Seat the roles
 
@@ -614,42 +662,75 @@ back on.
 2. Send the `AGENT_ATTENDED` test from [Providers](#providers) first. If it
    prints anything but `[1]`, fix the instance; on the default instance the
    hook blocks the setup's questions and Claude picks defaults itself.
-3. Send `/t3-pstack:setup-pstack`. Its questions arrive as cards. What was
-   chosen on 27 Oct:
-   - **Budget:** medium, every role at high reasoning. Large puts every role
-     at xhigh and uses up the plans' limits fastest.
-   - **Roles that write code at volume** (feature and refactoring, swarm
-     workers): `codex/gpt-5.6-terra`.
-   - **The hard tier** (bug-fix, perf-issue, hillclimb, the hardest tasks):
-     Claude Fable 5.1.
-   - **Everything else:** Claude Opus 5.5 on the default instance
-     (`claudeAgent/...`), so the threads these roles start run unattended.
-   - **Panels** (arena runners, arena cross-judge pool, architect runners,
-     interrogate reviewers): Opus 5.5 and `codex/gpt-5.6-terra`. Grok isn't
-     set up, so each panel runs two subagents instead of three.
-   - **Session hook:** on. It's the only router: `AGENTS.md` sends multi-file
-     changes, design choices, bugs with an unknown cause and performance work
-     through poteto-mode.
+3. Send `/t3-pstack:setup-pstack`. Its questions arrive as cards. Answer:
+   - **Budget:** `medium - high reasoning`. Large puts most roles at xhigh and
+     uses up the plans' limits fastest.
+   - **Roles:** change them to the sheet below. It drops the retired lines
+     (how, why, reflect, architect, hardest tasks) itself.
+   - **Session hook:** on.
    - **The verification and formal verification skills:** no. They would
      write into a repo mid-setup; ask for one later in its own thread.
+4. `npx -y github:chhoumann/t3-pstack#v2.5.0 doctor` shows the sheet valid,
+   and only the auto-update FAIL.
 
-   The old guide's `gpt-6.1-sol` isn't offered on this ChatGPT plan. Of the
-   models Codex lists, gpt-6-luna is the small, fast tier and gpt-5.6-terra
-   the middle one.
-4. `npx -y github:chhoumann/t3-pstack#v2.1.0 doctor` now shows the sheet
-   valid, and only the auto-update FAIL.
+The sheet, as of 19 Nov 2026:
 
-t3-pstack 2.1.0's checker (`t3-sheet.mjs`) reads T3's model list in an older
-layout than T3 0.1.3 returns, so every setup run reports a false failure
-first; the thread works around it. Re-running `/t3-pstack:setup-pstack`
+```
+feature, refactoring: claudeAgent/claude-opus-5-5 effort=high
+bug-fix: claudeAgent/claude-opus-5-5 effort=high
+perf-issue: claudeAgent/claude-opus-5-5 effort=high
+hillclimb: claudeAgent/claude-opus-5-5 effort=high
+judgment and prose: claudeAgent/claude-opus-5-5 effort=high
+arena runners: claudeAgent/claude-opus-5-5 effort=high, claudeAgent/claude-fable-5-2 effort=high
+arena cross-judge pool: codex/gpt-6.2-sol reasoningEffort=medium, antigravity/gemini-4-neon thinking_level=high, claudeAgent/claude-opus-5-5 effort=high
+swarm workers: claudeAgent/claude-sonnet-5-5 effort=high
+interrogate reviewers: claudeAgent/claude-opus-5-5 effort=high, antigravity/gemini-4-neon thinking_level=high
+session hook: on
+```
+
+Why each line:
+
+- **Opus writes everything.** Anthropic recommends Opus 5.5 as the daily
+  driver and Fable 5.2 only where Opus at higher effort still falls short.
+  Fable may use at most half of the Claude plan's weekly limit and spends it
+  fastest, so no single-model role names it. The rules allow it by name.
+- **Swarm workers on Sonnet**, as the rules say: bounded work at half
+  Opus's token price.
+- **Arena runners: Opus and Fable.** An arena needs two model families and
+  each runner writes a whole implementation. Fable counts as its own family,
+  and arenas only run for a real design choice, the one place the rules
+  allow Fable. Neon's weekly quota is too small for a full implementation,
+  and Codex's window is kept for judging.
+- **Cross-judge pool: Codex first.** The judge has to come from a vendor
+  other than the parent's, which is Claude. Codex at medium is the one Codex
+  judge the rules allow. If Codex is out, Neon judges.
+- **Interrogate: Opus and Neon.** Two families, and the second review spends
+  Google's quota instead of the ChatGPT window. Interrogate keeps only the
+  findings a run proves, which covers Neon's habit of claiming things that
+  aren't there.
+- No `fastMode` anywhere (on T3 it's a priced mode), and nothing above high.
+
+Model IDs are what T3 lists on 19 Nov; if setup-pstack can't find one, use
+the ID `orchestrator_capabilities` shows for the same model. The setup
+validates every line against T3's model list, so a model T3 can't run is
+caught before the sheet is written. Re-running `/t3-pstack:setup-pstack`
 changes the sheet.
+
+**When a plan runs out mid-week,** re-run setup-pstack rather than editing
+the sheet by hand:
+
+- Claude: writing roles on `codex/gpt-6.2-sol reasoningEffort=medium`, swarm
+  on `codex/gpt-6-luna reasoningEffort=high`, and panels Codex plus Neon.
+- ChatGPT: drop the Codex entry from the cross-judge pool. Neon judges.
+- Google: drop the Neon entries. Interrogate becomes Opus plus Codex at
+  medium; the rules allow that as the one Codex review per PR.
 
 ### The first coding loop
 
 1. In the Húrin project, a new thread on **Claude**, Auto. Pick a small, real
    issue: a widget bug or a one-file change with a test.
 2. "Plan this change. Then use delegate_task to hand the implementation to
-   Codex (gpt-5.6-terra, Auto mode, in a new worktree). When it reports back,
+   Codex (gpt-6.2-sol, medium, Auto mode, in a new worktree). When it reports back,
    review the diff against the plan, ask Codex to fix anything you find, and
    tell me when it's ready to merge."
 3. The thread's lineage view shows the child on Codex. If it shows Claude,
@@ -658,7 +739,65 @@ changes the sheet.
 
 Then try poteto-mode on one bigger task and count the threads it creates; one
 user's design task spawned 78, five levels deep (t3-pstack's issue #21). If
-yours sprawls, keep it for bigger work only.
+yours sprawls, narrow DEEP in `routing.md` (below).
+
+### Routing
+
+You don't have to type `/go` or name poteto-mode. On every message you send,
+`hooks/route-reminder.sh` adds `~/.claude/routing.md`, and the reply's first
+line names the route it took:
+
+- **DEEP**, the default: anything that builds, changes, fixes, refactors,
+  debugs, speeds up or designs code, config or infrastructure. It goes through
+  poteto-mode, then one `/ponytail-review` of the final diff before the draft
+  PR. When the diff touches secrets, outside input, the network, CI workflows
+  or permissions, an adversarial pass runs between interrogate and the
+  Ponytail review (below).
+- **TRIVIAL**: one file, about ten lines, no new behavior, cause known. /go's
+  small path, in the thread, with no subagents.
+- **QUESTION**: answered, with no edits.
+- **SKIP**: start a message with `--` and it's done as written, with no skills.
+
+When the agent can't tell TRIVIAL from DEEP, it picks DEEP. On **Claude
+(attended)** it names the route and its first steps and asks before editing.
+Typing `/go <task>` still runs /go's own triage, which keeps more work on the
+cheaper small path; the hook leaves slash commands alone.
+
+DEEP spends more of the Claude plan than the old default: poteto-mode starts
+several Opus subagents per task. If the Claude plan runs out early in the
+week, start small asks with `--` or `/go`, or narrow DEEP in `routing.md`.
+
+**The adversarial pass** is one more child thread, on Sonnet 5.5 at high
+effort, acting as `~/.claude/agents/adversarial-reviewer.md` from the
+Department of Internal Arguments (copied in unchanged at v0.4.0; see
+`LICENSES/`). It assumes the change is wrong and has to reproduce every
+finding; the domain packs it loads (`pack-gha-security-dast`,
+`pack-python-untrusted-input`, `pack-threat-model`, `pack-linux-platform`)
+carry the attack lists. Interrogate reads the code; this pass runs the attack.
+Blocking findings are fixed and kept as tests, and after two fix rounds on the
+same kind of finding the run stops and writes it up in the PR body. It costs
+one or two Sonnet runs from the Claude plan, only on those diffs.
+
+The hook stays out of the way of work it didn't start: a delegated child's
+brief gets a reminder that it's a leaf, a child's report to its parent and a
+FirstMate crew get nothing, and t3-pstack's own session hook still runs.
+Routing is Claude Code's. Codex threads get only t3-pstack's session hook,
+and Antigravity only ever runs as a child.
+
+Check it once after the apply, each in a new thread on **Claude** in a
+throwaway branch:
+
+| Message | First line of the reply |
+| --- | --- |
+| "Why does chezmoi diff show the plist every run?" | `Route: QUESTION`, no edits |
+| "Fix the typo 'recieve' in docs/setup-mini.md" | `Route: TRIVIAL`, no child threads |
+| "Add a --json flag to dotfiles doctor" | `Route: DEEP`, child threads in the lineage view |
+| "The worktree-ttl job sometimes deletes live worktrees; find out why" | `Route: DEEP` |
+| "-- print pins.yaml" | `Route: SKIP` |
+| "Add a /hooks/github endpoint that checks the webhook secret" (in hurin) | `Route: DEEP`, and an adversarial child on Sonnet after interrogate |
+| "/go fix the typo in README" | /go's steps, no Route line |
+| The DEEP one on **Claude (attended)** | `Route: DEEP`, then a question before any edit |
+| After 20 turns of talk: "ok, change the timeout to 30s in that file" | `Route: TRIVIAL` |
 
 **Smoke tests:**
 
@@ -1121,7 +1260,29 @@ rules, in `~/.hermes/SOUL.md`.
 Agents commit, push and open draft PRs on their own branches without asking;
 never on the default branch, never a force-push, a merge or a PR opened ready.
 Claude Code's `hooks/guard-git.py` blocks the ordinary forms of each, and
-refuses a commit or PR that credits an AI.
+refuses a commit or PR that credits an AI. The one exception is a merge you
+grant: type "merge when safe" on a line of its own in a thread, or
+"merge when safe: #59" for just that PR, and its agent may ready and merge
+its own PR from its branch with `gh pr merge --match-head-commit <sha>` after
+it checks the PR against the Merging rules, or leave it a draft with a
+`WAITING:` line. A later line that says "don't merge", "do not merge",
+"stop merging" or "no merging" anywhere takes the grant back. Before the merge runs,
+`hooks/merge-check.py` checks the PR on GitHub (checks, review threads, merge
+queue, the reviewer's verdict in
+`~/agent-drafts/<repo>/<branch>/merge-verdict.txt`, and the paths in
+`hooks/merge-wait.json`) and blocks it if any fails. After a merge,
+`hooks/merge-notify.py` logs it to `~/.local/state/agent-merges.log` and sends
+you a Telegram message through Hermes. Subagents, FirstMate crews and T3's
+delegated children never hold the grant.
+
+The gate has limits. The agent it checks writes the verdict file itself, so
+the check proves a verdict was recorded, not that a reviewer wrote it. A T3
+scheduled prompt or a `t3_thread_send` message reaches the transcript as a
+typed turn, so it can grant or revoke like you, and the guard knows a T3
+delegated child only by the "Act as the ... sub-agent for this task" opening
+T3 gives its first turn. The guard's block on writing the transcripts in
+`~/.claude/projects` reads commands, so a script file or a symlink gets past
+it.
 
 A draft PR's body lists the work, one line per change, plus the `STOP:` text
 when a run stopped and a line for each gate that failed or was skipped. No
@@ -1204,10 +1365,12 @@ Desktop on either Mac.
 ### Claude Code on the mini
 
 - **Process:** t3-pstack routes, through poteto-mode, and is the only plugin
-  whose session hook steers the work. Its hook also loads in plain `claude`
-  runs outside T3; start one with
+  whose session hook steers the work. The repo's `hooks/route-reminder.sh`
+  repeats `~/.claude/routing.md` on every message, so deep work goes through
+  poteto-mode by default ([Routing](#routing)). Both hooks also load in plain
+  `claude` runs outside T3; start one with
   `claude --settings '{"enabledPlugins":{"t3-pstack@t3-pstack":false}}'` to
-  leave it out.
+  leave t3-pstack out, and with a message starting `--` to skip the routing.
 - **superpowers**, as a skill library t3-pstack and the agents call by name:
   its test-first features, its plans, its debugging material. It comes from a
   local marketplace in `~/.local/share/claude-plugins/sp-gated`, unchanged
@@ -1238,7 +1401,9 @@ Desktop on either Mac.
 - **Skills copied in under their licences:** a subset of Matt Pocock's
   (grill-me, to-spec and the architecture ones), HumanLayer's research, plan
   and implement set (`rpi-`), GitHub's Actions hardening review and
-  i-have-adhd. Four review agents from ECC (`ecc-`). See `LICENSES/`.
+  i-have-adhd. Four review agents from ECC (`ecc-`). The adversarial reviewer
+  and four security packs from the Department of Internal Arguments, for
+  [Routing](#routing)'s adversarial pass. See `LICENSES/`.
 - **Downloaded at pinned commits,** because there is no licence to copy them
   under: the OpenSCAD skill with BOSL2 (outside `~/Documents`, which can hang
   T3 on a privacy prompt), and two of George Wang's skills (read-only log

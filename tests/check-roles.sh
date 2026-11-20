@@ -26,12 +26,24 @@ for role in "${roles[@]}"; do
   list=$(managed "$role")
   bad=$(grep -E "$never" <<< "$list" || true)
   if [ -z "$bad" ]; then pass "manages nothing on the never list"; else fail "manages nothing on the never list" "$bad"; fi
+  if [ "$role" = agent-mini ]; then
+    has "$list" ".claude/hooks/route-reminder.sh" && has "$list" ".claude/routing.md" \
+      && pass "has the router and its rules" || fail "has the router and its rules"
+    has "$list" ".claude/agents/adversarial-reviewer.md" && has "$list" ".claude/skills/pack-threat-model/SKILL.md" \
+      && pass "has the adversarial reviewer and its packs" || fail "has the adversarial reviewer and its packs"
+  else
+    lacks "$list" ".claude/hooks/route-reminder.sh" && lacks "$list" ".claude/routing.md" \
+      && pass "has no router" || fail "has no router" "$(grep -E 'route-reminder|routing\.md' <<< "$list")"
+    grep -qE '^\.claude/(agents/adversarial-reviewer\.md|skills/pack-)' <<< "$list" \
+      && fail "has no adversarial reviewer" "$(grep -E '^\.claude/(agents/adversarial-reviewer|skills/pack-)' <<< "$list")" \
+      || pass "has no adversarial reviewer"
+  fi
 
   case "$role" in
     laptop)
       lacks "$list" ".claude/pstack-models.md" && pass "has no pstack model sheet" || fail "has no pstack model sheet"
       has "$list" ".claude/rules/job-search.md" && pass "has the job-search rules" || fail "has the job-search rules"
-      bad=$(grep -E '^\.codex|^\.claude/(skills/(rpi-|grill|to-spec|i-have-adhd|github-actions|openscad|read-only-log|frontend-e2e|codebase-design|domain-modeling|improve-codebase|writing-for-agents|go/)|agents/(rpi-|ecc-))|^\.local/share/(openscad|georgeskills|dotfiles/git/read)' <<< "$list" | grep -v '^\.local/share/dotfiles/git/read-only-hooks' || true)
+      bad=$(grep -E '^\.codex|^\.claude/(skills/(rpi-|grill|to-spec|i-have-adhd|github-actions|openscad|read-only-log|frontend-e2e|codebase-design|domain-modeling|improve-codebase|writing-for-agents|go/|pack-)|agents/(rpi-|ecc-|adversarial-reviewer))|^\.local/share/(openscad|georgeskills|dotfiles/git/read)' <<< "$list" | grep -v '^\.local/share/dotfiles/git/read-only-hooks' || true)
       [ -z "$bad" ] && pass "has no development rules, skills, agents or tools" || fail "has no development rules, skills, agents or tools" "$bad"
       has "$list" "Library/CloudStorage/Dropbox/config-files/1Password/ssh/agent.toml" \
         && pass "writes 1Password's agent.toml into Dropbox's config-files" || fail "writes 1Password's agent.toml into Dropbox's config-files"
@@ -180,6 +192,7 @@ for role in "${roles[@]}"; do
     laptop)
       # Personal work and job hunting only; development happens on the mini.
       lacks "$list" ".claude/hooks/guard-git.py" && pass "laptop has no git guard" || fail "laptop has no git guard"
+      grep -q 'claude/hooks/merge-' <<< "$list" && fail "laptop has no merge hooks" || pass "laptop has no merge hooks"
       grep -q 'claude-plugins\|agent-gate\|attended.md' <<< "$list" && fail "laptop has no superpowers" || pass "laptop has no superpowers"
       grep -qE '^\.local/bin/worktree-ttl$|LaunchAgents/com\.carlosetejada\.worktree-ttl' <<< "$list" \
         && fail "laptop has no worktree cleanup job" || pass "laptop has no worktree cleanup job"
@@ -215,6 +228,8 @@ for role in "${roles[@]}"; do
       jq -e '.hooks.SessionStart[].hooks[] | select(.command | endswith("/agent-gate.sh"))' <<< "$settings" >/dev/null \
         && jq -e '.hooks.PreToolUse[] | select(.matcher == "Skill|AskUserQuestion") | .hooks[] | select(.command | endswith("/agent-gate.sh"))' <<< "$settings" >/dev/null \
         && pass "the gate runs at session start and before Skill and AskUserQuestion" || fail "the gate runs at session start and before Skill and AskUserQuestion"
+      jq -e '.hooks.UserPromptSubmit[].hooks[] | select(.command | endswith("/route-reminder.sh"))' <<< "$settings" >/dev/null \
+        && pass "the router runs on every message" || fail "the router runs on every message"
       has "$list" ".local/share/claude-plugins/sp-gated/.claude-plugin/marketplace.json" \
         && pass "the mini has the local marketplace" || fail "the mini has the local marketplace"
       mkt="$REPO/home/dot_local/share/claude-plugins/sp-gated/dot_claude-plugin/marketplace.json"
@@ -223,6 +238,12 @@ for role in "${roles[@]}"; do
       jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.command | endswith("/guard-git.py"))' <<< "$settings" >/dev/null \
         && pass "the mini runs the git guard" || fail "the mini runs the git guard"
       has "$list" ".claude/hooks/guard-git.py" && pass "the mini has the git guard" || fail "the mini has the git guard"
+      jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.command | endswith("/guard-git.py")) | select(.onFailure == "block" and .timeout == 60)' <<< "$settings" >/dev/null \
+        && pass "a git guard that fails or times out blocks the command" || fail "a git guard that fails or times out blocks the command"
+      jq -e '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.command | endswith("/merge-notify.py"))' <<< "$settings" >/dev/null \
+        && pass "the mini tells Carlos after a merge" || fail "the mini tells Carlos after a merge"
+      has "$list" ".claude/hooks/merge-check.py" && has "$list" ".claude/hooks/merge-wait.json" && has "$list" ".claude/hooks/merge-notify.py" \
+        && pass "the mini has the merge check, its wait list and the merge notice" || fail "the mini has the merge check, its wait list and the merge notice"
       # Every deployed agent or shell file is behind an Edit deny.
       uncovered=$(grep -E '^(\.codex/|\.claude/(settings\.json|CLAUDE\.md|attended\.md|hooks/|skills/|agents/)|\.local/share/claude-plugins/|\.gitconfig$|\.zshrc$|\.zshenv$|\.zprofile$|\.zsh/)' <<< "$list" | while read -r path; do
         jq -e --arg p "$path" --arg h "$HOME" '[.permissions.deny[] | select(startswith("Edit(/"))

@@ -30,3 +30,20 @@ pins:
   firstmate:
     repo: kunchenguid/firstmate
     commit: 86437e280569468bf55cf0d05fc2a2720ff0b255
+  # Department of Internal Arguments: five generated files copied in unchanged
+  # from this release, under Apache-2.0 (see LICENSES/README.md). The mini's
+  # routing runs adversarial-reviewer on security-sensitive DEEP work.
+  # tests/check-doia.sh checks each file against its sha256 here. To update,
+  # run the release's scripts/install.py --layout user --adapter claude with
+  # the same four --pack names into a scratch directory, read the diff, copy
+  # the five files over and change these lines.
+  doia:
+    repo: ChiefGyk3D/department-of-internal-arguments
+    tag: v0.4.0
+    commit: ba4f163906c1eea9f348303e3df97bbc7ddf7d86
+    files:
+      home/dot_claude/agents/adversarial-reviewer.md: 3dfc46ba59f6611ea84b80c9c95b36ef7f80c57a22700b6db972d29b422a6f21
+      home/dot_claude/skills/pack-gha-security-dast/SKILL.md: 6ae95ddada701b41592e28489991a981d3ad8ba23fa44dc2fa2a4c002859c943
+      home/dot_claude/skills/pack-linux-platform/SKILL.md: 8c2ed3594f87523f176a8bd06546c29870cd0da847ab9eb1475ae22018db4c79
+      home/dot_claude/skills/pack-python-untrusted-input/SKILL.md: b6fe97e46d2503bd21f6bb689ed1e1551f69a77c56790df979a83d96cbe2eaf7
+      home/dot_claude/skills/pack-threat-model/SKILL.md: e1e5d1c39a133b56e832c830ed2c3758105aebf20abf024f43aa2f6466c2b668
