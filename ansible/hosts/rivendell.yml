@@ -44,10 +44,11 @@ deploy_branch: main
 # on main, so the gate refuses an older commit or a merged branch's own.
 deploy_forward_only: true
 # The repo deploy fetches, which the run clones there once GitHub takes the
-# read key it prints, and its arwen submodule, which needs a read key of its
-# own. The deploy brings arwen in itself.
+# read key it prints. The site comes from arwen's image now (rivendell#106),
+# so the arwen submodule, its read key and its alias are retired.
 deploy_github_repo: ctejada10/rivendell
-deploy_submodule_repos: [ctejada10/arwen]
+deploy_submodule_repos: []
+deploy_retired_repos: [ctejada10/arwen]
 deploy_owned_dirs: []
 # The key GitHub Actions deploys with, which can only ask the gate for a
 # deploy. The run reads its public half from 1Password on the laptop; its
