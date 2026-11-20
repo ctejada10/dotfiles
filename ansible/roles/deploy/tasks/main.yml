@@ -290,6 +290,11 @@
     path: "{{ deploy_user.home }}/.ssh/config"
     marker: "# {mark} dotfiles: github-{{ item.split('/') | last }}"
     state: absent
+    # A fresh home has no config yet under --check, or on a host that fetches nothing.
+    create: true
+    owner: deploy
+    group: deploy
+    mode: "0600"
   loop: "{{ deploy_retired_repos }}"
 
 - name: Delete retired repos' read keys
