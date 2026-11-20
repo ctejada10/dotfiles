@@ -739,7 +739,51 @@ the sheet by hand:
 
 Then try poteto-mode on one bigger task and count the threads it creates; one
 user's design task spawned 78, five levels deep (t3-pstack's issue #21). If
-yours sprawls, keep it for bigger work only.
+yours sprawls, narrow DEEP in `routing.md` (below).
+
+### Routing
+
+You don't have to type `/go` or name poteto-mode. On every message you send,
+`hooks/route-reminder.sh` adds `~/.claude/routing.md`, and the reply's first
+line names the route it took:
+
+- **DEEP**, the default: anything that builds, changes, fixes, refactors,
+  debugs, speeds up or designs code, config or infrastructure. It goes through
+  poteto-mode, then one `/ponytail-review` of the final diff before the draft
+  PR.
+- **TRIVIAL**: one file, about ten lines, no new behavior, cause known. /go's
+  small path, in the thread, with no subagents.
+- **QUESTION**: answered, with no edits.
+- **SKIP**: start a message with `--` and it's done as written, with no skills.
+
+When the agent can't tell TRIVIAL from DEEP, it picks DEEP. On **Claude
+(attended)** it names the route and its first steps and asks before editing.
+Typing `/go <task>` still runs /go's own triage, which keeps more work on the
+cheaper small path; the hook leaves slash commands alone.
+
+DEEP spends more of the Claude plan than the old default: poteto-mode starts
+several Opus subagents per task. If Max runs out early in the week, start
+small asks with `--` or `/go`, or narrow DEEP in `routing.md`.
+
+The hook stays out of the way of work it didn't start: a delegated child's
+brief gets a reminder that it's a leaf, a child's report to its parent and a
+FirstMate crew get nothing, and t3-pstack's own session hook still runs.
+Routing is Claude Code's. Codex threads get only t3-pstack's session hook,
+and Antigravity only ever runs as a child.
+
+Check it once after the apply, each in a new thread on **Claude** in a
+throwaway branch:
+
+| Message | First line of the reply |
+| --- | --- |
+| "Why does chezmoi diff show the plist every run?" | `Route: QUESTION`, no edits |
+| "Fix the typo 'recieve' in docs/setup-mini.md" | `Route: TRIVIAL`, no child threads |
+| "Add a --json flag to dotfiles doctor" | `Route: DEEP`, child threads in the lineage view |
+| "The worktree-ttl job sometimes deletes live worktrees; find out why" | `Route: DEEP` |
+| "-- print pins.yaml" | `Route: SKIP` |
+| "/go fix the typo in README" | /go's steps, no Route line |
+| The DEEP one on **Claude (attended)** | `Route: DEEP`, then a question before any edit |
+| After 20 turns of talk: "ok, change the timeout to 30s in that file" | `Route: TRIVIAL` |
 
 **Smoke tests:**
 
@@ -1307,10 +1351,12 @@ Desktop on either Mac.
 ### Claude Code on the mini
 
 - **Process:** t3-pstack routes, through poteto-mode, and is the only plugin
-  whose session hook steers the work. Its hook also loads in plain `claude`
-  runs outside T3; start one with
+  whose session hook steers the work. The repo's `hooks/route-reminder.sh`
+  repeats `~/.claude/routing.md` on every message, so deep work goes through
+  poteto-mode by default ([Routing](#routing)). Both hooks also load in plain
+  `claude` runs outside T3; start one with
   `claude --settings '{"enabledPlugins":{"t3-pstack@t3-pstack":false}}'` to
-  leave it out.
+  leave t3-pstack out, and with a message starting `--` to skip the routing.
 - **superpowers**, as a skill library t3-pstack and the agents call by name:
   its test-first features, its plans, its debugging material. It comes from a
   local marketplace in `~/.local/share/claude-plugins/sp-gated`, unchanged

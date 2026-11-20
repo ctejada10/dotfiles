@@ -94,6 +94,8 @@ Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 .claude/hooks/merge-wait.json
 .claude/hooks/worktree.sh
 .claude/hooks/agent-gate.sh
+.claude/hooks/route-reminder.sh
+.claude/routing.md
 .local/bin/worktree-ttl
 .local/bin/repo-snapshots
 .local/bin/hermes-config-sync

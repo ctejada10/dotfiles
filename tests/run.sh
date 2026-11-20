@@ -25,6 +25,7 @@ run tests/merge-notify.sh
 run tests/guard-vault.sh
 run tests/warn-risky.sh
 run tests/agent-gate.sh
+run tests/route-reminder.sh
 run tests/worktree.sh
 run tests/worktree-ttl.sh
 run tests/repo-snapshots.sh

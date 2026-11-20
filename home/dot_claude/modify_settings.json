@@ -182,7 +182,7 @@
        entry or event, stay where they are. */ -}}
 {{- $hookDir := printf "%s/.claude/hooks" $home -}}
 {{- $shipped := list -}}
-{{- range $name := list "guard-paths.sh" "warn-risky.sh" "guard-git.py" "guard-vault.py" "worktree.sh create" "worktree.sh remove" "agent-gate.sh" "merge-notify.py" -}}
+{{- range $name := list "guard-paths.sh" "warn-risky.sh" "guard-git.py" "guard-vault.py" "worktree.sh create" "worktree.sh remove" "agent-gate.sh" "merge-notify.py" "route-reminder.sh" -}}
 {{-   $shipped = append $shipped (printf "%s/%s" $hookDir $name) -}}
 {{- end -}}
 {{- $bashHooks := list (dict "type" "command" "command" (printf "%s/warn-risky.sh" $hookDir) "timeout" 10) -}}
@@ -212,8 +212,12 @@
 {{-   $_ := set $ours "SessionStart" (list (dict "matcher" "startup|resume|clear|compact|fork" "hooks" (list $gate))) -}}
 {{-   $_ := set $ours "PostToolUse" (list (dict "matcher" "Bash" "hooks" (list
         (dict "type" "command" "command" (printf "%s/merge-notify.py" $hookDir) "timeout" 30)))) -}}
+{{- /* route-reminder.sh repeats ~/.claude/routing.md on every message
+       Carlos sends, so deep work goes through poteto-mode by default. */ -}}
+{{-   $_ := set $ours "UserPromptSubmit" (list (dict "hooks" (list
+        (dict "type" "command" "command" (printf "%s/route-reminder.sh" $hookDir) "timeout" 10)))) -}}
 {{- end -}}
-{{- range $event := list "PreToolUse" "PostToolUse" "SessionStart" "WorktreeCreate" "WorktreeRemove" -}}
+{{- range $event := list "PreToolUse" "PostToolUse" "SessionStart" "UserPromptSubmit" "WorktreeCreate" "WorktreeRemove" -}}
 {{-   $kept := list -}}
 {{-   range $entry := (get (get $s "hooks" | default dict) $event | default list) -}}
 {{-     $left := list -}}
