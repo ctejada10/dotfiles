@@ -750,7 +750,9 @@ line names the route it took:
 - **DEEP**, the default: anything that builds, changes, fixes, refactors,
   debugs, speeds up or designs code, config or infrastructure. It goes through
   poteto-mode, then one `/ponytail-review` of the final diff before the draft
-  PR.
+  PR. When the diff touches secrets, outside input, the network, CI workflows
+  or permissions, an adversarial pass runs between interrogate and the
+  Ponytail review (below).
 - **TRIVIAL**: one file, about ten lines, no new behavior, cause known. /go's
   small path, in the thread, with no subagents.
 - **QUESTION**: answered, with no edits.
@@ -764,6 +766,17 @@ cheaper small path; the hook leaves slash commands alone.
 DEEP spends more of the Claude plan than the old default: poteto-mode starts
 several Opus subagents per task. If the Claude plan runs out early in the
 week, start small asks with `--` or `/go`, or narrow DEEP in `routing.md`.
+
+**The adversarial pass** is one more child thread, on Sonnet 5.5 at high
+effort, acting as `~/.claude/agents/adversarial-reviewer.md` from the
+Department of Internal Arguments (copied in unchanged at v0.4.0; see
+`LICENSES/`). It assumes the change is wrong and has to reproduce every
+finding; the domain packs it loads (`pack-gha-security-dast`,
+`pack-python-untrusted-input`, `pack-threat-model`, `pack-linux-platform`)
+carry the attack lists. Interrogate reads the code; this pass runs the attack.
+Blocking findings are fixed and kept as tests, and after two fix rounds on the
+same kind of finding the run stops and writes it up in the PR body. It costs
+one or two Sonnet runs from the Claude plan, only on those diffs.
 
 The hook stays out of the way of work it didn't start: a delegated child's
 brief gets a reminder that it's a leaf, a child's report to its parent and a
@@ -781,6 +794,7 @@ throwaway branch:
 | "Add a --json flag to dotfiles doctor" | `Route: DEEP`, child threads in the lineage view |
 | "The worktree-ttl job sometimes deletes live worktrees; find out why" | `Route: DEEP` |
 | "-- print pins.yaml" | `Route: SKIP` |
+| "Add a /hooks/github endpoint that checks the webhook secret" (in hurin) | `Route: DEEP`, and an adversarial child on Sonnet after interrogate |
 | "/go fix the typo in README" | /go's steps, no Route line |
 | The DEEP one on **Claude (attended)** | `Route: DEEP`, then a question before any edit |
 | After 20 turns of talk: "ok, change the timeout to 30s in that file" | `Route: TRIVIAL` |
@@ -1387,7 +1401,9 @@ Desktop on either Mac.
 - **Skills copied in under their licences:** a subset of Matt Pocock's
   (grill-me, to-spec and the architecture ones), HumanLayer's research, plan
   and implement set (`rpi-`), GitHub's Actions hardening review and
-  i-have-adhd. Four review agents from ECC (`ecc-`). See `LICENSES/`.
+  i-have-adhd. Four review agents from ECC (`ecc-`). The adversarial reviewer
+  and four security packs from the Department of Internal Arguments, for
+  [Routing](#routing)'s adversarial pass. See `LICENSES/`.
 - **Downloaded at pinned commits,** because there is no licence to copy them
   under: the OpenSCAD skill with BOSL2 (outside `~/Documents`, which can hang
   T3 on a privacy prompt), and two of George Wang's skills (read-only log
