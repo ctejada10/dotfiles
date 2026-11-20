@@ -3,15 +3,17 @@
 The mini is amon-sul ("Amon Sûl"), a Mac mini at home with the `agent-mini`
 role. It runs the agents with nobody watching:
 
-- **Coding happens in T3 Code.** Claude Code plans and reviews, Codex writes
-  the code, and t3-pstack routes the work between them. The same threads show
+- **Coding happens in T3 Code.** Claude Code plans and writes the code,
+  Codex and Gemini 4 Neon review and judge it from other model families, and
+  t3-pstack routes the work between them. The same threads show
   on the iPhone, the iPad and the laptop, and a push notification says when a
   turn finishes.
 - **Everything else goes through Hermes**, an assistant you reach through its
   Telegram bot, Bree, read in Beeper. It reads Gmail, adds calendar events,
   keeps Todoist and Monarch, edits the vault and sends scheduled briefs.
 - **It all runs on your subscriptions:** Claude Code on your Claude account,
-  Codex and Hermes on ChatGPT. There is no Anthropic API key on the mini.
+  Codex and Hermes on ChatGPT, and Antigravity on a personal Google
+  account. There is no Anthropic API key on the mini.
 
 Once set up, it has no screen or keyboard. You reach it from the laptop over
 SSH and Screen Sharing, from Blink on the iPhone and iPad over Tailscale, from
@@ -375,7 +377,8 @@ The apply installs it.
   `~/.local/bin`, which is already first on PATH, so it leaves the shell alone.
   If an installer ever adds lines to `~/.zshrc`, see
   [When an installer changes the shell](../README.md#when-an-installer-changes-the-shell).
-- `codex --version` is 0.159 or later.
+- `codex --version` is 0.166 or later, the first that lists GPT-6.2 Sol and
+  Astra. On an older one, run the install line again.
 - `codex login` → **Sign in with ChatGPT**.
 - On chatgpt.com: Settings → Data Controls → turn off **Improve the model for
   everyone**.
@@ -402,7 +405,8 @@ a commit.
 
 ### No API key
 
-Everything runs on your Claude and ChatGPT subscriptions. There's no Anthropic
+Everything runs on subscriptions: your Claude and ChatGPT plans, and a Google
+plan for Antigravity's review seats. There's no Anthropic
 Console workspace, no API key and no "Claude API" instance in T3, and when
 ChatGPT's limit runs out, Codex's work waits for it.
 
@@ -471,6 +475,46 @@ The attended instance is for design conversations. On it, agents stop and ask
 you; on the default instance they run unattended, and `hooks/agent-gate.sh`
 has them decide anything they'd ask and carry on. `~/.claude/attended.md` is
 the prompt the repo keeps for it.
+
+### Antigravity: Gemini 4 Neon for reviews
+
+Antigravity gives pstack a third model family, Gemini 4 Neon, for its review
+and judge seats ([Seat the roles](#seat-the-roles)). Those seats spend Google's
+quota instead of the ChatGPT window every Codex session shares. It never runs a
+thread of its own.
+
+It signs in with a personal Google account on a paid Google AI plan, not a
+trial: trials leave models out. Workspace accounts can't hold that plan, and a
+Workspace sign-in gets only a starter quota without Neon. A separate account
+also keeps any enforcement mistake on Google's side away from your other
+accounts.
+
+1. Settings → Providers → Add provider → **Antigravity** → **Install
+   Antigravity**. That installs T3's managed copy of Google's official
+   `antigravity-acp` runtime. Never point it at another binary or a wrapper.
+2. Sign-in method: **Google account**, and sign in with that personal
+   account.
+3. **Refresh provider status.** The model list shows `gemini-4-neon`.
+4. Run t3-pstack's `update` again ([Install t3-pstack](#install-t3-pstack)):
+   it copies the plugin into the profile T3 keeps for each Antigravity
+   instance, and only a run after the instance exists can do that.
+
+Google's staff said on its developer forum on 2 Nov 2026 that T3 running the
+unmodified `antigravity-acp` with its own sign-in, for one person's
+interactive work, is permitted. Their FAQ still says otherwise, so keep to
+exactly that: no OpenCode or Hermes Antigravity plugins on this account, no
+second account to rotate to, and no scripts polling `/usage`.
+
+T3's Antigravity provider has open bugs, so it only ever runs as a child:
+
+- Threads started on Antigravity can lose `delegate_task` (t3code #38123).
+- When the quota runs out, the turn can end as "completed" with "Usage Limit
+  Reached" in its text and no limit banner (#28658). The rules treat that
+  reply as a failure.
+- The Usage page can show 100% left while the quota is spent (#22876).
+  Antigravity's own `/usage` is the one to trust.
+- A model switch on a resumed thread is ignored (#38312), so start a new
+  thread instead.
 
 ### Settings
 
@@ -583,16 +627,19 @@ superpowers was ever installed, `claude plugin uninstall superpowers@claude-plug
 ### Install t3-pstack
 
 ```sh
-npx -y github:chhoumann/t3-pstack#v2.1.0 install && npx -y github:chhoumann/t3-pstack#v2.1.0 doctor
+npx -y github:chhoumann/t3-pstack#v2.5.0 update && npx -y github:chhoumann/t3-pstack#v2.5.0 doctor
 ```
 
-The tag in that line pins only the installer. Its marketplace comes from
-`chhoumann/t3-pstack` with no tag, so Claude Code and Codex install whatever
-main holds; on 27 Oct that was exactly v2.1.0, so installer and plugin agreed.
-Before installing a later version, check that main is still at the tag you
-name (#3). The installer adds t3-pstack to both Claude Code (`~/.claude`,
-which the attended instance shares) and Codex (`~/.codex`), and trusts its
-Codex session hook.
+`install` and `update` are the same command, and a second run changes
+nothing. The tag in that line pins only the installer. Claude Code's
+marketplace comes from `chhoumann/t3-pstack` with no tag, so it installs
+whatever main holds; before running it, check that main is still at the tag
+you name (#3). Codex's marketplace is pinned to the release's tag. The
+installer adds t3-pstack to Claude Code (`~/.claude`, which the attended
+instance shares), to Codex (`~/.codex`), and to the profile T3 keeps for each
+Antigravity instance, and trusts its Codex session hook again. Codex drops
+that trust whenever the plugin's files change, so run `update` after every
+t3-pstack release and after adding a provider instance.
 
 Then, before any T3 thread:
 
@@ -604,7 +651,8 @@ Then, before any T3 thread:
 
 From then on doctor reports `FAIL marketplace auto-update: false`. That's the
 repo's choice. Don't follow its fix: rerunning the installer turns auto-update
-back on.
+back on. Every other line passes, including the Codex hook's trust and the
+Antigravity profile.
 
 ### Seat the roles
 
@@ -614,42 +662,75 @@ back on.
 2. Send the `AGENT_ATTENDED` test from [Providers](#providers) first. If it
    prints anything but `[1]`, fix the instance; on the default instance the
    hook blocks the setup's questions and Claude picks defaults itself.
-3. Send `/t3-pstack:setup-pstack`. Its questions arrive as cards. What was
-   chosen on 27 Oct:
-   - **Budget:** medium, every role at high reasoning. Large puts every role
-     at xhigh and uses up the plans' limits fastest.
-   - **Roles that write code at volume** (feature and refactoring, swarm
-     workers): `codex/gpt-5.6-terra`.
-   - **The hard tier** (bug-fix, perf-issue, hillclimb, the hardest tasks):
-     Claude Fable 5.1.
-   - **Everything else:** Claude Opus 5.5 on the default instance
-     (`claudeAgent/...`), so the threads these roles start run unattended.
-   - **Panels** (arena runners, arena cross-judge pool, architect runners,
-     interrogate reviewers): Opus 5.5 and `codex/gpt-5.6-terra`. Grok isn't
-     set up, so each panel runs two subagents instead of three.
-   - **Session hook:** on. It's the only router: `AGENTS.md` sends multi-file
-     changes, design choices, bugs with an unknown cause and performance work
-     through poteto-mode.
+3. Send `/t3-pstack:setup-pstack`. Its questions arrive as cards. Answer:
+   - **Budget:** `medium - high reasoning`. Large puts most roles at xhigh and
+     uses up the plans' limits fastest.
+   - **Roles:** change them to the sheet below. It drops the retired lines
+     (how, why, reflect, architect, hardest tasks) itself.
+   - **Session hook:** on.
    - **The verification and formal verification skills:** no. They would
      write into a repo mid-setup; ask for one later in its own thread.
+4. `npx -y github:chhoumann/t3-pstack#v2.5.0 doctor` shows the sheet valid,
+   and only the auto-update FAIL.
 
-   The old guide's `gpt-6.1-sol` isn't offered on this ChatGPT plan. Of the
-   models Codex lists, gpt-6-luna is the small, fast tier and gpt-5.6-terra
-   the middle one.
-4. `npx -y github:chhoumann/t3-pstack#v2.1.0 doctor` now shows the sheet
-   valid, and only the auto-update FAIL.
+The sheet, as of 19 Nov 2026:
 
-t3-pstack 2.1.0's checker (`t3-sheet.mjs`) reads T3's model list in an older
-layout than T3 0.1.3 returns, so every setup run reports a false failure
-first; the thread works around it. Re-running `/t3-pstack:setup-pstack`
+```
+feature, refactoring: claudeAgent/claude-opus-5-5 effort=high
+bug-fix: claudeAgent/claude-opus-5-5 effort=high
+perf-issue: claudeAgent/claude-opus-5-5 effort=high
+hillclimb: claudeAgent/claude-opus-5-5 effort=high
+judgment and prose: claudeAgent/claude-opus-5-5 effort=high
+arena runners: claudeAgent/claude-opus-5-5 effort=high, claudeAgent/claude-fable-5-2 effort=high
+arena cross-judge pool: codex/gpt-6.2-sol reasoningEffort=medium, antigravity/gemini-4-neon thinking_level=high, claudeAgent/claude-opus-5-5 effort=high
+swarm workers: claudeAgent/claude-sonnet-5-5 effort=high
+interrogate reviewers: claudeAgent/claude-opus-5-5 effort=high, antigravity/gemini-4-neon thinking_level=high
+session hook: on
+```
+
+Why each line:
+
+- **Opus writes everything.** Anthropic recommends Opus 5.5 as the daily
+  driver and Fable 5.2 only where Opus at higher effort still falls short.
+  Fable may use at most half of the Claude plan's weekly limit and spends it
+  fastest, so no single-model role names it. The rules allow it by name.
+- **Swarm workers on Sonnet**, as the rules say: bounded work at half
+  Opus's token price.
+- **Arena runners: Opus and Fable.** An arena needs two model families and
+  each runner writes a whole implementation. Fable counts as its own family,
+  and arenas only run for a real design choice, the one place the rules
+  allow Fable. Neon's weekly quota is too small for a full implementation,
+  and Codex's window is kept for judging.
+- **Cross-judge pool: Codex first.** The judge has to come from a vendor
+  other than the parent's, which is Claude. Codex at medium is the one Codex
+  judge the rules allow. If Codex is out, Neon judges.
+- **Interrogate: Opus and Neon.** Two families, and the second review spends
+  Google's quota instead of the ChatGPT window. Interrogate keeps only the
+  findings a run proves, which covers Neon's habit of claiming things that
+  aren't there.
+- No `fastMode` anywhere (on T3 it's a priced mode), and nothing above high.
+
+Model IDs are what T3 lists on 19 Nov; if setup-pstack can't find one, use
+the ID `orchestrator_capabilities` shows for the same model. The setup
+validates every line against T3's model list, so a model T3 can't run is
+caught before the sheet is written. Re-running `/t3-pstack:setup-pstack`
 changes the sheet.
+
+**When a plan runs out mid-week,** re-run setup-pstack rather than editing
+the sheet by hand:
+
+- Claude: writing roles on `codex/gpt-6.2-sol reasoningEffort=medium`, swarm
+  on `codex/gpt-6-luna reasoningEffort=high`, and panels Codex plus Neon.
+- ChatGPT: drop the Codex entry from the cross-judge pool. Neon judges.
+- Google: drop the Neon entries. Interrogate becomes Opus plus Codex at
+  medium; the rules allow that as the one Codex review per PR.
 
 ### The first coding loop
 
 1. In the Húrin project, a new thread on **Claude**, Auto. Pick a small, real
    issue: a widget bug or a one-file change with a test.
 2. "Plan this change. Then use delegate_task to hand the implementation to
-   Codex (gpt-5.6-terra, Auto mode, in a new worktree). When it reports back,
+   Codex (gpt-6.2-sol, medium, Auto mode, in a new worktree). When it reports back,
    review the diff against the plan, ask Codex to fix anything you find, and
    tell me when it's ready to merge."
 3. The thread's lineage view shows the child on Codex. If it shows Claude,
