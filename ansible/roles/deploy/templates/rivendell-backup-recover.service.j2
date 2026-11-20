@@ -1,7 +1,7 @@
 # Written by the dotfiles playbook. At boot, starts the SQLite apps a backup
-# cut short by a reboot left stopped, which unless-stopped would leave down.
-# Does nothing when no backup left any. The script reports its own failures
-# through hermes-relay.
+# cut short by a reboot left stopped, which unless-stopped would leave down,
+# through rivendell-backup. Does nothing when no backup left any. The script
+# reports its own failures through hermes-relay.
 [Unit]
 Description=Start the apps an interrupted backup of Rivendell left stopped
 ConditionPathExists={{ deploy_repo }}/scripts/backup.sh
@@ -11,7 +11,7 @@ After=docker.service
 [Service]
 Type=oneshot
 User=deploy
-ExecStart=/bin/bash {{ deploy_repo }}/scripts/backup.sh recover
+ExecStart=/usr/local/bin/rivendell-backup recover
 TimeoutStartSec=10min
 
 [Install]

@@ -24,7 +24,9 @@
 # changing anything: the gate checks the commit that was checked out before
 # back out, so the checkout stays what the containers run, and answers 0 for
 # 90 and 1 for 91. Any other status is a deploy that failed part-way, and the
-# commit stays checked out.
+# commit stays checked out. A gate stopped (TERM, INT or HUP) after its checkout
+# for GitHub's request and before deploy.sh runs checks the commit before back
+# out; once deploy.sh runs, the gate waits for its status.
 #
 # The request arrives in SSH_ORIGINAL_COMMAND under the restricted key, and as
 # arguments when the workflow still connects with an older, unrestricted key
@@ -96,6 +98,11 @@ fi
 # the checkout, so a refused request must leave it where it was.
 [ "$(git ls-tree "$sha" scripts/deploy.sh | cut -d' ' -f1)" = 100755 ] \
   || refuse "$sha has no executable scripts/deploy.sh"
+# GitHub's request stages the commit unless deploy.sh says otherwise, so a gate
+# stopped before deploy.sh has run checks the commit before back out.
+if [ "$verb" = deploy ]; then
+  trap 'git checkout --quiet "$before"; log "stopped before deploy.sh ran; $before stays checked out"; exit 1' TERM INT HUP
+fi
 git checkout --quiet "$sha"
 
 log "deploying $sha${mode:+ (${mode[*]})}"
@@ -108,6 +115,12 @@ trap '' HUP
 out=${XDG_STATE_HOME:-$HOME/.local/state}/deploy-gate
 mkdir -p "$out"
 rc=0
+# From here deploy.sh's exit status decides what to do with the checkout. With
+# a trap set, a stop sent to the gate waits for deploy.sh to end, and the gate
+# then does what that status says.
+if [ "$verb" = deploy ]; then
+  trap : TERM INT
+fi
 # 9>&-: the lock stays the gate's own. A process deploy.sh leaves running, such
 # as op's cache daemon, would otherwise hold it after the gate exits, and every
 # later deploy would wait half an hour and be refused.

@@ -83,6 +83,8 @@ cat > "$work/src/scripts/deploy.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "$(git rev-parse HEAD) $*" >> "$STUB_RAN"
 [ -z "${STUB_SLOW:-}" ] || sleep "$STUB_SLOW"
+# The gate is this script's parent: a stop sent to the gate alone.
+[ -z "${STUB_KILL_GATE:-}" ] || { kill "-$STUB_KILL_GATE" "$PPID"; sleep 0.3; }
 if [ "$1" = --apply ]; then echo "applied $2"; : > "$STUB_STATE/pending"; exit 0; fi
 [ -z "${STUB_STAGE_FAILS:-}" ] || exit 91
 [ -z "${STUB_APPLY_NOW:-}" ] || { echo "applied $1"; exit 0; }
@@ -182,6 +184,47 @@ out="$(ask apply "$third")"; rc=$?
 kill "$holder" 2>/dev/null; wait
 [ "$rc" = 75 ] && pass "an apply that can't get the lock soon exits 75, to be asked again" \
   || fail "an apply that can't get the lock soon exits 75, to be asked again" "rc=$rc $out"
+
+# A gate stopped while it stages must leave the deployed commit checked out.
+# logger is how the gate says it is about to run deploy.sh; this one stops the
+# gate right then, after its checkout. STUB_KILL_GATE in deploy.sh stops it
+# while deploy.sh runs instead.
+mkdir -p "$work/bin"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'case "$*" in *" -- deploying "*) [ -z "${STUB_STOP_AT_LOG:-}" ] || kill "-$STUB_STOP_AT_LOG" "$PPID" ;; esac' \
+  > "$work/bin/logger"
+chmod +x "$work/bin/logger"
+for signal in TERM INT HUP; do
+  git -C "$work/repo" checkout -q "$deployed"
+  echo "$second" > "$STUB_STATE/pending"
+  : > "$work/ran"
+  out="$(PATH="$work/bin:$PATH" STUB_STOP_AT_LOG=$signal ask deploy "$third")"; rc=$?
+  [ "$rc" != 0 ] && [ "$(checked_out)" = "$deployed" ] && [ ! -s "$work/ran" ] \
+    && pass "a gate stopped by $signal after its checkout of a stage puts the deployed commit back" \
+    || fail "a gate stopped by $signal after its checkout of a stage puts the deployed commit back" \
+      "rc=$rc checked out $(checked_out) ran: $(cat "$work/ran") $out"
+done
+git -C "$work/repo" checkout -q "$deployed"
+out="$(STUB_KILL_GATE=TERM ask deploy "$third")"; rc=$?
+[ "$rc" = 0 ] && [ "$(checked_out)" = "$deployed" ] \
+  && pass "a gate stopped while deploy.sh stages waits for it and puts the deployed commit back" \
+  || fail "a gate stopped while deploy.sh stages waits for it and puts the deployed commit back" \
+    "rc=$rc checked out $(checked_out) $out"
+git -C "$work/repo" checkout -q "$deployed"
+out="$(STUB_KILL_GATE=TERM STUB_APPLY_NOW=1 ask deploy "$third")"; rc=$?
+[ "$rc" = 0 ] && [ "$(checked_out)" = "$third" ] \
+  && pass "a gate stopped while deploy.sh applies at once keeps the applied commit checked out" \
+  || fail "a gate stopped while deploy.sh applies at once keeps the applied commit checked out" \
+    "rc=$rc checked out $(checked_out) $out"
+# An apply's checkout is deploy.sh --apply's to decide, by its exit status.
+echo "$third" > "$STUB_STATE/pending"
+git -C "$work/repo" checkout -q "$deployed"
+out="$(PATH="$work/bin:$PATH" STUB_STOP_AT_LOG=TERM ask apply "$third")"; rc=$?
+[ "$(checked_out)" = "$third" ] \
+  && pass "a gate stopped after its checkout of an apply leaves that commit checked out" \
+  || fail "a gate stopped after its checkout of an apply leaves that commit checked out" \
+    "rc=$rc checked out $(checked_out) $out"
+git -C "$work/repo" checkout -q "$deployed"
 
 # Until a commit with a deploy-hook is deployed, the gate's own checks still
 # hold, and a commit's deploy.sh that applies at once leaves it checked out.
