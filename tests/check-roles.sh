@@ -29,16 +29,21 @@ for role in "${roles[@]}"; do
   if [ "$role" = agent-mini ]; then
     has "$list" ".claude/hooks/route-reminder.sh" && has "$list" ".claude/routing.md" \
       && pass "has the router and its rules" || fail "has the router and its rules"
+    has "$list" ".claude/agents/adversarial-reviewer.md" && has "$list" ".claude/skills/pack-threat-model/SKILL.md" \
+      && pass "has the adversarial reviewer and its packs" || fail "has the adversarial reviewer and its packs"
   else
     lacks "$list" ".claude/hooks/route-reminder.sh" && lacks "$list" ".claude/routing.md" \
       && pass "has no router" || fail "has no router" "$(grep -E 'route-reminder|routing\.md' <<< "$list")"
+    grep -qE '^\.claude/(agents/adversarial-reviewer\.md|skills/pack-)' <<< "$list" \
+      && fail "has no adversarial reviewer" "$(grep -E '^\.claude/(agents/adversarial-reviewer|skills/pack-)' <<< "$list")" \
+      || pass "has no adversarial reviewer"
   fi
 
   case "$role" in
     laptop)
       lacks "$list" ".claude/pstack-models.md" && pass "has no pstack model sheet" || fail "has no pstack model sheet"
       has "$list" ".claude/rules/job-search.md" && pass "has the job-search rules" || fail "has the job-search rules"
-      bad=$(grep -E '^\.codex|^\.claude/(skills/(rpi-|grill|to-spec|i-have-adhd|github-actions|openscad|read-only-log|frontend-e2e|codebase-design|domain-modeling|improve-codebase|writing-for-agents|go/)|agents/(rpi-|ecc-))|^\.local/share/(openscad|georgeskills|dotfiles/git/read)' <<< "$list" | grep -v '^\.local/share/dotfiles/git/read-only-hooks' || true)
+      bad=$(grep -E '^\.codex|^\.claude/(skills/(rpi-|grill|to-spec|i-have-adhd|github-actions|openscad|read-only-log|frontend-e2e|codebase-design|domain-modeling|improve-codebase|writing-for-agents|go/|pack-)|agents/(rpi-|ecc-|adversarial-reviewer))|^\.local/share/(openscad|georgeskills|dotfiles/git/read)' <<< "$list" | grep -v '^\.local/share/dotfiles/git/read-only-hooks' || true)
       [ -z "$bad" ] && pass "has no development rules, skills, agents or tools" || fail "has no development rules, skills, agents or tools" "$bad"
       has "$list" "Library/CloudStorage/Dropbox/config-files/1Password/ssh/agent.toml" \
         && pass "writes 1Password's agent.toml into Dropbox's config-files" || fail "writes 1Password's agent.toml into Dropbox's config-files"

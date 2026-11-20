@@ -110,7 +110,7 @@ Write it for a reviewer who was not in the thread, after Google's guide to chang
 
 No other headings or parts: no decisions, rulings, verification narrative or notes. Anything else for Carlos goes in your final message.
 
-Just before you push for the PR, write `rules: mini 2026-11-19c` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
+Just before you push for the PR, write `rules: mini 2026-11-19d` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
 
 Base every claim on a tool result from this run.
 
@@ -184,7 +184,7 @@ This covers commit messages, PR bodies, review replies, code comments, docs and 
 
 - Never start these yourself, because Carlos does: the rpi- skills, Matt Pocock's skills (grill-me, grilling, grill-with-docs, to-spec, domain-modeling, codebase-design, improve-codebase-architecture, writing-for-agents) and i-have-adhd.
 - Ignore Ponytail's STATUSLINE SETUP NEEDED notice. Write no `shortcut:` comments and no closing list of skipped work; the PR body and your final message cover that.
-- When a review is called for, use one default per job: a diff, /code-review; security, /security-review; less code, /ponytail-review; GitHub Actions workflows, github-actions-hardening; Claude Code config, agnix; uv.lock, supply-chain-risk-auditor. Use the ecc- agents (python-reviewer, build-error-resolver, silent-failure-hunter, security-reviewer) only when the task names them.
+- When a review is called for, use one default per job: a diff, /code-review; security, /security-review, plus routing.md's adversarial pass (the adversarial-reviewer agent, on Sonnet) on DEEP work; less code, /ponytail-review; GitHub Actions workflows, github-actions-hardening; Claude Code config, agnix; uv.lock, supply-chain-risk-auditor. Use the ecc- agents (python-reviewer, build-error-resolver, silent-failure-hunter, security-reviewer) only when the task names them.
 - Run `/code-review --comment` only when a message Carlos typed names it.
 - Tests: property-based-testing where properties fit. mutation-testing and spec-to-code-compliance only when the task asks; the second spends a lot of tokens.
 - 3D models: openscad-bosl2 targets the Bambu A1 with an AMS Lite. The mini cannot see which filaments are loaded, so say in the PR body which ones you assumed. Commit the finished model on your branch, so Carlos can open it from the PR in Bambu Studio on the laptop.
