@@ -110,7 +110,7 @@ Write it for a reviewer who was not in the thread, after Google's guide to chang
 
 No other headings or parts: no decisions, rulings, verification narrative or notes. Anything else for Carlos goes in your final message.
 
-Just before you push for the PR, write `rules: mini 2026-11-19b` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
+Just before you push for the PR, write `rules: mini 2026-11-19c` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
 
 Base every claim on a tool result from this run.
 
@@ -170,7 +170,7 @@ This covers commit messages, PR bodies, review replies, code comments, docs and 
 
 ### Routing
 
-- t3-pstack's session hook is the only router. Take multi-file changes, design choices, bugs with an unknown cause and performance work through its poteto-mode.
+- t3-pstack's session hook and `~/.claude/hooks/route-reminder.sh` route the work, both by `~/.claude/routing.md`, which the second repeats on every message Carlos sends: deep work, the default, through t3-pstack's poteto-mode; a trivial one-file edit through /go's small path; a question answered directly; a message starting with `--` done as written. A delegated child or a FirstMate crew never routes, never enters poteto-mode and never delegates unless its brief says so.
 - superpowers is a skill library that you and poteto-mode call by name. Never invoke superpowers:using-superpowers.
 - Use superpowers:test-driven-development for features and behavior changes, not only bug fixes. Where it says to delete code written before its test, keep the code and write the test.
 - Use superpowers:verification-before-completion before you claim that work is done or passing.

@@ -26,6 +26,13 @@ for role in "${roles[@]}"; do
   list=$(managed "$role")
   bad=$(grep -E "$never" <<< "$list" || true)
   if [ -z "$bad" ]; then pass "manages nothing on the never list"; else fail "manages nothing on the never list" "$bad"; fi
+  if [ "$role" = agent-mini ]; then
+    has "$list" ".claude/hooks/route-reminder.sh" && has "$list" ".claude/routing.md" \
+      && pass "has the router and its rules" || fail "has the router and its rules"
+  else
+    lacks "$list" ".claude/hooks/route-reminder.sh" && lacks "$list" ".claude/routing.md" \
+      && pass "has no router" || fail "has no router" "$(grep -E 'route-reminder|routing\.md' <<< "$list")"
+  fi
 
   case "$role" in
     laptop)
@@ -216,6 +223,8 @@ for role in "${roles[@]}"; do
       jq -e '.hooks.SessionStart[].hooks[] | select(.command | endswith("/agent-gate.sh"))' <<< "$settings" >/dev/null \
         && jq -e '.hooks.PreToolUse[] | select(.matcher == "Skill|AskUserQuestion") | .hooks[] | select(.command | endswith("/agent-gate.sh"))' <<< "$settings" >/dev/null \
         && pass "the gate runs at session start and before Skill and AskUserQuestion" || fail "the gate runs at session start and before Skill and AskUserQuestion"
+      jq -e '.hooks.UserPromptSubmit[].hooks[] | select(.command | endswith("/route-reminder.sh"))' <<< "$settings" >/dev/null \
+        && pass "the router runs on every message" || fail "the router runs on every message"
       has "$list" ".local/share/claude-plugins/sp-gated/.claude-plugin/marketplace.json" \
         && pass "the mini has the local marketplace" || fail "the mini has the local marketplace"
       mkt="$REPO/home/dot_local/share/claude-plugins/sp-gated/dot_claude-plugin/marketplace.json"
