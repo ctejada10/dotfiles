@@ -110,7 +110,7 @@ Write it for a reviewer who was not in the thread, after Google's guide to chang
 
 No other headings or parts: no decisions, rulings, verification narrative or notes. Anything else for Carlos goes in your final message.
 
-Just before you push for the PR, write `rules: mini 2026-11-19a` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
+Just before you push for the PR, write `rules: mini 2026-11-19b` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
 
 Base every claim on a tool result from this run.
 
@@ -191,9 +191,9 @@ This covers commit messages, PR bodies, review replies, code comments, docs and 
 
 ### Models
 
-- Default to Opus at high effort for workers and reviews, except swarm workers and the how explorer, which run on Sonnet at high effort. Judge each task, because a label such as "kernel" or a role default in the model sheet is not a reason to go higher.
-- Use Fable only for the first build of work with hard concurrency, safety or money design, and say why when you dispatch it.
-- Never use Fable for merges, fix rounds whose decisions are already written, mechanical edits or reviews. A second opinion comes from another model family, not from a costlier model of the same one. That second family is usually Codex, on a budget: Codex runs on a ChatGPT Plus plan whose 5-hour window every Codex session here shares, and on 2026-11-02 a crew spent it in under two hours on 16 high-effort reviews. Send Codex, at medium effort, only these: the one cross-family review per PR, with a brief that names the diff and the risks; one judge in an arena's cross-judge pool; one investigator in a why panel; and roles a message Carlos typed names. Workers, fix-round reviews, per-unit crew reviews, swarms and arena runners run on Claude. If Codex reports a usage limit, run the review on Claude, say so in the PR body, and never wait for the window to reset.
+- Default to Opus at high effort for workers and reviews, except swarm workers, which run on Sonnet at high effort. Judge each task, because a label such as "kernel" or a role default in the model sheet is not a reason to go higher, and never go above high unless a message Carlos typed asks for it. Never turn on `fastMode` or any other priced fast mode. Never use a model from a Chinese developer (GLM, Kimi, MiniMax, DeepSeek, Qwen and the like) through any provider, and name every model explicitly, never an "Auto" model or router.
+- Use Fable only as the model sheet's second arena runner and for the first build of work with hard concurrency, safety or money design, and say why when you dispatch it.
+- Never use Fable for merges, fix rounds whose decisions are already written, mechanical edits or reviews. A second opinion comes from another model family, not from a costlier model of the same one. For reviews that family is Gemini 4 Neon, the Antigravity entry in interrogate, which spends Google's quota and no one else's. Otherwise it is Codex, on a budget: Codex runs on a ChatGPT Plus plan whose 5-hour window every Codex session here shares, and on 2026-11-02 a crew spent it in under two hours on 16 high-effort reviews. Send Codex, at medium effort, only these: the one cross-family review per PR, with a brief that names the diff and the risks; one judge in an arena's cross-judge pool; one investigator in a why panel; and roles a message Carlos typed names. Workers, fix-round reviews, per-unit crew reviews, swarms and arena runners run on Claude. If Codex reports a usage limit, run the review on Claude, say so in the PR body, and never wait for the window to reset. Antigravity runs only as a `delegate_task` child for a review or a judgment, on Gemini 4 Neon, never as a worker or a thread of its own, and it never delegates. Treat its findings as claims and confirm each in the code before acting on it. An Antigravity reply that says "Usage Limit Reached", or that ends with no findings and no verdict, is a failure, not a clean review: drop that seat for the rest of the run and say so in the PR body.
 
 ### Memory and permission prompts
 
