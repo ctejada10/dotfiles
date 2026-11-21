@@ -95,7 +95,7 @@ fi
 section "role agent-mini, switches off"
 sandbox agent-mini >/dev/null 2>&1
 list=$(cz managed --include=files 2>/dev/null)
-for f in .local/bin/hermes-config-sync .local/bin/hermes-health .local/share/dotfiles/hermes/SKILL.md .local/share/dotfiles/hermes/rivendell/SKILL.md Library/LaunchAgents/com.carlosetejada.hermes-logs.plist; do
+for f in .local/bin/hermes-config-sync .local/bin/hermes-health .local/share/dotfiles/hermes/SKILL.md .local/share/dotfiles/hermes/rivendell/SKILL.md .local/share/dotfiles/hermes/rivendell/rivendell-state.py Library/LaunchAgents/com.carlosetejada.hermes-logs.plist; do
   grep -qx "$f" <<<"$list" && pass "manages $f" || fail "manages $f"
 done
 grep -q 'hurin-bridge\|bridge.env' <<<"$list" && fail "has no bridge" || pass "has no bridge"
@@ -109,11 +109,12 @@ grep -q 'op://Hermes/Telegram' <<<"$off_script" && pass "renders the Telegram se
 grep -q 'op://Hermes/Hurin' <<<"$off_script" && fail "renders no Hurin secrets" || pass "renders no Hurin secrets"
 grep -q 'op://Hermes/Rivendell' <<<"$off_script" && fail "renders no Rivendell secret" || pass "renders no Rivendell secret"
 grep -q 'skills/rivendell' <<<"$off_script" && fail "installs no rivendell skill" || pass "installs no rivendell skill"
+grep -q 'rivendell-state.py' <<<"$off_script" && fail "installs no rivendell state script" || pass "installs no rivendell state script"
 
 section "role agent-mini, rivendell on"
 default=$(cz cat "$SANDBOX/home/.local/share/dotfiles/hermes/config.json")
-python3 -c 'import json,sys; w=json.load(sys.stdin)["platforms.webhook"]; assert list(w["extra"]["routes"])==["rivendell"] and w["extra"]["host"].startswith("100."), w' <<<"$default" \
-  && pass "the data turns the rivendell route on, bound to a tailnet address" || fail "the data turns the rivendell route on, bound to a tailnet address" "$default"
+python3 -c 'import json,sys; w=json.load(sys.stdin)["platforms.webhook"]; assert list(w["extra"]["routes"])==["rivendell","rivendell-state"] and w["extra"]["host"].startswith("100."), w' <<<"$default" \
+  && pass "the data turns the rivendell routes on, bound to a tailnet address" || fail "the data turns the rivendell routes on, bound to a tailnet address" "$default"
 # Hermes renders an empty chat_id as the whole event, which Telegram can't find,
 # so a route for the home channel must leave deliver_extra out.
 python3 -c 'import json,sys; r=json.load(sys.stdin)["platforms.webhook"]["extra"]["routes"]["rivendell"]; assert "deliver_extra" not in r, r' <<<"$default" \
@@ -127,19 +128,24 @@ import json,sys
 d=json.load(sys.stdin)
 w=d["platforms.webhook"]
 assert w["enabled"] is True and w["extra"]["host"]=="100.64.0.1" and w["extra"]["port"]==8644, w
-assert list(w["extra"]["routes"])==["rivendell"], w
+assert list(w["extra"]["routes"])==["rivendell","rivendell-state"], w
 r=w["extra"]["routes"]["rivendell"]
 assert r=={"secret":"${RIVENDELL_WEBHOOK_SECRET}","skills":["rivendell-events"],"prompt":"{__raw__}","deliver":"telegram","deliver_extra":{"chat_id":"7"},"mirror_to_session":True}, r
 assert d["command_allowlist"]==[] and not any("hurin" in k for k in d), d
-' <<<"$riv" && pass "config has only the rivendell route, signed with its own secret, to Carlos's chat" || fail "config has only the rivendell route, signed with its own secret, to Carlos's chat" "$riv"
+' <<<"$riv" && pass "config has only the rivendell routes, signed with its own secret, to Carlos's chat" || fail "config has only the rivendell routes, signed with its own secret, to Carlos's chat" "$riv"
+# The state route runs only its script, which answers [SILENT]: no skill, no
+# prompt and no delivery, so a snapshot never starts an agent run or a message.
+python3 -c 'import json,sys; r=json.load(sys.stdin)["platforms.webhook"]["extra"]["routes"]["rivendell-state"]; assert r=={"secret":"${RIVENDELL_WEBHOOK_SECRET}","script":"rivendell-state.py"}, r' <<<"$riv" \
+  && pass "the rivendell-state route runs only its script, with the same secret" || fail "the rivendell-state route runs only its script, with the same secret" "$riv"
 riv_script=$(cz --override-data "$RIV" execute-template <"$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl")
 grep -q '^RIVENDELL_WEBHOOK_SECRET=op://Hermes/Rivendell/webhook-secret$' <<<"$riv_script" && pass "renders the Rivendell secret" || fail "renders the Rivendell secret"
 grep -q 'op://Hermes/Hurin' <<<"$riv_script" && fail "still renders no Hurin secrets" || pass "still renders no Hurin secrets"
 grep -q 'skills/rivendell/events/SKILL.md' <<<"$riv_script" && pass "installs the rivendell skill" || fail "installs the rivendell skill"
+grep -q 'scripts/rivendell-state.py' <<<"$riv_script" && pass "installs the rivendell state script" || fail "installs the rivendell state script"
 bash -n <<<"$riv_script" && pass "its apply script parses" || fail "its apply script parses"
 both=$(cz --override-data "$BOTH" execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl")
-python3 -c 'import json,sys; d=json.load(sys.stdin); assert sorted(d["platforms.webhook"]["extra"]["routes"])==["hurin","rivendell"]' <<<"$both" \
-  && pass "with Hurin on too, one listener serves both routes" || fail "with Hurin on too, one listener serves both routes" "$both"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert sorted(d["platforms.webhook"]["extra"]["routes"])==["hurin","rivendell","rivendell-state"]' <<<"$both" \
+  && pass "with Hurin on too, one listener serves every route" || fail "with Hurin on too, one listener serves every route" "$both"
 apart=$(sed 's/"rivendell":{"enabled":true,"webhookHost":"100.64.0.1"/"rivendell":{"enabled":true,"webhookHost":"100.64.0.9"/' <<<"$BOTH")
 out=$(cz --override-data "$apart" execute-template <"$REPO/home/dot_local/share/dotfiles/hermes/config.json.tmpl" 2>&1)
 grep -q 'one webhook listener' <<<"$out" && pass "refuses two routes that disagree on the one listener" || fail "refuses two routes that disagree on the one listener" "$out"
@@ -149,6 +155,35 @@ skill=$REPO/home/dot_local/share/dotfiles/hermes/rivendell/SKILL.md
 grep -q '^name: rivendell-events$' "$skill" && pass "the skill is rivendell-events" || fail "the skill is rivendell-events"
 grep -q 'notify' "$skill" && grep -q 'investigate' "$skill" && grep -q 'facts' "$skill" \
   && pass "the skill covers notify, investigate and facts" || fail "the skill covers notify, investigate and facts"
+
+section "the rivendell state script"
+S=$(mktemp -d "${TMPDIR:-/tmp}/hermes-state.XXXXXX")
+mkdir -p "$S/.hermes/scripts"
+cp "$REPO/home/dot_local/share/dotfiles/hermes/rivendell/rivendell-state.py" "$S/.hermes/scripts/"
+# Hermes runs it with its own interpreter, the payload on stdin, from the
+# scripts folder. HOME points elsewhere: Hermes may remap a script's HOME.
+post() { (cd "$S/.hermes/scripts" && HOME=$S/elsewhere python3 -I -B rivendell-state.py) 2>"$S/err"; }
+statefile=$S/.hermes/rivendell/state.json
+good='{"generated_at":"2026-11-21T08:00:00Z","records":[{"type":"deploy.applied","kind":"notify","urgent":false,"message":"ok","facts":{"sha":"abc1234"},"received_at":"2026-11-21T07:59:00Z"}],"services":[{"service":"radarr","stack":"arr","up":true,"checked_at":"2026-11-21T07:58:00Z"}],"services_error":null}'
+out=$(post <<<"$good"); code=$?
+[ "$code" = 0 ] && [ "$out" = "[SILENT]" ] && pass "answers [SILENT] and exits 0, so no agent run starts" || fail "answers [SILENT] and exits 0, so no agent run starts" "$code: $out"
+python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))==json.loads(sys.argv[2])' "$statefile" "$good" 2>/dev/null \
+  && pass "stores the snapshot as it came" || fail "stores the snapshot as it came" "$(cat "$statefile" 2>&1)"
+perm=$(stat -c %a "$statefile" 2>/dev/null || stat -f %Lp "$statefile")
+dperm=$(stat -c %a "$S/.hermes/rivendell" 2>/dev/null || stat -f %Lp "$S/.hermes/rivendell")
+[ "$perm" = 600 ] && [ "$dperm" = 700 ] && pass "keeps it private: file 600, folder 700" || fail "keeps it private: file 600, folder 700" "$perm $dperm"
+[ ! -e "$S/elsewhere" ] && pass "writes beside its scripts folder, whatever HOME is" || fail "writes beside its scripts folder, whatever HOME is"
+newer=$(sed 's/08:00:00Z/08:05:00Z/' <<<"$good")
+post <<<"$newer" >/dev/null
+grep -q '08:05:00Z' "$statefile" && pass "the latest snapshot replaces the last" || fail "the latest snapshot replaces the last"
+before=$(cksum <"$statefile")
+for bad in 'not json' '[1,2]' '{"records":[]}' '{"generated_at":"x","records":{}}' '{"generated_at":5,"records":[]}'; do
+  out=$(post <<<"$bad"); code=$?
+  [ "$code" = 0 ] && [ "$out" = "[SILENT]" ] && [ "$before" = "$(cksum <"$statefile")" ] && [ -s "$S/err" ] \
+    && pass "drops $bad, keeps the last snapshot and logs why" || fail "drops $bad, keeps the last snapshot and logs why" "$code: $out: $(cat "$S/err")"
+done
+[ "$(ls -A "$S/.hermes/rivendell")" = state.json ] && pass "leaves no temp file" || fail "leaves no temp file" "$(ls -A "$S/.hermes/rivendell")"
+rm -rf "$S"
 
 section "role agent-mini, switches on"
 script=$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl
@@ -257,12 +292,14 @@ grep -q "couldn't render.*op says no" <<<"$out" && pass "shows op's error when i
 [ "$before" = "$(cksum <"$F/home/.hermes/.env")" ] && pass "leaves .env alone when op fails" || fail "leaves .env alone when op fails"
 mv "$F/stub/op.ok" "$F/stub/op"
 mkdir -p "$F/home/.local/share/dotfiles/hermes/rivendell"
-cp "$REPO/home/dot_local/share/dotfiles/hermes/rivendell/SKILL.md" "$F/home/.local/share/dotfiles/hermes/rivendell/"
+cp "$REPO/home/dot_local/share/dotfiles/hermes/rivendell/SKILL.md" "$REPO/home/dot_local/share/dotfiles/hermes/rivendell/rivendell-state.py" "$F/home/.local/share/dotfiles/hermes/rivendell/"
 cz --override-data "$RIV" execute-template <"$script" >"$rendered"
 restarts=$(grep -c restart "$F/restarts")
 apply >/dev/null
 cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/rivendell/SKILL.md" "$F/home/.hermes/skills/rivendell/events/SKILL.md" \
   && pass "rivendell on installs its skill" || fail "rivendell on installs its skill"
+cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/rivendell/rivendell-state.py" "$F/home/.hermes/scripts/rivendell-state.py" \
+  && pass "and its state script, where Hermes allows route scripts" || fail "and its state script, where Hermes allows route scripts"
 [ "$(grep -c restart "$F/restarts")" = $((restarts + 1)) ] && pass "and restarts the gateway for it" || fail "and restarts the gateway for it"
 apply >/dev/null
 [ "$(grep -c restart "$F/restarts")" = $((restarts + 1)) ] && pass "and not again on a second run" || fail "and not again on a second run"

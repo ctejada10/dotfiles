@@ -73,6 +73,11 @@
 {{-     $_ := set $route "deliver_extra" (dict "chat_id" $h.rivendell.telegramChatId) -}}
 {{-   end -}}
 {{-   $_ := set $routes "rivendell" $route -}}
+{{- /* The relay's state snapshots. Its script stores each one and answers
+         [SILENT], so Hermes starts no agent run and delivers nothing. */ -}}
+{{-   $_ := set $routes "rivendell-state" (dict
+        "secret" "${RIVENDELL_WEBHOOK_SECRET}"
+        "script" "rivendell-state.py") -}}
 {{- end -}}
 {{- if $routes -}}
 {{-   $_ := set $desired "platforms.webhook" (dict
