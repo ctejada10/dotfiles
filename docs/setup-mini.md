@@ -943,11 +943,18 @@ network after a reboot until someone unlocks it.
   bridge release. Fill in the rest of that block first, and check the skill and
   the bridge's provisional setting names against what Hurin ships. Until then
   no Hurin server, route, allowlist entry, skill or bridge reaches the mini.
-- **`rivendell.enabled`, off:** the `rivendell` webhook route, through which
-  Rivendell's `hermes-relay` sends Carlos every message from the server:
-  deploy results and, later, failed backups and services down. Hermes runs
-  each event with the `rivendell-events` skill and delivers it on Telegram.
-  The route has no tool that acts on Rivendell. Before turning it on:
+- **`rivendell.enabled`, off:** two webhook routes from Rivendell's
+  `hermes-relay`, both signed with the same secret. On `rivendell` it sends
+  Carlos's alerts: failed backups, services down or up, and Erestor's run
+  summaries and failures. Hermes runs each with the `rivendell-events` skill
+  and delivers it on Telegram. On `rivendell-state` it sends a snapshot of
+  everything else (the latest record of each other event type, and whether
+  each service is up) every few minutes. That route has no skill or delivery:
+  its script, `~/.hermes/scripts/rivendell-state.py`, stores the snapshot in
+  `~/.hermes/rivendell/state.json` and answers `[SILENT]`, so no agent run
+  starts and nothing reaches Telegram. The skill reads that file when Carlos
+  asks about Rivendell. Neither route has a tool that acts on Rivendell.
+  Before turning them on:
 
   1. Make one random value and store it twice in 1Password, on the laptop: in
      the Hermes vault as item `Rivendell`, field `webhook-secret`, and in the
@@ -964,8 +971,10 @@ network after a reboot until someone unlocks it.
      `{"src": ["rivendell"], "dst": ["amon-sul"], "ip": ["tcp:8644"]}`.
      Nothing else lists amon-sul as a destination on that port.
   5. In Rivendell's repo, set `HERMES_URL` in `stacks/ops/compose.yaml` to
-     `http://<the mini's tailnet address>:8644/webhooks/rivendell` and deploy.
-     Until then the relay keeps every event queued.
+     `http://<the mini's tailnet address>:8644/webhooks/rivendell`, and
+     `HERMES_STATE_URL` to the same address with `/webhooks/rivendell-state`,
+     and deploy. Until then the relay keeps every alert queued and sends no
+     state.
 
 To upgrade: run `hermes update`, change the pin, apply, re-check every key
 against the new version's docs, then create a paused canary cron job, run it
