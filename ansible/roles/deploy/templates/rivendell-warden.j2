@@ -1,8 +1,14 @@
 #!/bin/sh
-# Written by the dotfiles playbook. The checkout's rivendell-warden, with the
-# server paths from its rivendell.env. Run it as deploy:
+# Written by the dotfiles playbook. The warden/warden.py of the commit the
+# containers run, with the server paths from its rivendell.env: .live's once a
+# deploy has made it, and the checkout's before that, since the deploy gate
+# checks out each commit it stages. A half-made .live, with no warden.py yet,
+# doesn't count. The warden's unit runs it too. Run it as deploy:
 #   sudo -u deploy rivendell-warden status
+#   sudo -u deploy rivendell-warden apply --force
+repo={{ deploy_repo }}
+[ -f "$repo/.live/warden/warden.py" ] && repo=$repo/.live
 set -a
-. {{ deploy_repo }}/rivendell.env
+. "$repo/rivendell.env"
 set +a
-exec python3 {{ deploy_repo }}/warden/warden.py "$@"
+exec python3 "$repo/warden/warden.py" "$@"

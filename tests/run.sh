@@ -35,6 +35,7 @@ run tests/hermes.sh
 run tests/personal-backup.sh
 run tests/amonsul-ssh.sh
 run tests/deploy-gate.sh
+run tests/rivendell-units.sh
 run tests/reboot-check.sh
 run tests/ansible.sh
 run tests/apply-twice.sh

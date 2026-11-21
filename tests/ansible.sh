@@ -75,6 +75,23 @@ for name in $(sed -n '/^hosts:/,/^[a-z]/s/^  \([a-z0-9-]*\):$/\1/p' "$REPO/home/
   # Deploy keys live in 1Password; a host file names them, never holds one.
   found=$(grep -nE 'ssh-[a-z0-9-]+ AAAA' "$dir/hosts/$name.yml")
   [ -z "$found" ] && pass "$name holds no SSH key" || fail "$name holds no SSH key" "$found"
+  # Keys, aliases and markers are named by a repo's last segment, so a retired
+  # repo sharing it with a fetched one would delete that one's key and alias.
+  list() { sed -n "s/^$1: *//p" "$dir/hosts/$name.yml" | tr -d '[]' | tr ',' '\n' | tr -d ' ' | grep . | sed 's#.*/##' | sort -u; }
+  both=$(comm -12 <({ list deploy_github_repo; list deploy_submodule_repos; } | sort -u) <(list deploy_retired_repos))
+  [ -z "$both" ] && pass "$name retires no repo name it still fetches" || fail "$name retires no repo name it still fetches" "$both"
+done
+
+# The site deploys from arwen's image since rivendell#106, so Rivendell keeps
+# no read key or alias for the old arwen submodule.
+section "Rivendell has no submodule deploy keys"
+grep -qx 'deploy_submodule_repos: \[\]' "$dir/hosts/rivendell.yml" \
+  && pass "Rivendell fetches no submodule" || fail "Rivendell fetches no submodule" "$(grep '^deploy_submodule_repos' "$dir/hosts/rivendell.yml")"
+grep -qE '^deploy_retired_repos: \[(.*, *)?ctejada10/arwen(,.*)?\]$' "$dir/hosts/rivendell.yml" \
+  && pass "Rivendell retires arwen's read key and alias" || fail "Rivendell retires arwen's read key and alias"
+for task in "Stop rewriting retired repos' URLs to their alias" "Take out retired repos' Host aliases" "Delete retired repos' read keys"; do
+  grep -qF -- "- name: $task" "$dir/roles/deploy/tasks/main.yml" \
+    && pass "the deploy role has: $task" || fail "the deploy role has: $task"
 done
 
 section "GitHub's pinned host keys"

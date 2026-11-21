@@ -1,7 +1,12 @@
 #!/bin/sh
-# Written by the dotfiles playbook. The checkout's scripts/backup.sh. Run it as
-# deploy, which can read the 1Password token, for any restic command:
+# Written by the dotfiles playbook. The scripts/backup.sh of the commit the
+# containers run: .live's once a deploy has made it, and the checkout's before
+# that, since the deploy gate checks out each commit it stages. A half-made
+# .live, with no backup.sh yet, doesn't count. The backup's units run it too.
+# Run it as deploy, which can read the 1Password token, for any restic command:
 #   sudo -u deploy rivendell-backup restic snapshots
 # Start a backup through its unit, never as root:
 #   sudo systemctl start rivendell-backup.service
-exec /bin/bash {{ deploy_repo }}/scripts/backup.sh "$@"
+repo={{ deploy_repo }}
+[ -f "$repo/.live/scripts/backup.sh" ] && repo=$repo/.live
+exec /bin/bash "$repo/scripts/backup.sh" "$@"

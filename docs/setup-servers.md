@@ -46,14 +46,15 @@ minutes from the laptop, most of it the `nmap` scan.
    Close 22 in the provider's firewall too.
 4. On a server that deploys, the run also sets up `deploy`'s checkout. It
    pins GitHub's host keys, makes a read key for each repo `deploy` fetches
-   (one each, since GitHub takes a deploy key on one repository only, so
-   Rivendell's `arwen` gets its own) and prints every key GitHub doesn't take
-   yet, or says it couldn't ask when GitHub doesn't answer; its last play
-   lists where each repo stands. Add each to its repo as a read-only deploy
+   (one each, since GitHub takes a deploy key on one repository only) and
+   prints every key GitHub doesn't take yet, or says it couldn't ask when
+   GitHub doesn't answer; its last play lists where each repo stands. Add each to its repo as a read-only deploy
    key (Settings → Deploy keys), then run again: that run clones the checkout
    at `deploy_repo` and makes the folders its containers write in
    (`deploy_owned_dirs`). A key taken off GitHub later sends that repo's
-   fetches back the way they went before, at the next run. For Húrin, add
+   fetches back the way they went before, at the next run. A repo moved to
+   `deploy_retired_repos` loses its read key, alias and URL rewrite at the
+   next run; delete its deploy key on GitHub by hand. For Húrin, add
    the age key the run printed to the repo's `.sops.yaml` and
    [re-seal](#re-sealing-secrets) its secrets. Rivendell reads 1Password and
    has no sealed secrets.
@@ -114,23 +115,18 @@ Read-only checks, each for something a replica couldn't show:
 - How `deploy` fetches today, which the run leaves alone until GitHub takes its
   new read key: `sudo ls -la ~deploy/.ssh`, `sudo cat ~deploy/.ssh/config`,
   `ls /etc/ssh/ssh_config.d` and `sudo -u deploy git -C <deploy_repo> config
-  --get-regexp '^(remote|submodule|url|core)\.'`, and on Rivendell also
-  `sudo -u deploy git -C ~deploy/rivendell/arwen config --show-origin
-  --get-regexp '^(remote|url|core)\.'`, since arwen's own settings aren't in
-  the list before it. GitHub has one deploy key on rivendell and another on
-  arwen today, and a deploy key reaches only its own repo, so something on
-  Rivendell sends each repo its key; find out what before the run. If
-  `~deploy/.ssh` already holds a `github_hurin`, `github_rivendell` or
-  `github_arwen`, rename it, and whatever names it, first: the run makes its
+  --get-regexp '^(remote|submodule|url|core)\.'`. If `~deploy/.ssh` already
+  holds a `github_hurin` or `github_rivendell`, rename it, and whatever names
+  it, first: the run makes its
   read keys at those names, leaves a repo alone when the key there isn't one
   it made (its comment isn't `deploy@<server> <repo>`), and fails at its end
   naming it. The switch to the new key rewrites only URLs written
   `git@github.com:<owner>/<repo>.git`: dor-lomin's origin must read
-  `git@github.com:ctejada10/hurin.git`, and Rivendell's `arwen` URL and
-  arwen's own origin `git@github.com:ctejada10/arwen.git`. Set them to that
-  form first, or once GitHub takes the key the run fails at its very end,
-  after everything else is set up, naming the URL. A `core.sshCommand` there
-  or in arwen decides how Git connects whatever the alias says, and the run
+  `git@github.com:ctejada10/hurin.git`, and Rivendell's
+  `git@github.com:ctejada10/rivendell.git`. Set it to that form first, or
+  once GitHub takes the key the run fails at its very end, after everything
+  else is set up, naming the URL. A `core.sshCommand` there decides how Git
+  connects whatever the alias says, and the run
   fails the same way while one is set; take it out first. If today's fetch
   depends on that URL or that setting, change it after GitHub has the new
   read keys, right before the run that switches to them, not before the run
@@ -307,13 +303,11 @@ The deploy key that can only ask the gate for a deploy goes in, in this order.
     read key and Git fetches it through its alias.
     `sudo -u deploy git -C <deploy_repo> remote get-url origin` then prints
     `git@github-hurin:ctejada10/hurin.git` (on Rivendell
-    `git@github-rivendell:ctejada10/rivendell.git`, and in
-    `~deploy/rivendell/arwen` `git@github-arwen:ctejada10/arwen.git`). Once a
+    `git@github-rivendell:ctejada10/rivendell.git`). Once a
     run has passed with every line saying so and a deploy through the gate
-    has passed, delete hurin's `hurin-server-repo-access`, rivendell's
-    `github-actions-deploy` and arwen's `deploy@rivendell` (Settings → Deploy
-    keys). rivendell's can also push, so check its last use there first for a
-    push nothing explains.
+    has passed, delete hurin's `hurin-server-repo-access` and rivendell's
+    `github-actions-deploy` (Settings → Deploy keys). rivendell's can also
+    push, so check its last use there first for a push nothing explains.
 
 ## Phones and tablets
 

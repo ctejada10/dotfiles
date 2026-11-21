@@ -250,10 +250,9 @@
 # top of the file, outside any Host block, still apply to every host.
 #
 # The timeouts bound every fetch through the alias, not only the gate's, which
-# timeout wraps: Rivendell's deploy.sh fetches arwen itself when the gate's
-# fetch didn't bring its commit in, under the gate's lock and deaf to the
-# client going away. A GitHub that takes the connection and never answers
-# fails it in seconds instead of holding the lock for hours.
+# timeout wraps: a deploy script that fetches on its own runs under the gate's
+# lock and deaf to the client going away. A GitHub that takes the connection
+# and never answers fails it in seconds instead of holding the lock for hours.
 - name: Give each read key a Host alias that offers that key first
   ansible.builtin.blockinfile:
     path: "{{ deploy_user.home }}/.ssh/config"
@@ -274,6 +273,37 @@
         ServerAliveCountMax 4
       Match all
   loop: "{{ deploy_fetch_repos }}"
+
+# A repo deploy no longer fetches keeps nothing on the server: no rewrite to
+# its alias, no alias, and no read key GitHub may still take.
+- name: Stop rewriting retired repos' URLs to their alias
+  community.general.git_config:
+    name: "url.git@github-{{ item.split('/') | last }}:{{ item }}.git.insteadOf"
+    scope: global
+    state: absent
+  loop: "{{ deploy_retired_repos }}"
+  become: true
+  become_user: deploy
+
+- name: Take out retired repos' Host aliases
+  ansible.builtin.blockinfile:
+    path: "{{ deploy_user.home }}/.ssh/config"
+    marker: "# {mark} dotfiles: github-{{ item.split('/') | last }}"
+    state: absent
+    # A fresh home has no config yet under --check, or on a host that fetches nothing.
+    create: true
+    owner: deploy
+    group: deploy
+    mode: "0600"
+  loop: "{{ deploy_retired_repos }}"
+
+- name: Delete retired repos' read keys
+  ansible.builtin.file:
+    path: "{{ deploy_user.home }}/.ssh/github_{{ item[0].split('/') | last }}{{ item[1] }}"
+    state: absent
+  loop: "{{ deploy_retired_repos | product(['', '.pub']) | list }}"
+  loop_control:
+    label: "{{ item | join }}"
 
 # From the private half, so a missing or swapped .pub can't mislead. Its
 # comment says whether this playbook made it: a key already at that name, say

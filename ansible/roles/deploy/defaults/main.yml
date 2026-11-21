@@ -4,6 +4,14 @@
 deploy_github_repo: ""
 deploy_submodule_repos: []
 deploy_owned_dirs: []
+# Repos deploy fetched once and no longer does. The run takes out each one's
+# read key, Host alias and URL rewrite.
+deploy_retired_repos: []
+
+# Whether the gate takes only a commit on the branch's own line (its first
+# parents) and no older than the checked-out one, so GitHub's key can't bring
+# old code back. Off where a manual deploy of an older commit is the rollback.
+deploy_forward_only: false
 
 # Where deploy fetches from, and the host keys it trusts there. A rehearsal
 # points these at a stand-in for GitHub.
