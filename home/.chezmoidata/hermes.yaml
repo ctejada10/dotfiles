@@ -34,8 +34,9 @@ hermes:
   # Needs both copies of Rivendell's webhook secret: the Hermes vault's Rivendell
   # item and the Rivendell vault's Hermes item hold the same value
   # (docs/setup-mini.md). While off, no rivendell route, secret or skill reaches
-  # this Mac. Rivendell's hermes-relay posts signed events to
-  # http://<webhookHost>:<webhookPort>/webhooks/rivendell.
+  # this Mac. Rivendell's hermes-relay posts signed alerts to
+  # http://<webhookHost>:<webhookPort>/webhooks/rivendell and state snapshots to
+  # .../webhooks/rivendell-state.
   rivendell:
     enabled: true
     # This Mac's tailnet address, which Hermes's webhook listener binds. Hermes

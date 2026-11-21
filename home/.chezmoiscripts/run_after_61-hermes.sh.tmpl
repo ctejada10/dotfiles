@@ -100,6 +100,11 @@ mkdir -p "$HOME/.hermes/skills/rivendell/events"
 if ! cmp -s "$data/rivendell/SKILL.md" "$HOME/.hermes/skills/rivendell/events/SKILL.md"; then
   cp "$data/rivendell/SKILL.md" "$HOME/.hermes/skills/rivendell/events/SKILL.md" && say "updated the rivendell skill" && changed=1
 fi
+# Hermes reads a route script on every event, so a new one needs no restart.
+mkdir -p "$HOME/.hermes/scripts"
+if ! cmp -s "$data/rivendell/rivendell-state.py" "$HOME/.hermes/scripts/rivendell-state.py"; then
+  cp "$data/rivendell/rivendell-state.py" "$HOME/.hermes/scripts/rivendell-state.py" && say "updated the rivendell state script"
+fi
 {{ end -}}
 
 if [ -n "$changed" ]; then
