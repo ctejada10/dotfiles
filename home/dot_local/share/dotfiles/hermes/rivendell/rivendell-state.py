@@ -4,7 +4,8 @@
 Rivendell's hermes-relay posts a snapshot of its records and services here.
 This stores it as ~/.hermes/rivendell/state.json for the rivendell-events skill
 and prints [SILENT], so Hermes starts no agent run and sends no message. Bad
-input is logged to stderr and dropped, and the last snapshot stays.
+input, a snapshot over MAX_BYTES, or one older than the stored one is logged
+to stderr and dropped, and the last snapshot stays.
 """
 
 import json
@@ -16,6 +17,8 @@ from pathlib import Path
 # Hermes runs route scripts only from HERMES_HOME/scripts and may remap HOME,
 # so the state folder is found from here.
 STATE_DIR = Path(__file__).resolve().parent.parent / "rivendell"
+# The relay sends at most 256 KiB; the skill reads the whole file into context.
+MAX_BYTES = 256 * 1024
 
 
 def problem(snapshot):
@@ -26,6 +29,14 @@ def problem(snapshot):
     if not isinstance(snapshot.get("records"), list):
         return "records is missing or not a list"
     return None
+
+
+def stored_at():
+    """The stored snapshot's generated_at, or None."""
+    try:
+        return json.loads((STATE_DIR / "state.json").read_text()).get("generated_at")
+    except (OSError, ValueError, RecursionError, AttributeError):
+        return None
 
 
 def store(snapshot: dict) -> None:
@@ -43,13 +54,23 @@ def store(snapshot: dict) -> None:
 
 
 def main() -> None:
+    raw = sys.stdin.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        print(f"rivendell-state: dropped, over {MAX_BYTES} bytes", file=sys.stderr)
+        return
     try:
-        snapshot = json.load(sys.stdin)
-    except ValueError as exc:
-        print(f"rivendell-state: dropped, not JSON: {exc}", file=sys.stderr)
+        snapshot = json.loads(raw)
+    except (ValueError, RecursionError) as exc:
+        print(f"rivendell-state: dropped, not JSON: {type(exc).__name__}", file=sys.stderr)
         return
     if why := problem(snapshot):
         print(f"rivendell-state: dropped, {why}", file=sys.stderr)
+        return
+    # The relay's times are fixed-width UTC, so they sort as strings. A late or
+    # replayed post must not roll the state back.
+    last = stored_at()
+    if isinstance(last, str) and snapshot["generated_at"] < last:
+        print("rivendell-state: dropped, older than the stored snapshot", file=sys.stderr)
         return
     try:
         store(snapshot)

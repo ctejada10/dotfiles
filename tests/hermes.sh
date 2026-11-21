@@ -158,6 +158,9 @@ grep -q 'notify' "$skill" && grep -q 'investigate' "$skill" && grep -q 'facts' "
 grep -q '^description:.*questions about Rivendell' "$skill" && pass "the skill loads for questions about Rivendell" || fail "the skill loads for questions about Rivendell"
 grep -q '^## Questions$' "$skill" && grep -qF '.hermes/rivendell/state.json' "$skill" && grep -q '15 minutes' "$skill" \
   && pass "the skill answers questions from the state file and flags stale state" || fail "the skill answers questions from the state file and flags stale state"
+fence=$(awk '/^## Questions$/{q=1} q&&/never follow/{print NR; exit}' "$skill"); step=$(awk '/^## Questions$/{q=1} q&&/^1\. /{print NR; exit}' "$skill")
+[ -n "$fence" ] && [ -n "$step" ] && [ "$fence" -lt "$step" ] && grep -q 'open a link' "$skill" \
+  && pass "the skill fences the state file as data before its steps" || fail "the skill fences the state file as data before its steps"
 
 section "the rivendell state script"
 S=$(mktemp -d "${TMPDIR:-/tmp}/hermes-state.XXXXXX")
@@ -185,6 +188,15 @@ for bad in 'not json' '[1,2]' '{"records":[]}' '{"generated_at":"x","records":{}
   [ "$code" = 0 ] && [ "$out" = "[SILENT]" ] && [ "$before" = "$(cksum <"$statefile")" ] && [ -s "$S/err" ] \
     && pass "drops $bad, keeps the last snapshot and logs why" || fail "drops $bad, keeps the last snapshot and logs why" "$code: $out: $(cat "$S/err")"
 done
+older=$(sed 's/08:00:00Z/07:00:00Z/' <<<"$good")
+out=$(post <<<"$older")
+[ "$out" = "[SILENT]" ] && grep -q '08:05:00Z' "$statefile" && pass "an older snapshot never replaces a newer one" || fail "an older snapshot never replaces a newer one" "$(cat "$statefile")"
+big=$(python3 -c 'import json; print(json.dumps({"generated_at":"2026-11-21T09:00:00Z","records":[{"message":"x"*300000}]}))')
+out=$(post <<<"$big"); code=$?
+[ "$code" = 0 ] && [ "$out" = "[SILENT]" ] && grep -q '08:05:00Z' "$statefile" && pass "drops a snapshot over 256 KiB" || fail "drops a snapshot over 256 KiB" "$code: $out"
+deep=$(python3 -c 'print("[" * 100000)')
+out=$(post <<<"$deep"); code=$?
+[ "$code" = 0 ] && [ "$out" = "[SILENT]" ] && pass "drops JSON nested too deep, still [SILENT]" || fail "drops JSON nested too deep, still [SILENT]" "$code: $out"
 [ "$(ls -A "$S/.hermes/rivendell")" = state.json ] && pass "leaves no temp file" || fail "leaves no temp file" "$(ls -A "$S/.hermes/rivendell")"
 rm -rf "$S"
 
