@@ -155,6 +155,9 @@ skill=$REPO/home/dot_local/share/dotfiles/hermes/rivendell/SKILL.md
 grep -q '^name: rivendell-events$' "$skill" && pass "the skill is rivendell-events" || fail "the skill is rivendell-events"
 grep -q 'notify' "$skill" && grep -q 'investigate' "$skill" && grep -q 'facts' "$skill" \
   && pass "the skill covers notify, investigate and facts" || fail "the skill covers notify, investigate and facts"
+grep -q '^description:.*questions about Rivendell' "$skill" && pass "the skill loads for questions about Rivendell" || fail "the skill loads for questions about Rivendell"
+grep -q '^## Questions$' "$skill" && grep -qF '.hermes/rivendell/state.json' "$skill" && grep -q '15 minutes' "$skill" \
+  && pass "the skill answers questions from the state file and flags stale state" || fail "the skill answers questions from the state file and flags stale state"
 
 section "the rivendell state script"
 S=$(mktemp -d "${TMPDIR:-/tmp}/hermes-state.XXXXXX")
