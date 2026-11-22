@@ -186,6 +186,7 @@ done
 
 case $TTL_DAYS in
   '' | *[!0-9]*) printf '%s: --ttl-days needs a whole number\n' "$PROG" >&2; exit 2 ;;
+  ?????*) printf '%s: --ttl-days takes at most 4 digits\n' "$PROG" >&2; exit 2 ;;
 esac
 if [ "$TTL_DAYS" -lt 1 ]; then
   printf '%s: --ttl-days must be at least 1\n' "$PROG" >&2
@@ -194,6 +195,7 @@ fi
 LANDED_DAYS=${LANDED_DAYS:-$TTL_DAYS}
 case $LANDED_DAYS in
   *[!0-9]*) printf '%s: --landed-days needs a whole number\n' "$PROG" >&2; exit 2 ;;
+  ?????*) printf '%s: --landed-days takes at most 4 digits\n' "$PROG" >&2; exit 2 ;;
 esac
 # Ignored files and transcripts are only read back to the TTL.
 if [ "$LANDED_DAYS" -lt 1 ] || [ "$LANDED_DAYS" -gt "$TTL_DAYS" ]; then

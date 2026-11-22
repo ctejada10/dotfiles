@@ -1262,6 +1262,11 @@ for v in 0 x 15; do
   /bin/bash "$JOB" --dry-run --ttl-days 14 --landed-days "$v" >/dev/null 2>&1
   chk "landed days $v is rejected" "[ $? -eq 2 ]"
 done
+for a in "--ttl-days 10000" "--ttl-days 99999999999999999999" "--landed-days 99999999999999999999" "--landed-days 00001"; do
+  # shellcheck disable=SC2086  # an option and its value
+  /bin/bash "$JOB" --dry-run --root "$W" $a >/dev/null 2>&1
+  chk "$a, more than 4 digits, is rejected" "[ $? -eq 2 ]"
+done
 echo "gh: Not Found (HTTP 404)" >"$T/gh-commit-fail"
 O="$T/t-404.out"; sweep
 expect "$O" KEEP worktrees/own/local "no merged PR contains this tip"
