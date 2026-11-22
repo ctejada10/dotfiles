@@ -1,9 +1,9 @@
 {{- if or .isAgent (eq .role "laptop") -}}
 #!/bin/bash
-# Keeps this Mac's LaunchAgents loaded: on the mini, the worktree cleanup job
-# and the repos' snapshot job; on the laptop, the personal backup. Each is
-# reloaded when its own plist changes, judged against its own marker, so a
-# change to one never reloads another. Over SSH, with no one logged in at the
+# Keeps this Mac's LaunchAgents loaded: on the mini, the worktree cleanup job,
+# the repos' snapshot job and the storage job; on the laptop, the personal
+# backup. Each is reloaded when its own plist changes, judged against its own
+# marker, so a change to one never reloads another. Over SSH, with no one logged in at the
 # Mac, launchd has no GUI session to load them into; the next apply from the
 # Mac's own session does.
 
@@ -45,7 +45,7 @@ load() {
 
 plists=0
 {{- if .isAgent }}
-jobs="worktree-ttl repo-snapshots hermes-logs{{ if .hermes.hurin.enabled }} hurin-bridge{{ end }}"
+jobs="worktree-ttl repo-snapshots storage-watch hermes-logs{{ if .hermes.hurin.enabled }} hurin-bridge{{ end }}"
 {{- else }}
 jobs="personal-backup"
 {{- end }}
@@ -64,6 +64,7 @@ fi
 {{- if .isAgent }}
 load worktree-ttl "worktree cleanup job" "daily at 04:17" "nothing is cleaned"
 load repo-snapshots "snapshot job" "Sundays at 03:47" "no snapshot is taken"
+load storage-watch "storage job" "every 3 hours" "nothing trims Colima or warns of a full disk"
 load hermes-logs "Hermes log rotation" "daily at 04:37" "the gateway's logs keep growing"
 {{- if .hermes.hurin.enabled }}
 load hurin-bridge "Hurin Mac bridge" "always on" "Hurin can't reach this Mac"

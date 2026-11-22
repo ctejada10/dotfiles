@@ -198,6 +198,8 @@ for role in "${roles[@]}"; do
         && fail "laptop has no worktree cleanup job" || pass "laptop has no worktree cleanup job"
       grep -qE '^\.local/bin/repo-snapshots$|LaunchAgents/com\.carlosetejada\.repo-snapshots' <<< "$list" \
         && fail "laptop has no snapshot job" || pass "laptop has no snapshot job"
+      grep -qE '^\.local/bin/storage-watch$|LaunchAgents/com\.carlosetejada\.storage-watch' <<< "$list" \
+        && fail "laptop has no storage job" || pass "laptop has no storage job"
       grep -qE '^\.local/bin/git$|read-only-hooks|agent-owned' <<< "$list" \
         && fail "laptop has no read-only guard left" || pass "laptop has no read-only guard left"
       [ "$plugins" = "career-ops@career-ops freehire@freehire humanizer@humanizer obsidian@obsidian-skills playwright@claude-plugins-official" ] \
@@ -280,6 +282,8 @@ for role in "${roles[@]}"; do
         && pass "the mini has the worktree cleanup job" || fail "the mini has the worktree cleanup job"
       has "$list" ".local/bin/repo-snapshots" && has "$list" "Library/LaunchAgents/com.carlosetejada.repo-snapshots.plist" \
         && pass "the mini has the snapshot job" || fail "the mini has the snapshot job"
+      has "$list" ".local/bin/storage-watch" && has "$list" "Library/LaunchAgents/com.carlosetejada.storage-watch.plist" \
+        && pass "the mini has the storage job" || fail "the mini has the storage job"
       grep -qE 'personal-backup' <<< "$list" && fail "the mini has no personal backup" "$(grep personal-backup <<< "$list")" || pass "the mini has no personal backup"
       jq -e '.env.CAREER_OPS_ROOT' <<< "$settings" >/dev/null && fail "nor career-ops" || pass "nor career-ops"
       dbx="$HOME/Library/CloudStorage/Dropbox/repositories"

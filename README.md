@@ -83,8 +83,8 @@ a line that only adds it can go.
   renaming a Mac, and cutting arnor over from the old tilde.
 - **[The mini](docs/setup-mini.md):** bootstrap and macOS, Dropbox, T3 Code and
   T3 Connect, t3-pstack, Hermes, scheduled jobs, the final checks, how the
-  mini's rules, Git hooks and worktree cleanup work, and what's still to bring
-  into this repo.
+  mini's rules, Git hooks, worktree cleanup and storage job work, and what's
+  still to bring into this repo.
 - **[Servers](docs/setup-servers.md):** a new server, every run after, the
   checks before the first runs on dor-lomin and Rivendell, moving a deploy to
   the gate, phones and tablets, re-sealing secrets, and adding or renaming a

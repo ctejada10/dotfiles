@@ -1377,6 +1377,25 @@ line says what holds it, and anything it can't decide, such as a moved or
 broken worktree, goes in `attention.txt` there.
 `launchctl print gui/$(id -u)/com.carlosetejada.worktree-ttl` shows it loaded.
 
+### The storage job
+
+`~/.local/bin/storage-watch` runs every 3 hours, for what worktree cleanup
+doesn't free. While Colima runs (the job never starts, stops or restarts it),
+it cuts Docker's build cache down to 15 GB and trims the Docker disk, so the
+space Docker frees comes back to macOS. Colima's own weekly trim never reaches
+that disk. Images, containers, volumes and Colima's config are left alone.
+
+Then, whatever the upkeep did, Bree sends one Telegram message when free
+space is under 50 GiB, or the per-user temp folder
+(`getconf DARWIN_USER_TEMP_DIR`) or `~/agent-drafts` is over 20 GiB, naming
+each with its size. A new condition sends at once, the same ones at most once
+in 24 hours, and a send that failed goes again on the next run. The job
+deletes nothing on the Mac: what to delete is yours to decide. It logs to
+`~/Library/Logs/storage-watch/`. `~/.local/bin/storage-watch --dry-run`
+prints the sizes and changes nothing, and
+`launchctl print gui/$(id -u)/com.carlosetejada.storage-watch` shows it
+loaded.
+
 ### FirstMate
 
 The apply clones it to `~/firstmate` at the commit in `pins.yaml` and sets
@@ -1524,6 +1543,10 @@ Code loads none of the account's claude.ai connectors or synced plugins.
 
 **macOS, Git and the repos**
 
+- **Bree says the mini's storage needs a look:** the message names what is
+  over its limit. `du -hd 1` on that folder shows what filled it, and
+  `~/Library/Logs/storage-watch/storage-watch.log` whether Colima's upkeep
+  is failing ([The storage job](#the-storage-job)).
 - **Screen Sharing is "not permitted":** turn it off and on in System
   Settings ([Remote Login and Screen Sharing](#remote-login-and-screen-sharing)).
 - **Screen Sharing shows a tiny or black screen:** plug in the dummy HDMI

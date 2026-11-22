@@ -30,6 +30,7 @@ run tests/check-doia.sh
 run tests/worktree.sh
 run tests/worktree-ttl.sh
 run tests/repo-snapshots.sh
+run tests/storage-watch.sh
 run tests/dock.sh
 run tests/hermes.sh
 run tests/personal-backup.sh

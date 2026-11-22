@@ -1,0 +1,220 @@
+#!/bin/bash
+#
+# storage-watch: keep development sessions from filling the mini's disk.
+#
+# Each run does two things, and a failure in one never skips the other:
+#
+# 1. Colima's upkeep, only while Colima is running, which it never starts,
+#    stops or restarts: cut the build cache down to 15GB, then trim the
+#    Docker disk. Colima's own weekly fstrim only reads /etc/fstab, so it
+#    never trims that disk. Images, containers, volumes and Colima's config
+#    are never touched.
+# 2. One Telegram message through hermes send when free space is under
+#    50 GiB, or the per-user temp folder or ~/agent-drafts is over 20 GiB,
+#    measured after the upkeep. It sends when a condition hasn't been in a
+#    message for 24 hours, so the same set goes at most once a day, a new one
+#    at once, and a send that failed again the next run.
+#
+# It deletes nothing on the Mac.
+#
+# Usage: storage-watch [--dry-run]
+
+set -u
+umask 077
+
+PROG=storage-watch
+DRY_RUN=0
+STATE_DIR="$HOME/Library/Logs/storage-watch"
+LOG_FILE="$STATE_DIR/storage-watch.log"
+SENT_FILE="$STATE_DIR/sent"
+LOG_MAX_LINES=5000
+FREE_MIN_GIB=50
+FOLDER_MAX_GIB=20
+KIB_PER_GIB=1048576
+RESEND_AFTER=86400
+FAILED=0
+TAB=$(printf '\t')
+
+# System tools come first, as in worktree-ttl. colima needs limactl and
+# docker its plugins, which are in Homebrew's bin.
+PATH=${STORAGE_WATCH_PATH:-/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin}
+LC_ALL=C
+export PATH LC_ALL
+NOW=${STORAGE_WATCH_NOW:-$(date +%s)}
+
+usage() {
+  cat <<'EOF'
+Usage: storage-watch [options]
+
+  -n, --dry-run   Measure and print: no upkeep, no message, no state, no log.
+  -h, --help      Show this help.
+
+It logs to ~/Library/Logs/storage-watch/storage-watch.log.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    -n | --dry-run) DRY_RUN=1 ;;
+    -h | --help) usage; exit 0 ;;
+    *) printf '%s: unknown option: %s\n' "$PROG" "$1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# ---------------------------------------------------------------- helpers
+
+log() {
+  local line
+  line="$(date '+%Y-%m-%dT%H:%M:%S%z') $*"
+  [ "$DRY_RUN" = 1 ] || printf '%s\n' "$line" >>"$LOG_FILE"
+  printf '%s\n' "$line"
+}
+
+failed() {
+  FAILED=1
+  log "FAILED  $*"
+}
+
+# timed SECONDS INPUT COMMAND...: the command with worktree-ttl's watchdog,
+# its output in $TMP/out and $TMP/err. Exit 124 when it ran out of time.
+timed() {
+  local limit=${STORAGE_WATCH_TIMEOUT:-$1} input=$2 pid ticks=0
+  shift 2
+  "$@" <"$input" >"$TMP/out" 2>"$TMP/err" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$ticks" -ge $((limit * 5)) ]; then
+      kill "$pid" 2>/dev/null
+      sleep 1
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      echo "timed out after ${limit}s" >"$TMP/err"
+      return 124
+    fi
+    sleep 0.2
+    ticks=$((ticks + 1))
+  done
+  wait "$pid"
+}
+
+said() { tail -n 1 "$TMP/$1" 2>/dev/null; }
+gib() { awk -v k="$1" -v g="$KIB_PER_GIB" 'BEGIN { printf "%.1f", k / g }'; }
+
+# ----------------------------------------------------------------- upkeep
+
+upkeep() {
+  if ! timed 60 /dev/null colima status; then
+    # Stopped and broken both exit 1, so only its own words say stopped.
+    if grep -q 'is not running' "$TMP/err"; then log "SKIP    upkeep: Colima isn't running"
+    else failed "colima status: $(said err)"; fi
+    return
+  fi
+  if timed 900 /dev/null docker --context colima builder prune --all --force --max-used-space 15GB; then
+    log "PRUNED  build cache: $(said out)"
+  else
+    failed "docker builder prune: $(said err)"
+  fi
+  if timed 600 /dev/null colima ssh -- sudo -n fstrim -v /mnt/lima-colima; then
+    log "TRIMMED $(said out)"
+  else
+    failed "fstrim in Colima: $(said err)"
+  fi
+}
+
+# ------------------------------------------------------------------ alert
+
+# over KEY TEXT: one condition, for the message and for what was last sent.
+over() {
+  printf '%s\t%s\n' "$1" "$2" >>"$TMP/over"
+  log "OVER    $2"
+}
+
+measure_free() {
+  local free
+  if ! timed 30 /dev/null df -kP /System/Volumes/Data; then
+    failed "df: $(said err)"
+    return
+  fi
+  free=$(awk 'NR == 2 { print $4 }' "$TMP/out")
+  case $free in '' | *[!0-9]*) failed "df printed no free space"; return ;; esac
+  log "SIZE    $(gib "$free") GiB free"
+  if [ "$free" -lt $((FREE_MIN_GIB * KIB_PER_GIB)) ]; then
+    over free "$(gib "$free") GiB free on the Data volume, under $FREE_MIN_GIB"
+  fi
+}
+
+# du exits 1 for a file that went while it ran, with its total all the same,
+# so only a missing total is a failure.
+measure_folder() {
+  local key=$1 dir=$2 used
+  [ -e "$dir" ] || return 0
+  timed 1800 /dev/null du -skxH "$dir"
+  used=$(awk 'END { print $1 }' "$TMP/out")
+  case $used in '' | *[!0-9]*) failed "du $dir: $(said err)"; return ;; esac
+  log "SIZE    $dir holds $(gib "$used") GiB"
+  if [ "$used" -gt $((FOLDER_MAX_GIB * KIB_PER_GIB)) ]; then
+    over "$key" "$dir holds $(gib "$used") GiB, over $FOLDER_MAX_GIB"
+  fi
+}
+
+measure() {
+  local dir
+  measure_free
+  if timed 30 /dev/null getconf DARWIN_USER_TEMP_DIR && dir=$(said out) && [ -n "$dir" ]; then
+    measure_folder temp "${dir%/}"
+  else
+    failed "getconf DARWIN_USER_TEMP_DIR: $(said err)"
+  fi
+  measure_folder drafts "$HOME/agent-drafts"
+}
+
+# Whether any condition hasn't been in a message for RESEND_AFTER seconds.
+due() {
+  local key last
+  while IFS="$TAB" read -r key _; do
+    last=$(awk -F '\t' -v k="$key" '$1 == k { t = $2 } END { print t }' "$SENT_FILE" 2>/dev/null)
+    case $last in '' | *[!0-9]*) return 0 ;; esac
+    if [ "$last" -gt "$NOW" ] || [ $((NOW - last)) -ge "$RESEND_AFTER" ]; then return 0; fi
+  done <"$TMP/over"
+  return 1
+}
+
+notify() {
+  local hermes="$HOME/.local/bin/hermes"
+  [ -s "$TMP/over" ] || return 0
+  [ "$DRY_RUN" = 0 ] || { log "WOULD   send unless it was sent in the last 24 hours"; return 0; }
+  due || return 0
+  [ -x "$hermes" ] || hermes=$(command -v hermes) || { failed "hermes send: hermes not found"; return; }
+  {
+    echo "The Mac mini's storage needs a look:"
+    cut -f2 "$TMP/over" | sed 's/^/- /'
+  } >"$TMP/message"
+  if ! timed 60 "$TMP/message" "$hermes" send --to telegram -q; then
+    failed "hermes send: $(said err)"
+    return
+  fi
+  log "SENT    $(cut -f1 "$TMP/over" | tr '\n' ' ')"
+  # What was sent now, then when each other condition last was.
+  {
+    awk -F '\t' -v now="$NOW" '{ print $1 "\t" now }' "$TMP/over"
+    [ ! -f "$SENT_FILE" ] || awk -F '\t' 'FILENAME == ARGV[1] { now[$1] = 1; next } !($1 in now)' "$TMP/over" "$SENT_FILE"
+  } >"$SENT_FILE.tmp" && mv -- "$SENT_FILE.tmp" "$SENT_FILE" || failed "could not record what was sent"
+}
+
+# ------------------------------------------------------------------- main
+
+if [ "$DRY_RUN" = 0 ]; then
+  mkdir -p -- "$STATE_DIR" || FAILED=1
+  if [ -f "$LOG_FILE" ] && [ "$(wc -l <"$LOG_FILE")" -gt "$LOG_MAX_LINES" ]; then
+    tail -n $((LOG_MAX_LINES / 2)) "$LOG_FILE" >"$LOG_FILE.tmp" && mv -- "$LOG_FILE.tmp" "$LOG_FILE"
+  fi
+fi
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/$PROG.XXXXXX") || exit 1
+trap 'rm -r -- "$TMP" 2>/dev/null' EXIT
+: >"$TMP/over"
+
+[ "$DRY_RUN" = 1 ] || upkeep
+measure
+notify
+exit "$FAILED"
