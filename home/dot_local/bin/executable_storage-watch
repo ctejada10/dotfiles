@@ -110,7 +110,9 @@ upkeep() {
     else failed "colima status: $(said err)"; fi
     return
   fi
-  if timed 900 /dev/null docker --context colima builder prune --all --force --max-used-space 15GB; then
+  # docker builder is buildx's alias, which prunes the builder buildx has
+  # selected unless one is named.
+  if timed 900 /dev/null docker --context colima builder prune --builder colima --all --force --max-used-space 15GB; then
     log "PRUNED  build cache: $(said out)"
   else
     failed "docker builder prune: $(said err)"

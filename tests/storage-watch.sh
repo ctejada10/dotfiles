@@ -107,7 +107,7 @@ says() { grep -Fq -- "$1" "$T/message" 2>/dev/null; }
 logged() { grep -Fq -- "$1" "$LOG" 2>/dev/null; }
 no() { ! "$@"; }
 
-PRUNE="docker --context colima builder prune --all --force --max-used-space 15GB"
+PRUNE="docker --context colima builder prune --builder colima --all --force --max-used-space 15GB"
 TRIM="colima ssh -- sudo -n fstrim -v /mnt/lima-colima"
 
 section "upkeep"
