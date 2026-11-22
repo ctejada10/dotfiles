@@ -1338,20 +1338,43 @@ through `hooks/worktree.sh`, and FirstMate's crews use treehouse's
 reaches GitHub, and so the laptop, only when its branch is pushed.
 
 Finished worktrees stay, so a follow-up thread can pick one up, and clean up
-after themselves. `~/.local/bin/worktree-ttl` runs daily at 04:17 and removes
-a worktree in `~/worktrees` once it has gone 14 days unused (no edits, commits
-or Claude Code session there; an edit to a file the repo ignores counts too,
-apart from caches, environments and build output) and nothing in it would be
-lost: never one with an open PR, unpushed commits, commits only its reflog
-holds, uncommitted work, a running process or a lock
-(`git worktree lock --reason "keep: <why>"` keeps one). A merged branch goes
-with its worktree. A clone of another repo there is judged the same way, and
-goes only when each of its branches is merged, or pushed with no open PR, and
-it holds no stash. It goes to the Trash, not deleted, and `git worktree lock`
-doesn't apply to a clone: an open draft PR keeps one. The job never fetches,
-prunes, gc's or uses `--force`. It logs to `~/Library/Logs/worktree-ttl/`, and
-anything it can't decide, such as a moved or broken worktree, goes in
-`attention.txt` there. T3's and FirstMate's worktrees are left to them.
+after themselves. `~/.local/bin/worktree-ttl` runs daily at 04:17 over
+`~/worktrees` and `~/.t3/worktrees` and removes a worktree once it has gone
+unused for long enough: a day once its work has landed (its tip is in the
+default branch, or a merged PR holds it, under that branch's name or
+another's), 14 days for the rest. Use is an edit, a commit or a Claude Code
+session there; an edit to a file the repo ignores counts too, apart from
+caches, environments and build output.
+
+It removes one only when nothing in it would be lost: never one with an open
+PR, unpushed commits that no merged PR holds, commits only its reflog holds,
+uncommitted work, a running process or a lock
+(`git worktree lock --reason "keep: <why>"` keeps one). And at any age it
+keeps one that something still holds:
+
+- an open T3 thread (not settled, snoozed included) that started before the
+  worktree's last use, in the same project. A thread in a project that is no
+  Git repo, such as `src` or scratch, holds any repo's worktrees, and any
+  thread holds one whose main checkout is in no project;
+- an open thread whose messages name its path, its branch (a name with a `/`
+  or a `-`) or the merged PR that landed it, whatever the dates;
+- a pending step: a `cd` into it, in a Markdown file under `~/agent-drafts`
+  or in an orchestrate run's `gates.md`.
+
+Settling a thread, or deleting a step that is done, lets go. When T3 can't
+answer, or a step can't be read, the job removes nothing and says so in
+`attention.txt`.
+
+Branches stay when their worktrees go, so a follow-up thread, or T3 itself,
+can check one out again. A clone of another repo in `~/worktrees` is held the
+same way, waits the 14 days even when merged, and goes only when each of its
+branches is merged, or pushed with no open PR, and it holds no stash. It goes
+to the Trash, not deleted, and `git worktree lock` doesn't apply to a clone:
+an open draft PR keeps one. A clone in `~/.t3/worktrees` is never touched,
+and FirstMate's worktrees are left to it. The job never fetches, prunes, gc's
+or uses `--force`. It logs to `~/Library/Logs/worktree-ttl/`, where each KEEP
+line says what holds it, and anything it can't decide, such as a moved or
+broken worktree, goes in `attention.txt` there.
 `launchctl print gui/$(id -u)/com.carlosetejada.worktree-ttl` shows it loaded.
 
 ### FirstMate
