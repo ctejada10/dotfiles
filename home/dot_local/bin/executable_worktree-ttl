@@ -51,6 +51,8 @@ GH_TIMEOUT=60
 T3="$HOME/.local/bin/t3"
 # The largest real thread takes 11 seconds to show, and this job runs at low priority.
 T3_TIMEOUT=${WORKTREE_TTL_T3_TIMEOUT:-120}
+# Holds older than this are read again right before a removal.
+HOLD_MAX_AGE=${WORKTREE_TTL_HOLD_MAX_AGE:-300}
 GH_FAIL_RUNS_ALERT=3
 # The file in a worktree's admin dir where the WorktreeCreate hook records
 # the hash of each untracked agent file it copied in from the main checkout.
@@ -281,6 +283,9 @@ attention() {
   ATTN=$((ATTN + 1))
   printf '%s\n' "$*" >>"$TMP/attention"
 }
+
+# The same, unless that line is already there.
+flag() { grep -Fxq -- "$1" "$TMP/attention" || attention "$1"; }
 
 write_attention() {
   {
@@ -784,9 +789,10 @@ orphans() {
   awk '!seen[$0]++' "$o.out"
 }
 
-# Files the repo's .gitignore files hide that changed since the TTL
-# cutoff, NUL-separated. Caches, environments, build output (CACHE_NAMES),
-# nested .git folders and noise are left out, and so is each ignored
+# ignored_changes PATH [FIND-TEST...]: files the repo's .gitignore files
+# hide that pass the tests, such as -newer the TTL cutoff, NUL-separated.
+# Caches, environments, build output (CACHE_NAMES), nested .git folders
+# and noise are left out, and so is each ignored
 # folder git lists whole, if its name is one of those. Each folder git
 # could not open, which it then leaves out of its lists without failing,
 # and each ignored path find could not read all the way down, goes in
@@ -794,6 +800,7 @@ orphans() {
 ignored_changes() {
   local p=$1 e n
   local -a skip=(-false)
+  shift
   while IFS= read -r n; do
     case $n in '') ;; /*) skip+=(-o -path "$p$n") ;; *) skip+=(-o -name "$n") ;; esac
   done <<EOF
@@ -805,8 +812,24 @@ EOF
   while IFS= read -r -d '' e; do
     case $e in '!! '*) e=${e#!! } ;; *) continue ;; esac
     find "$p/${e%/}" \( "${PRUNE_NAMES[@]}" \) -prune -o -type f ! \( "${skip[@]}" \) \
-      -newer "$CUTOFF" -print0 2>/dev/null || printf '%s\n' "$e" >>"$TMP/ignored.unread"
+      "$@" -print0 2>/dev/null || printf '%s\n' "$e" >>"$TMP/ignored.unread"
   done <"$TMP/ignored.st"
+}
+
+# The first file in WT that its .gitignore files hide and that is no cache,
+# environment, build output, noise or unchanged seed copy, or else the first
+# ignored path the job could not read, relative to WT. Fails when none.
+kept_ignored() {
+  local f
+  : >"$TMP/ignored.unread"
+  while IFS= read -r -d '' f; do
+    f=${f#"$WT"/}
+    seeded "$f" && continue
+    printf '%s\n' "$f"
+    return 0
+  done < <(ignored_changes "$WT")
+  f=$(head -n 1 "$TMP/ignored.unread")
+  [ -n "$f" ] && printf '%s\n' "$f"
 }
 
 # Last use is the newest of: the admin index and HEAD mtimes, the last
@@ -860,7 +883,7 @@ last_use() {
   OTHER_USE=$LAST_USE IGNORED_EDIT="" UNREAD_PATH=""
   if [ -n "$path" ] && [ -d "$path" ]; then
     : >"$TMP/ignored.unread"
-    r=$(ignored_changes "$path" | xargs -0 stat -f '%m %N' -- 2>/dev/null |
+    r=$(ignored_changes "$path" -newer "$CUTOFF" | xargs -0 stat -f '%m %N' -- 2>/dev/null |
       awk -v lim=$((NOW + 86400)) '$1 > lim { f++; next }
         $1 > m { m = $1; p = substr($0, length($1) + 2) }
         END { print m + 0, f + 0, p }')
@@ -971,13 +994,14 @@ contains_tip() {
   return 1
 }
 
-# The PRs GitHub links to commit OID, in gh.pulls. A commit GitHub doesn't
-# have is in no PR, and is no outage.
+# commit_prs SLUG OID [strict]: the PRs GitHub links to commit OID, in
+# gh.pulls. A commit GitHub doesn't have is in no PR, and is no outage,
+# unless strict, for a commit that should be there.
 commit_prs() {
   gh_run "$TMP/gh.pulls" api "repos/$1/commits/$2/pulls" \
     --jq '.[] | "\(.number)\t\(if .merged_at then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end)\t\(.head.sha)\t\(.draft)"' &&
     return 0
-  if grep -Eq 'HTTP (404|422)' "$TMP/gh.err"; then
+  if [ -z "${3:-}" ] && grep -Eq 'HTTP (404|422)' "$TMP/gh.err"; then
     : >"$TMP/gh.pulls"
     return 0
   fi
@@ -996,11 +1020,12 @@ commit_prs() {
 # When none of those PRs decides, GitHub is asked which PRs hold the tip: an
 # open one keeps the worktree, and a merged one whose head contains the tip
 # means the work landed (MERGED_HOW=other). That branch is never deleted.
-# Sets OPEN_PRS, MERGED_PR, MERGED_HOW and CLOSED_PR. Returns 1 when GitHub
-# could not answer, or when git could not list those branches.
+# Sets OPEN_PRS, MERGED_PR, MERGED_HOW, CLOSED_PR, and MERGED_ALL, every
+# merged PR that GitHub links to the tip and whose head holds it. Returns 1
+# when GitHub could not answer, or when git could not list those branches.
 pr_state() {
   local s n kind num state oid draft ref pushed=""
-  OPEN_PRS="" MERGED_PR="" MERGED_HOW="" CLOSED_PR=""
+  OPEN_PRS="" MERGED_PR="" MERGED_HOW="" CLOSED_PR="" MERGED_ALL=""
   if ! pr_repos >"$TMP/repos.raw"; then
     GH_FAILS=$((GH_FAILS + 1))
     return 1
@@ -1078,9 +1103,9 @@ pr_state() {
           else OPEN_PRS="$OPEN_PRS $s#$num"; fi
           ;;
         MERGED)
-          [ -z "$MERGED_PR" ] || continue
           if [ "$oid" = "$HEAD_OID" ] || contains_tip "$s" "$oid"; then
-            MERGED_PR="$s#$num" MERGED_HOW=other
+            [ -n "$MERGED_PR" ] || MERGED_PR="$s#$num" MERGED_HOW=other
+            MERGED_ALL="$MERGED_ALL $s#$num"
           fi
           ;;
       esac
@@ -1158,15 +1183,20 @@ THREADS_JQ='if length == 1 and (.[0] | type) == "array" then .[0][] else error("
       .settled, (.title | gsub("[[:cntrl:]]"; " "))] | @tsv
     else error("not a thread") end'
 MESSAGES_JQ='if length == 1 and (.[0].messages | type) == "array"
-    and all(.[0].messages[]; .text | type == "string")
-  then .[0].messages[].text else error("not a thread with messages") end'
+    and all(.[0].messages[]; .text | type == "string" or type == "null")
+  then .[0].messages[] | .text // "" else error("not a thread with messages") end'
+# The worktree path and branch a thread is bound to, one line each.
+BIND_JQ='.[0].thread | [.worktreePath, .branch]
+  | if all(type == "string" or type == "null") then .[] | . // "" | gsub("[[:cntrl:]]"; " ")
+    else error("not a worktree path and branch") end'
 
-# Every project's open threads (t3.open) with their text (t3.text.ID), the
+# Every project's open threads (t3.open) with their text (t3.text.ID) and
+# the worktree path and branch each is bound to (t3.bind.ID), the
 # project each path resolves to (t3.paths), and the projects that are no git
 # repo (t3.nongit). T3 has no command that lists projects, so this asks by
 # path. Fails, with the reason in t3.err, when T3's state can't be known.
 load_t3() {
-  local p id project
+  local p id project wp b
   # ~/.t3/userdata is T3's credential store: only test that it exists.
   [ -x "$T3" ] || [ -e "$HOME/.t3/userdata" ] || return 0
   if [ ! -x "$T3" ]; then
@@ -1200,28 +1230,38 @@ load_t3() {
   awk -F '\t' '$4 == "false" && !seen[$1]++' "$TMP/t3.threads" >"$TMP/t3.open" || return 1
   while IFS="$TAB" read -r id project; do
     timed "$T3_TIMEOUT" "$TMP/t3.out" "$TMP/t3.err" "$T3" thread show "$id" --messages 100000 --json || return 1
-    if ! jq -r -s "$MESSAGES_JQ" "$TMP/t3.out" >"$TMP/t3.text.$id" 2>/dev/null; then
+    if ! jq -r -s "$MESSAGES_JQ" "$TMP/t3.out" >"$TMP/t3.text.$id" 2>/dev/null ||
+      ! jq -r -s "$BIND_JQ" "$TMP/t3.out" >"$TMP/t3.bind" 2>/dev/null; then
       echo "t3 thread show printed unexpected JSON for $id" >"$TMP/t3.err"
       return 1
     fi
+    { IFS= read -r wp; IFS= read -r b; } <"$TMP/t3.bind"
+    [ -z "$wp" ] || wp=$(canon "$wp")
+    printf '%s\n%s\n' "$wp" "$b" >"$TMP/t3.bind.$id"
   done <"$TMP/t3.open"
 }
 
-# The lines that could be a pending cd step, as FILE<tab>LINE. A file that
-# goes while this reads is no error. Fails when one can't be read.
+# The lines that could be a pending cd step, as FILE<tab>LINE, with each
+# escaped space unescaped. A file that goes while this reads is no error,
+# and a path under ~/agent-drafts the job may not read is skipped and goes
+# in steps.denied. Fails when any other one can't be read.
 load_steps() {
   local f
   : >"$TMP/steps.files"
+  : >"$TMP/steps.denied"
   if [ -e "$HOME/agent-drafts" ]; then
     find -H "$HOME/agent-drafts" \( -name .git -o -name .venv -o -name node_modules \) -prune \
-      -o -type f -name '*.md' -print0 >"$TMP/steps.files" 2>"$TMP/steps.err"
+      -o -type f \( -iname '*.md' -o -iname '*.markdown' \) -print0 >"$TMP/steps.files" 2>"$TMP/steps.err"
   fi
   for f in "$HOME"/.local/state/t3-pstack/orchestrate/*/gates.md; do
     [ -f "$f" ] && printf '%s\000' "$f" >>"$TMP/steps.files"
   done
   xargs -0 grep -a -H --null -E 'cd[[:space:]]' -- <"$TMP/steps.files" 2>>"$TMP/steps.err" |
-    tr '\000' '\t' >"$TMP/steps" || return 1
-  ! grep -v 'No such file or directory' "$TMP/steps.err" >"$TMP/steps.why"
+    tr '\000' '\t' | sed 's/\\ / /g' >"$TMP/steps" || return 1
+  H="$HOME/agent-drafts/" awk -v denied="$TMP/steps.denied" 'BEGIN { h = ENVIRON["H"] }
+    /: Permission denied$/ && (index($0, "find: " h) == 1 || index($0, "grep: " h) == 1) { print >denied; next }
+    /No such file or directory/ { next }
+    { print; bad = 1 } END { exit bad }' "$TMP/steps.err" >"$TMP/steps.why"
 }
 
 ere() { printf '%s' "$1" | sed 's/[][\.*^$()+?{}|]/\\&/g'; }
@@ -1238,15 +1278,19 @@ CD_HOME="(~|\\\$HOME|\\\$[{]HOME[}])[\"']?"
 # nothing holds it, so any failure, or a check that died, reads as a hold.
 # 1. An open thread started by WT's last use, in WT's project, in a project
 #    that is no git repo, or in any project when WT's main checkout has none.
-# 2. An open thread whose text names WT's path, its branch, or the merged PR
-#    that landed it, whatever the dates.
+# 2. An open thread bound to WT's path, or to its branch in WT's project, or
+#    whose text names WT's path, its branch, or a merged PR that landed it,
+#    whatever the dates.
 # 3. A pending step with a cd into WT.
 hold_reason() {
-  local project id theirs created title p b s n oid draft rc landed=$LANDED_BY
+  local project id theirs created title p b s n oid draft rc wp landed=$LANDED_BY nohome=""
   project=$(M=$MAIN awk -F '\t' '$1 == ENVIRON["M"] { print $2; exit }' "$TMP/t3.paths")
   while IFS="$TAB" read -r id theirs created n title; do
     [ "$LAST_USE" -ge "$created" ] || continue
-    if [ -z "$project" ] || [ "$project" = "$theirs" ] || grep -Fxq -- "$theirs" "$TMP/t3.nongit"; then
+    # Any thread holds it then, but one that names it makes a better label.
+    if [ -z "$project" ]; then
+      nohome=${nohome:-$title}
+    elif [ "$project" = "$theirs" ] || grep -Fxq -- "$theirs" "$TMP/t3.nongit"; then
       echo "open T3 thread \"$title\" holds it (started before its last use)"
       return 0
     fi
@@ -1260,7 +1304,7 @@ hold_reason() {
     case $p in
       "$HOME_DIR"/*)
         s=$(ere "${p#"$HOME_DIR"}")
-        printf '~%s%s\n' "$s" "$PATH_END" >>"$TMP/hold.names"
+        printf '%s%s%s\n' "$CD_HOME" "$s" "$PATH_END" >>"$TMP/hold.names"
         printf '%s%s%s%s\n' "$CD_START" "$CD_HOME" "$s" "$PATH_END" >>"$TMP/hold.cd"
         ;;
     esac
@@ -1284,7 +1328,7 @@ hold_reason() {
     while IFS= read -r s; do
       grep -q -a -i -F -- "github.com/$s/pull/" "$TMP"/t3.text.* || continue
       for oid in $IN_DEFAULT; do
-        if ! commit_prs "$s" "$oid"; then
+        if ! commit_prs "$s" "$oid" strict; then
           echo "PR state unknown ($(head -n 1 "$TMP/gh.err"))"
           return 0
         fi
@@ -1303,6 +1347,15 @@ hold_reason() {
     printf 'github[.]com/%s/pull/%s($|[^0-9])\n' "$(ere "${p%#*}")" "${p##*#}" >>"$TMP/hold.names"
   done
   while IFS="$TAB" read -r id theirs created n title; do
+    { IFS= read -r wp; IFS= read -r b; } <"$TMP/t3.bind.$id"
+    if [ -n "$wp" ] && [ "$wp" = "$WT" ]; then
+      echo "open T3 thread \"$title\" holds it (it runs there)"
+      return 0
+    fi
+    if [ -n "$b" ] && [ "$theirs" = "$project" ] && grep -Fxq -- "$b" "$TMP/hold.branches"; then
+      echo "open T3 thread \"$title\" holds it (it is on its branch)"
+      return 0
+    fi
     grep -q -a -i -E -f "$TMP/hold.names" "$TMP/t3.text.$id"
     rc=$?
     case $rc in
@@ -1311,13 +1364,43 @@ hold_reason() {
       *) return 2 ;;
     esac
   done <"$TMP/t3.open"
+  if [ -n "$nohome" ]; then
+    echo "its repo is in no T3 project, and open thread \"$nohome\" started before its last use"
+    return 0
+  fi
   return 3
+}
+
+# Load, or load again, what can hold a worktree: pending steps and open T3
+# threads. A state that can't be known sets HOLDS_UNKNOWN, flagged once.
+load_holds() {
+  local f why
+  for f in t3.threads t3.open t3.paths t3.nongit steps steps.err; do : >"$TMP/$f"; done
+  rm -f -- "$TMP"/t3.text.* "$TMP"/t3.bind.*
+  HOLDS_UNKNOWN="" HOLDS_AT=$(date +%s)
+  if ! load_steps; then
+    why=$(head -n 1 "$TMP/steps.why" 2>/dev/null)
+    HOLDS_UNKNOWN="pending steps can't be read (${why:-search failed})"
+    flag "holds | $HOLDS_UNKNOWN, so nothing is removed; check the permissions there"
+  fi
+  if [ -s "$TMP/steps.denied" ]; then
+    why=$(head -n 1 "$TMP/steps.denied")
+    why=${why#*: }
+    flag "holds | pending steps in $(awk 'END { print NR }' "$TMP/steps.denied") path(s) under ~/agent-drafts can't be read, so they hold nothing (first: ${why%: Permission denied}); check the permissions there"
+  fi
+  if ! load_t3; then
+    why=$(head -n 1 "$TMP/t3.err" 2>/dev/null)
+    HOLDS_UNKNOWN="T3's state is unknown (${why:-t3 failed})"
+    flag "holds | $HOLDS_UNKNOWN, so nothing is removed; check t3 service status"
+  fi
 }
 
 # held: keep WT and return 0 when something holds it, or when the job can't
 # tell. An unknown T3 or step state was flagged once, when it was loaded.
 held() {
   local why idle=", idle ${IDLE}d"
+  # A thread or step may have appeared during the PR lookups.
+  [ $(($(date +%s) - HOLDS_AT)) -lt "$HOLD_MAX_AGE" ] || load_holds
   if [ -n "$HOLDS_UNKNOWN" ]; then
     local IDLE=""
     keep "$HOLDS_UNKNOWN$idle"
@@ -1341,6 +1424,11 @@ remove_worktree() {
   local reason=$1 branch_rule=$2 kind=$3 ignored size out note n orph extra=""
   local bnote=""
   if [ "$kind" = none ] && too_young "$TTL_DAYS"; then return; fi
+  # Such a file may be nowhere else, so landed work keeps it to the TTL.
+  if [ "$kind" != none ] && [ "$IDLE" -lt "$TTL_DAYS" ] && n=$(kept_ignored); then
+    keep "its work landed, but it holds $n, an ignored file that is no cache, so it stays to the ${TTL_DAYS}d TTL, idle ${IDLE}d"
+    return
+  fi
   held && return
   # Re-check right before acting: the PR lookup can take a while.
   if [ "$(g -C "$WT" rev-parse -q --verify HEAD 2>/dev/null)" != "$HEAD_OID" ]; then
@@ -1640,7 +1728,7 @@ evaluate() {
     return
   fi
   if [ -n "$MERGED_PR" ]; then
-    LANDED_BY=$MERGED_PR
+    LANDED_BY="$MERGED_PR$MERGED_ALL"
     if [ "$MERGED_HOW" = other ]; then
       remove_worktree "PR $MERGED_PR merged under another branch's name, and its head contains this tip" "" other
       return
@@ -1825,7 +1913,7 @@ evaluate_clone() {
     fi
     if [ -n "$MERGED_PR" ]; then
       merged="${merged:+$merged, }$MERGED_PR"
-      LANDED_BY="$LANDED_BY $MERGED_PR"
+      LANDED_BY="$LANDED_BY $MERGED_PR$MERGED_ALL"
       SAFE="$SAFE$oid
 "
       # Another branch's PR never held what only this branch's reflog holds.
@@ -2217,17 +2305,7 @@ while IFS= read -r m; do
 done <"$TMP/mains.u"
 
 HOME_DIR=$(norm_dir "$HOME") || HOME_DIR=$HOME
-HOLDS_UNKNOWN=""
-if ! load_steps; then
-  why=$(head -n 1 "$TMP/steps.why" 2>/dev/null)
-  HOLDS_UNKNOWN="pending steps can't be read (${why:-search failed})"
-  attention "holds | $HOLDS_UNKNOWN, so nothing is removed; check the permissions there"
-fi
-if ! load_t3; then
-  why=$(head -n 1 "$TMP/t3.err" 2>/dev/null)
-  HOLDS_UNKNOWN="T3's state is unknown (${why:-t3 failed})"
-  attention "holds | $HOLDS_UNKNOWN, so nothing is removed; check t3 service status"
-fi
+load_holds
 
 while IFS= read -r m; do
   [ -n "$m" ] || continue
