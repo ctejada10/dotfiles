@@ -1342,7 +1342,9 @@ after themselves. `~/.local/bin/worktree-ttl` runs daily at 04:17 over
 `~/worktrees` and `~/.t3/worktrees` and removes a worktree once it has gone
 unused for long enough: a day once its work has landed (its tip is in the
 default branch, or a merged PR holds it, under that branch's name or
-another's), 14 days for the rest. Use is an edit, a commit or a Claude Code
+another's), 14 days for the rest. Landed work that holds a file the repo
+ignores, other than caches, environments, build output or an unchanged seed
+copy, such as notes or a database, waits the 14 days too. Use is an edit, a commit or a Claude Code
 session there; an edit to a file the repo ignores counts too, apart from
 caches, environments and build output.
 
@@ -1356,14 +1358,17 @@ keeps one that something still holds:
   worktree's last use, in the same project. A thread in a project that is no
   Git repo, such as `src` or scratch, holds any repo's worktrees, and any
   thread holds one whose main checkout is in no project;
-- an open thread whose messages name its path, its branch (a name with a `/`
-  or a `-`) or the merged PR that landed it, whatever the dates;
-- a pending step: a `cd` into it, in a Markdown file under `~/agent-drafts`
-  or in an orchestrate run's `gates.md`.
+- an open thread that runs in it, or on its branch in the same project, or
+  whose messages name its path, its branch (a name with a `/` or a `-`) or a
+  merged PR that landed it, whatever the dates;
+- a pending step: a `cd` into it, in a Markdown file (`.md` or `.markdown`)
+  under `~/agent-drafts` or in an orchestrate run's `gates.md`.
 
-Settling a thread, or deleting a step that is done, lets go. When T3 can't
-answer, or a step can't be read, the job removes nothing and says so in
-`attention.txt`.
+The job reads these again right before a removal when they are 5 minutes
+old. Settling a thread, or deleting a step that is done, lets go. When T3
+can't answer, or a step outside `~/agent-drafts` can't be read, the job
+removes nothing and says so in `attention.txt`; a file or folder under
+`~/agent-drafts` it can't read holds nothing and gets one line there.
 
 Branches stay when their worktrees go, so a follow-up thread, or T3 itself,
 can check one out again. A clone of another repo in `~/worktrees` is held the
