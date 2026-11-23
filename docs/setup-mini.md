@@ -913,7 +913,9 @@ from `hermes.version` in `home/.chezmoidata/hermes.yaml`. It backs up
 `home/dot_local/share/dotfiles/hermes/config.json.tmpl` that differ, and
 restarts the gateway only if something changed. Those keys now win over the
 commands above, and `command_allowlist` holds only what tilde puts there, so an
-"Always" you tap in Telegram is removed on the next apply and reported.
+"Always" you tap in Telegram is removed on the next apply and reported. It
+also keeps [the storage job](#the-storage-job)'s script in `~/.hermes/scripts`
+and its skill in `~/.hermes/skills/mini/`, with no switch.
 
 Hermes stays on its ChatGPT login with smart approvals. `hermes-health` reports
 the state of everything, and the apply prints the steps still to do by hand.
@@ -1190,6 +1192,7 @@ Turn them on one week at a time.
 | Week | Job | Command |
 |---|---|---|
 | 1 | Morning brief | `hermes cron create "daily at 7am" "Morning brief: triage my Gmail inbox, list today's calendar, and list Todoist tasks due today or overdue. Read only; never send email. Suggest Todoist changes as a numbered list for me to approve." --skill email-inbox-triage --skill google-workspace --deliver telegram` |
+| 1 | Storage watch | `hermes cron create "every 3h" --name "Storage watch" --script storage-watch.sh --no-agent --deliver telegram` |
 | 2 | Evening wrap-up | `hermes cron create "daily at 9pm" "Evening wrap-up: what got done in Todoist today, what's left, and tomorrow's calendar. Propose any vault notes as drafts in ~/agent-drafts for me to review." --skill google-workspace --deliver telegram` |
 | 2 | Weekly review prep | `hermes cron create "every sunday 6pm" "Prepare my weekly review: the week's completed and overdue Todoist tasks, next week's calendar, and open loops. Write it as a draft in ~/agent-drafts." --skill google-workspace --deliver telegram` |
 | 2 | Job-search checkpoint | `hermes cron create "0 18 1,15 * *" "Prepare my job-search checkpoint from my applications tracker: status changes, follow-ups due, and next steps." --deliver telegram` |
@@ -1199,6 +1202,10 @@ Turn them on one week at a time.
   `/cron pause <job_id>` and `/cron resume <job_id>` work from Telegram.
 - Scheduled jobs can't ask, so they write drafts to `~/agent-drafts` rather
   than editing the vault.
+- Storage watch runs [the storage job](#the-storage-job) with no model, and
+  sends what it prints. The apply installs its script and its
+  `storage-watch` skill, so you can ask Bree how much space is free, what the
+  job or worktree cleanup did lately, or to run the check now.
 
 **T3's nightly coding** (week 3):
 
@@ -1384,22 +1391,28 @@ broken worktree, goes in `attention.txt` there.
 
 ### The storage job
 
-`~/.local/bin/storage-watch` runs every 3 hours, for what worktree cleanup
-doesn't free. While Colima runs (the job never starts, stops or restarts it),
+Hermes's Storage watch cron job runs `~/.hermes/scripts/storage-watch.sh`
+every 3 hours, with no model, for what worktree cleanup doesn't free. Create
+it with the command in [section 9](#9-scheduled-jobs); the apply only
+installs the script. While Colima runs (the job never starts, stops or restarts it),
 it cuts Docker's build cache down to 15 GB and trims the Docker disk, so the
 space Docker frees comes back to macOS. Colima's own weekly trim never reaches
 that disk. Images, containers, volumes and Colima's config are left alone.
 
-Then, whatever the upkeep did, Bree sends one Telegram message when free
-space is under 50 GiB, or the per-user temp folder
-(`getconf DARWIN_USER_TEMP_DIR`) or `~/agent-drafts` is over 20 GiB, naming
-each with its size. A new condition sends at once, the same ones at most once
-in 24 hours, and a send that failed goes again on the next run. The job
-deletes nothing on the Mac: what to delete is yours to decide. It logs to
-`~/Library/Logs/storage-watch/`. `~/.local/bin/storage-watch --dry-run`
-prints the sizes and changes nothing, and
-`launchctl print gui/$(id -u)/com.carlosetejada.storage-watch` shows it
-loaded.
+Then, whatever the upkeep did, the script prints one message, which Bree
+sends to Telegram, when free space is under 50 GiB, or the per-user temp
+folder (`getconf DARWIN_USER_TEMP_DIR`) or `~/agent-drafts` is over 20 GiB,
+naming each with its size. A step that failed is a line in the same message.
+A new condition goes at once and the same ones at most once in 24 hours; a
+message counts as sent once printed. The script exits 0 unless it can't run
+at all, which Hermes reports as a failed job. The job deletes nothing on the
+Mac: what to delete is yours to decide. It logs to
+`~/Library/Logs/storage-watch/`.
+`bash ~/.hermes/scripts/storage-watch.sh --dry-run` prints the sizes and the
+message it would send and changes nothing, and `hermes cron list` shows the
+job. The `storage-watch` skill lets Bree answer from the same dry run and
+logs, and run the job when you ask; it never deletes anything or touches
+Colima.
 
 ### FirstMate
 
@@ -1549,9 +1562,9 @@ Code loads none of the account's claude.ai connectors or synced plugins.
 **macOS, Git and the repos**
 
 - **Bree says the mini's storage needs a look:** the message names what is
-  over its limit. `du -hd 1` on that folder shows what filled it, and
-  `~/Library/Logs/storage-watch/storage-watch.log` whether Colima's upkeep
-  is failing ([The storage job](#the-storage-job)).
+  over its limit and any step that failed. `du -hd 1` on that folder shows
+  what filled it, and `~/Library/Logs/storage-watch/storage-watch.log` what
+  Colima's upkeep did ([The storage job](#the-storage-job)).
 - **Screen Sharing is "not permitted":** turn it off and on in System
   Settings ([Remote Login and Screen Sharing](#remote-login-and-screen-sharing)).
 - **Screen Sharing shows a tiny or black screen:** plug in the dummy HDMI
