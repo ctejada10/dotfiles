@@ -14,9 +14,10 @@
 #    are never touched.
 # 2. One message when free space is under 50 GiB, or the per-user temp folder
 #    or ~/agent-drafts is over 20 GiB, measured after the upkeep. A step that
-#    failed is a condition of its own. It prints when a condition hasn't been
-#    in a message for 24 hours, so the same set goes at most once a day and a
-#    new one at once.
+#    failed is a condition of its own, keyed by its step, and the message
+#    names only the step: what a tool said goes to the log alone. It prints
+#    when a condition hasn't been in a message for 24 hours, so the same set
+#    goes at most once a day and a new one at once.
 #
 # It exits 0 after any run it could make, so Hermes delivers the message, and
 # non-zero only when it can't run at all, for Hermes's own failure notice. It
@@ -81,10 +82,11 @@ log() {
   if [ "$DRY_RUN" = 1 ]; then printf '%s\n' "$line"; else printf '%s\n' "$line" >>"$LOG_FILE"; fi
 }
 
+# failed KEY STEP [DETAIL]: a step that broke. The message names the step
+# only; DETAIL, which tools write, goes to the log printable and cut short.
 failed() {
-  local what=$*
-  printf '%s\t%s\n' failed "failed: ${what//$TAB/ }" >>"$TMP/over"
-  log "FAILED  $*"
+  printf 'failed-%s\tfailed: %s (see the storage log)\n' "$1" "${2//$TAB/ }" >>"$TMP/over"
+  log "FAILED  $2${3+: $(printf '%s' "$3" | tr -cd '[:print:]' | cut -c 1-200)}"
 }
 
 # timed SECONDS INPUT COMMAND...: the command with worktree-ttl's watchdog,
@@ -118,7 +120,7 @@ upkeep() {
   if ! timed 60 /dev/null colima status; then
     # Stopped and broken both exit 1, so only its own words say stopped.
     if grep -q 'is not running' "$TMP/err"; then log "SKIP    upkeep: Colima isn't running"
-    else failed "colima status: $(said err)"; fi
+    else failed status "colima status" "$(said err)"; fi
     return
   fi
   # docker builder is buildx's alias, which prunes the builder buildx has
@@ -126,19 +128,18 @@ upkeep() {
   if timed 900 /dev/null docker --context colima builder prune --builder colima --all --force --max-used-space 15GB; then
     log "PRUNED  build cache: $(said out)"
   else
-    failed "docker builder prune: $(said err)"
+    failed prune "docker builder prune" "$(said err)"
   fi
   if timed 600 /dev/null colima ssh -- sudo -n fstrim -v /mnt/lima-colima; then
     log "TRIMMED $(said out)"
   else
-    failed "fstrim in Colima: $(said err)"
+    failed trim "fstrim in Colima" "$(said err)"
   fi
 }
 
 # ------------------------------------------------------------------ alert
 
 # over KEY TEXT: one condition, for the message and for what was last sent.
-# Every failure shares the key failed.
 over() {
   printf '%s\t%s\n' "$1" "$2" >>"$TMP/over"
   log "OVER    $2"
@@ -147,11 +148,11 @@ over() {
 measure_free() {
   local free
   if ! timed 30 /dev/null df -kP /System/Volumes/Data; then
-    failed "df: $(said err)"
+    failed df df "$(said err)"
     return
   fi
   free=$(awk 'NR == 2 { print $4 }' "$TMP/out")
-  case $free in '' | *[!0-9]*) failed "df printed no free space"; return ;; esac
+  case $free in '' | *[!0-9]*) failed df df "it printed no free space"; return ;; esac
   log "SIZE    $(gib "$free") GiB free"
   if [ "$free" -lt $((FREE_MIN_GIB * KIB_PER_GIB)) ]; then
     over free "$(gib "$free") GiB free on the Data volume, under $FREE_MIN_GIB"
@@ -166,7 +167,7 @@ measure_folder() {
   # Every limit together stays under Hermes's cron.script_timeout_seconds, 3600.
   timed 900 /dev/null du -skxH "$dir"
   used=$(awk 'END { print $1 }' "$TMP/out")
-  case $used in '' | *[!0-9]*) failed "du $dir: $(said err)"; return ;; esac
+  case $used in '' | *[!0-9]*) failed "du-$key" "du $dir" "$(said err)"; return ;; esac
   log "SIZE    $dir holds $(gib "$used") GiB"
   if [ "$used" -gt $((FOLDER_MAX_GIB * KIB_PER_GIB)) ]; then
     over "$key" "$dir holds $(gib "$used") GiB, over $FOLDER_MAX_GIB"
@@ -179,7 +180,7 @@ measure() {
   if timed 30 /dev/null getconf DARWIN_USER_TEMP_DIR && dir=$(said out) && [ -n "$dir" ]; then
     measure_folder temp "${dir%/}"
   else
-    failed "getconf DARWIN_USER_TEMP_DIR: $(said err)"
+    failed getconf "getconf DARWIN_USER_TEMP_DIR" "$(said err)"
   fi
   measure_folder drafts "$HOME/agent-drafts"
 }
@@ -213,14 +214,21 @@ notify() {
   fi
   [ -s "$TMP/over" ] || return 0
   due || return 0
-  message || return 0
   keys=$(cut -f1 "$TMP/over" | sort -u)
+  # Recorded before it prints: a record that fails, as on a full disk, is
+  # said in the message, which then may repeat every run.
+  # What is sent now, then when each other condition last was.
+  if {
+    awk -v now="$NOW" '{ print $0 "\t" now }' <<<"$keys" &&
+      { [ ! -f "$SENT_FILE" ] || awk -F '\t' 'FILENAME == ARGV[1] { now[$1] = 1; next } !($1 in now)' "$TMP/over" "$SENT_FILE"; }
+  } 2>/dev/null >"$SENT_FILE.tmp" && mv -- "$SENT_FILE.tmp" "$SENT_FILE" 2>/dev/null; then
+    message
+  else
+    log "FAILED  could not record what was sent, so it may repeat"
+    message
+    echo "This alert couldn't be recorded, so it may repeat."
+  fi
   log "SENT    $(tr '\n' ' ' <<<"$keys")"
-  # What was sent now, then when each other condition last was.
-  {
-    awk -v now="$NOW" '{ print $0 "\t" now }' <<<"$keys"
-    [ ! -f "$SENT_FILE" ] || awk -F '\t' 'FILENAME == ARGV[1] { now[$1] = 1; next } !($1 in now)' "$TMP/over" "$SENT_FILE"
-  } >"$SENT_FILE.tmp" && mv -- "$SENT_FILE.tmp" "$SENT_FILE" || log "FAILED  could not record what was sent"
 }
 
 # ------------------------------------------------------------------- main

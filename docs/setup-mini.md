@@ -1402,9 +1402,12 @@ that disk. Images, containers, volumes and Colima's config are left alone.
 Then, whatever the upkeep did, the script prints one message, which Bree
 sends to Telegram, when free space is under 50 GiB, or the per-user temp
 folder (`getconf DARWIN_USER_TEMP_DIR`) or `~/agent-drafts` is over 20 GiB,
-naming each with its size. A step that failed is a line in the same message.
-A new condition goes at once and the same ones at most once in 24 hours; a
-message counts as sent once printed. The script exits 0 unless it can't run
+naming each with its size. A step that failed is a line in the same message
+that names the step; what the tool said is only in the log. A new condition,
+a different failed step included, goes at once and the same ones at most once
+in 24 hours. A message counts as sent once it is recorded, just before it
+prints; when it can't be recorded, as on a full disk, it says it may repeat.
+The script exits 0 unless it can't run
 at all, which Hermes reports as a failed job. The job deletes nothing on the
 Mac: what to delete is yours to decide. It logs to
 `~/Library/Logs/storage-watch/`.
