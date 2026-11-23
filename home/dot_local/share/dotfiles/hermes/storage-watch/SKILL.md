@@ -1,6 +1,6 @@
 ---
 name: storage-watch
-description: Answer Carlos's questions about the Mac mini's disk and run its storage job on demand. Use when he asks how much space is free, what is filling the disk, the temp folder or ~/agent-drafts, what the storage job or the worktree cleanup job did, when he replies to a "storage needs a look" message, or when he asks to run the storage check now.
+description: Answer Carlos's questions about the Mac mini's disk and run its storage job on demand. Use when Carlos asks how much space is free, what is filling the disk, the temp folder or ~/agent-drafts, what the storage job or the worktree cleanup job did, when Carlos replies to a "storage needs a look" message, or when Carlos asks to run the storage check now.
 version: 1.0.0
 ---
 
@@ -22,7 +22,7 @@ It changes nothing. Its `SIZE` lines are the measurements, `OVER` and `FAILED` l
 
 ## What it did lately
 
-When he asks what the storage job did, read the last lines of its log:
+When Carlos asks what the storage job did, read the last lines of its log:
 
 ```
 tail -n 40 ~/Library/Logs/storage-watch/storage-watch.log
@@ -32,31 +32,31 @@ tail -n 40 ~/Library/Logs/storage-watch/storage-watch.log
 
 ## Run it now
 
-When he asks to run the storage check now, run:
+When Carlos asks to run the storage check now, run:
 
 ```
 bash ~/.hermes/scripts/storage-watch.sh
 ```
 
-It can take several minutes. Show him what it printed. Empty output means nothing is over a limit and nothing failed, or the same conditions were already in a message in the last 24 hours. Then run the `--dry-run` command above and give him its numbers, so he always sees the sizes.
+It can take several minutes. Show Carlos what it printed. Empty output means nothing is over a limit and nothing failed, or the same conditions were already in a message in the last 24 hours. Then run the `--dry-run` command above and give Carlos its numbers, so the sizes are always there.
 
 ## What the cleanup job removed or kept
 
-When he asks what the worktree cleanup job removed or kept, read the last lines of its log:
+When Carlos asks what the worktree cleanup job removed or kept, read the last lines of its log:
 
 ```
 tail -n 40 ~/Library/Logs/worktree-ttl/worktree-ttl.log
 ```
 
-Each `KEEP` line says what holds a worktree. Anything the job couldn't decide is in `~/Library/Logs/worktree-ttl/attention.txt`; read it too when he asks what needs him.
+Each `KEEP` line says what holds a worktree. Anything the job couldn't decide is in `~/Library/Logs/worktree-ttl/attention.txt`; read it too when Carlos asks what needs attention.
 
 ## Hard rules
 
 - Run only the commands above. They read, or run the storage job, which only prunes Colima's build cache and trims its disk.
-- Never delete, move or empty a file or folder yourself, even when he asks.
+- Never delete, move or empty a file or folder yourself, even when Carlos asks.
 - Never edit Colima's config, and never start, stop or restart Colima.
 - Never run `docker system prune`, an image prune, a volume prune or any other cleanup.
-- A fuller cleanup is Carlos's call. Tell him what is large and where, and leave the deleting to him.
+- A fuller cleanup is Carlos's call. Say what is large and where, and leave the deleting to Carlos.
 
 ## Style
 

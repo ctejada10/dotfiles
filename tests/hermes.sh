@@ -129,6 +129,9 @@ for c in lines:
 ' "$storage_skill" <<<"$off" \
   && pass "the deny list blocks the cleanups the storage skill forbids, and none of its own commands" \
   || fail "the deny list blocks the cleanups the storage skill forbids, and none of its own commands" "$off"
+grep -n -w -i -E 'he|his|him' "$storage_skill" >/dev/null \
+  && fail "the storage skill names Carlos, never he or his" "$(grep -n -w -i -E 'he|his|him' "$storage_skill")" \
+  || pass "the storage skill names Carlos, never he or his"
 off_script=$(cz --override-data '{"hermes":{"secrets":{"enabled":true},"rivendell":{"enabled":false}}}' execute-template <"$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl")
 grep -q 'op://Hermes/Telegram' <<<"$off_script" && pass "renders the Telegram secrets" || fail "renders the Telegram secrets"
 grep -q 'op://Hermes/Hurin' <<<"$off_script" && fail "renders no Hurin secrets" || pass "renders no Hurin secrets"
