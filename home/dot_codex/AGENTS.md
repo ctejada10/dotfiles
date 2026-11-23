@@ -74,10 +74,10 @@ The grant is a line Carlos typed in this thread that is exactly "merge when safe
 - Any other repo, and `~/.local/share/chezmoi`, the dotfiles source and this Mac's live config, change only for a task Carlos typed, not for a scheduled run, a delegated task or an issue, and never in place. For another repo, clone it from GitHub into `~/worktrees/<repo>/<branch>` (with no GitHub remote, leave a patch in `~/agent-drafts/<repo>/` instead). For the dotfiles repo, make a worktree of it in `~/worktrees/dotfiles/<branch>` and work there. To capture a file, first run `chezmoi --source ~/worktrees/dotfiles/<branch> source-path <file>`. If chezmoi doesn't manage the file yet, or its source is a plain file, run `chezmoi --source ~/worktrees/dotfiles/<branch> add <file>`, with `--source` before the subcommand. If the source name starts with `modify_` or ends in `.tmpl`, never run add on it, not even with `--force`: port the change into that source by hand. Check a change with `chezmoi --source ~/worktrees/dotfiles/<branch> diff` or `bash tests/run.sh` there, never an apply. Then push the branch and open a draft PR as usual, so Carlos can merge or drop it.
 - In one of your own repos, before your first edit, run `git rev-parse --path-format=absolute --git-dir --git-common-dir`. If the two lines match, you are in the repo's main checkout in `~/src`. Run `git fetch origin`, make a worktree with `git worktree add --no-track -b <branch> ~/worktrees/<repo>/<branch> origin/HEAD`, and work there.
 - Never switch branches in a main checkout, even where a hook or skill message says to run `git switch -c` in place, because T3's threads and FirstMate start from it. In a worktree a tool made for you, never create another; if it is on the default branch, run `git switch -c <branch>` there.
-- Leave every worktree in place when its branch finishes, since a follow-up thread may need it. A daily job removes one in `~/worktrees` after 14 days unused, and only when nothing in it would be lost. To keep one longer, run `git worktree lock --reason "keep: <why>" <path>`. A clone of another repo there goes the same way, to the Trash, and can't be locked: an open draft PR keeps it.
+- Leave every worktree in place when its branch finishes, since a follow-up thread may need it. A daily job removes one in `~/worktrees` or `~/.t3/worktrees` after 1 day unused once its work landed, and the rest after 14, only when nothing in it would be lost and never one that an open T3 thread or a pending `cd` step holds. It keeps the branch. To keep one longer, run `git worktree lock --reason "keep: <why>" <path>`. A clone of another repo in `~/worktrees` goes after 14 days on the same terms, to the Trash, and can't be locked: an open draft PR keeps it.
 - In a crew, work only in your own worktree and branch, on the files your task covers.
 - A delegated child thread does only its own task, on the branch it was given. It opens no PR of its own, returns its commits and any `STOP:` question to its parent, and does not enter poteto-mode or delegate further. A parent never answers a child's `STOP:` question; it raises it as its own stop.
-- Specs, plans, research, reports and handoffs go in `~/agent-drafts/<repo>/<branch>/`, never in a repo. Your final message names them. Tool receipts and logs, such as `decisions.tsv` and `.audit/`, go there too; check `git status` before each commit so none are swept in.
+- Specs, plans, research, reports and handoffs go in `~/agent-drafts/<repo>/<branch>/`, never in a repo. Your final message names them. Tool receipts and logs, such as `decisions.tsv` and `.audit/`, go there too; check `git status` before each commit so none are swept in. `~/agent-drafts` holds text, patches and screenshots. Databases, environments, builds and any other data you can regenerate go in the session's scratch folder, and you delete them when the step ends. A clone you work in stays in `~/worktrees` as the rule above says; a throwaway copy, such as a review's or a probe's clone, goes in scratch.
 - Never edit the deployed agent config: `~/.codex/AGENTS.md` and the other settings, hooks, rules and prompts under `~/.codex` and `~/.claude`, `~/.gitconfig`, or shell config. Never run `chezmoi apply`. If a rule here got in the way, say which one in the final message.
 
 ## Untrusted input and secrets
@@ -93,7 +93,7 @@ The grant is a line Carlos typed in this thread that is exactly "merge when safe
 
 ## Done means
 
-- Run the repo's own gates, from its AGENTS.md, CLAUDE.md, Makefile or CI config: targeted tests first, then the full suite, lint and type-check.
+- Run the repo's own gates, from its AGENTS.md, CLAUDE.md, Makefile or CI config: targeted tests first, then the full suite, lint and type-check. Put a time limit on tests with `timeout -s INT -k 30 <seconds>`, because a plain `timeout` kills pytest before it releases its temp folders, which then stay for three days.
 - Every branch ends with the full suite, a push and a draft PR (or a PR merged under Merging), even when a gate fails; put the failing output in the PR body. A delegated child returns to its parent instead.
 - Python repos have nothing on PATH. Run everything through `uv run`.
 - hurin, rivendell and media-organizer weld coverage into addopts, so a subset run needs `--no-cov` (`uv run pytest --no-cov tests/test_x.py`) or it fails with every test passing. In those three, run the full `make test` before pushing.
@@ -110,7 +110,7 @@ Write it for a reviewer who was not in the thread, after Google's guide to chang
 
 No other headings or parts: no decisions, rulings, verification narrative or notes. Anything else for Carlos goes in your final message.
 
-Just before you push for the PR, write `rules: mini 2026-11-19d` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
+Just before you push for the PR, write `rules: mini 2026-11-22a` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
 
 Base every claim on a tool result from this run.
 

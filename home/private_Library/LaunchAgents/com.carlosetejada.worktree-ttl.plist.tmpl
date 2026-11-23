@@ -6,15 +6,24 @@
 	<key>Label</key>
 	<string>com.carlosetejada.worktree-ttl</string>
 
-	<!-- Removes the mini's own worktrees in ~/worktrees once they go 14 days
-	     unused and nothing in them would be lost. It runs live from the start:
-	     no worktree is older than the TTL during the first two weeks. -->
+	<!-- Removes the mini's worktrees in ~/worktrees and ~/.t3/worktrees once
+	     their work has landed and they go a day unused, or 14 days for the
+	     rest, when nothing in them would be lost and no open T3 thread or
+	     pending step holds them. Branches stay, so a follow-up thread, or
+	     T3's own recreate, can check one out again. -->
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/bash</string>
 		<string>{{ .chezmoi.homeDir }}/.local/bin/worktree-ttl</string>
 		<string>--ttl-days</string>
 		<string>14</string>
+		<string>--landed-days</string>
+		<string>1</string>
+		<string>--keep-branches</string>
+		<string>--root</string>
+		<string>{{ .chezmoi.homeDir }}/worktrees</string>
+		<string>--root</string>
+		<string>{{ .chezmoi.homeDir }}/.t3/worktrees</string>
 	</array>
 
 	<!-- Once a day. A run missed during sleep starts on wake; one missed

@@ -66,10 +66,14 @@ printf '%s\n' "\$*" >>"$T/trash-calls.log"
 for p in "\$@"; do mv -- "\$p" "$HOME/.Trash/\${p##*/} \$\$" || exit 1; done
 EOF
 # Fake gh: pr list answers from prs.tsv; api repos/<o>/<r> answers the fork
-# parent from parents.tsv; api .../compare/A...B answers from the bare repo.
+# parent from parents.tsv; api .../compare/A...B answers from the bare repo,
+# and api .../commits/SHA/pulls the PRs in prs.tsv whose head holds SHA, less
+# those that only share it as a commit already on main. gh-hook, a script,
+# runs once, at the first call after it is written.
 cat >"$T/bin/gh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >>"$T/gh-calls.log"
+if [ -s "$T/gh-hook" ]; then mv "$T/gh-hook" "$T/gh-hook.ran"; bash "$T/gh-hook.ran"; fi
 G="$REALGIT"
 if [ -e "$T/gh-fail-all" ]; then echo "HTTP 401: Bad credentials" >&2; exit 1; fi
 case \$1 in
@@ -101,6 +105,25 @@ case \$1 in
         elif "\$G" --git-dir="\$repo" merge-base --is-ancestor "\$a" "\$b"; then echo ahead
         elif "\$G" --git-dir="\$repo" merge-base --is-ancestor "\$b" "\$a"; then echo behind
         else echo diverged; fi
+        ;;
+      */*/commits/*/pulls)
+        slug=\${p%%/commits/*}; a=\${p##*/commits/}; a=\${a%/pulls}
+        repo="$T/remote/\${slug#*/}.git"
+        if [ -s "$T/gh-commit-fail" ]; then cat "$T/gh-commit-fail" >&2; exit 1; fi
+        if ! "\$G" --git-dir="\$repo" cat-file -e "\$a^{commit}" 2>/dev/null; then
+          echo "gh: No commit found for SHA: \$a (HTTP 422)" >&2
+          exit 1
+        fi
+        onmain=no
+        "\$G" --git-dir="\$repo" merge-base --is-ancestor "\$a" main 2>/dev/null && onmain=yes
+        while IFS=\$'\t' read -r s h num state oid draft; do
+          [ "\$s" = "\$slug" ] || continue
+          [ "\$state" = CLOSED ] && continue
+          [ "\$onmain" = no ] || [ "\$a" = "\$oid" ] || continue
+          "\$G" --git-dir="\$repo" merge-base --is-ancestor "\$a" "\$oid" 2>/dev/null &&
+            printf '%s\t%s\t%s\t%s\n' "\$num" "\$state" "\$oid" "\$draft"
+        done <"$T/prs.tsv"
+        exit 0
         ;;
       */*) awk -F '\t' -v s="\$p" '\$1 == s { print \$2 }' "$T/parents.tsv" ;;
     esac
@@ -542,7 +565,7 @@ git -C "$MTR" config branch.worktree-pushref.pushRemote mapped
 git -C "$W/tr/pushref" push -q 2>/dev/null
 pr test/tr agent/pushref 91 MERGED "$(tip "$W/tr/pushref")"; age "$W/tr/pushref" 20
 # TR3: pushed under another name with no upstream, as RB9, but that name's
-# PR merged while the branch stayed on origin; only an open PR there counts
+# PR merged while the branch stayed on origin: it landed, and its branch stays
 hookwt "$MTR" tr pushedmerged; work "$W/tr/pushedmerged" tr3
 git -C "$W/tr/pushedmerged" push -q origin HEAD:feature/tr3-name 2>/dev/null
 pr test/tr feature/tr3-name 92 MERGED "$(tip "$W/tr/pushedmerged")"; age "$W/tr/pushedmerged" 20
@@ -842,11 +865,11 @@ expect "$O" REMOVED worktrees/rb/resolved "detached HEAD, every commit is on a b
 expect "$O" KEEP worktrees/rb/ontolost "detached HEAD with 1 commit(s) on no branch or remote"
 expect "$O" KEEP worktrees/rb/ignlocked "could not read all of data/locked/, so its last use is unknown (idle 20d otherwise)"
 echo "-- the third review's cases"
-expect "$O" REMOVED worktrees/tr/teamreset "every commit is on a remote"
+expect "$O" REMOVED worktrees/tr/teamreset "PR test/tr#90 merged under another branch's name"
 expect "$O" REMOVED worktrees/tr/teamreset "branch kept"
 expect "$O" REMOVED worktrees/tr/pushref "PR test/tr#91 merged at this exact tip"
 expect "$O" REMOVED worktrees/tr/pushref "branch deleted (PR test/tr#91 merged)"
-expect "$O" REMOVED worktrees/tr/pushedmerged "every commit is on a remote"
+expect "$O" REMOVED worktrees/tr/pushedmerged "PR test/tr#92 merged under another branch's name"
 expect "$O" REMOVED worktrees/tr/pushedmerged "branch kept"
 expect "$O" REMOVED worktrees/fz/merged "PR test/uz#7 merged at this exact tip"
 expect "$O" REMOVED worktrees/fz/merged "branch deleted (PR test/uz#7 merged)"
@@ -1095,6 +1118,481 @@ chk "and leaves the marker for the next apply to retry" "[ '$PL' -nt '$MK' ]"
 kill "$SLEEPER" 2>/dev/null
 wait "$SLEEPER" 2>/dev/null
 rm -f -- "$HOME/.claude/sessions/a-$$.json" "$HOME/.claude/sessions/b-$$.json" "$HOME/.claude/sessions/c-$$.json"
+
+echo "== T3 threads, pending steps and the short limit for landed work"
+# A home of its own, so each run judges only these cases. Nothing in them is
+# in use, so a stand-in lsof saves each of these many runs the real one's scan.
+mkdir "$T/noproc"
+printf '#!/bin/bash\nexit 0\n' >"$T/noproc/lsof"
+chmod +x "$T/noproc/lsof"
+export WORKTREE_TTL_PATH="$T/noproc:$WORKTREE_TTL_PATH"
+export HOME="$T/t3home"
+R="$HOME/src" W="$HOME/worktrees" TW="$HOME/.t3/worktrees"
+ATT="$HOME/Library/Logs/worktree-ttl/attention.txt"
+DRAFTS="$HOME/agent-drafts" GATES="$HOME/.local/state/t3-pstack/orchestrate/run1"
+mkdir -p "$R" "$W/co" "$TW/co" "$HOME/.claude/projects" "$HOME/.t3/scratch" "$HOME/.local/bin" "$DRAFTS" "$GATES" "$HOME/.Trash"
+for n in own oth pla lon kl; do
+  git init -q --bare "$T/remote/$n.git"
+  git -C "$T/seed" push -q "git@github.com:test/$n.git" main
+done
+git clone -q git@github.com:test/own.git "$R/own"
+git clone -q git@github.com:test/oth.git "$R/oth"
+git clone -q git@github.com:test/pla.git "$R/pla"
+git clone -q git@github.com:test/lon.git "$T/lone"
+addwt() { git -C "$1" worktree add -q --no-track -b "$3" "$2" origin/main 2>/dev/null; } # main path branch
+landed() { # main path branch repo pr-number days
+  addwt "$1" "$2" "$3"; work "$2" "l$5"; pushwt "$2"
+  pr "test/$4" "$3" "$5" MERGED "$(tip "$2")"; age "$2" "$6"
+}
+landed "$R/own" "$W/own/a" fix/a own 5 2
+landed "$R/own" "$W/own/a-2" fix/a-2 own 50 2
+landed "$R/own" "$W/own/a.3" fix/third own 53 2
+landed "$R/own" "$W/own/plain" plainword own 54 2
+landed "$R/own" "$W/own/young" fix/young own 55 0
+landed "$R/own" "$TW/own/t3-land" t3/land own 56 2
+landed "$R/oth" "$W/oth/b" fix/b oth 61 2
+landed "$R/pla" "$W/pla/c" fix/c pla 62 2
+landed "$T/lone" "$W/lon/d" fix/d lon 63 2
+addwt "$R/own" "$W/own/pushed" fix/pushed; work "$W/own/pushed" p; pushwt "$W/own/pushed"; age "$W/own/pushed" 2
+addwt "$R/own" "$W/own/old" fix/old; work "$W/own/old" o; pushwt "$W/own/old"; age "$W/own/old" 40
+addwt "$R/own" "$W/own/closed" fix/closed; work "$W/own/closed" c; pushwt "$W/own/closed"
+pr test/own fix/closed 57 CLOSED "$(tip "$W/own/closed")"; age "$W/own/closed" 2
+git -C "$R/own" worktree add -q --detach "$W/own/det" origin/main 2>/dev/null; age "$W/own/det" 2
+addwt "$R/own" "$W/own/local" fix/local; work "$W/own/local" lc; age "$W/own/local" 2
+# As hurin's planner/slips: never pushed, and inside another branch's merged PR.
+addwt "$R/own" "$W/own/slips" planner/slips; work "$W/own/slips" slips
+git -C "$R/own" worktree add -q --no-track -b planner/all "$T/all" planner/slips 2>/dev/null
+work "$T/all" all; pushwt "$T/all"
+pr test/own planner/all 600 MERGED "$(tip "$T/all")"
+git -C "$R/own" worktree remove "$T/all"
+git --git-dir="$T/remote/own.git" branch -q -D planner/all
+git -C "$R/own" fetch -q --prune; age "$W/own/slips" 2
+# The same inside a PR that is still open.
+addwt "$R/own" "$W/own/stacked" planner/stacked; work "$W/own/stacked" stacked
+git -C "$R/own" worktree add -q --no-track -b planner/top "$T/top" planner/stacked 2>/dev/null
+work "$T/top" top; pushwt "$T/top"
+pr test/own planner/top 601 OPEN "$(tip "$T/top")"
+git -C "$R/own" worktree remove "$T/top"; age "$W/own/stacked" 2
+addwt "$R/own" "$W/own/gone" fix/gone; age "$W/own/gone" 20; rm -r -- "$W/own/gone"
+# Merged with its own commit in main, so the tip is in the default branch.
+addwt "$R/own" "$W/own/inmain" fix/inmain; work "$W/own/inmain" inmain; pushwt "$W/own/inmain"
+git -C "$W/own/inmain" push -q origin HEAD:main 2>/dev/null
+pr test/own fix/inmain 58 MERGED "$(tip "$W/own/inmain")"
+git -C "$R/own" fetch -q; age "$W/own/inmain" 2
+for c in "cl:20" "clnew:2"; do
+  d="$W/co/${c%:*}"
+  git clone -q git@github.com:test/kl.git "$d" 2>/dev/null
+  git -C "$d" switch -q -c "kl-${c%:*}"; work "$d" "${c%:*}"; pushwt "$d"
+  pr test/kl "kl-${c%:*}" "7${c#*:}" MERGED "$(tip "$d")"; age "$d" "${c#*:}"
+done
+git clone -q git@github.com:test/kl.git "$TW/co/tc" 2>/dev/null; age "$TW/co/tc" 20
+
+# The fake t3: a project is a root folder, and a path inside it resolves to
+# the nearest. t3-mode breaks one call at a time.
+printf '%s\t%s\n' "$R" psrc "$R/own" pown "$R/oth" poth "$HOME/.t3/scratch" pscratch >"$T/projects.tsv"
+cat >"$T/bin/t3" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$T/t3-calls.log"
+mode=\$(cat "$T/t3-mode" 2>/dev/null)
+case "\$1 \$2 \$mode" in
+  *" down") echo "No running T3 Code server uses $HOME/.t3" >&2; exit 1 ;;
+  "thread list slow" | "thread show slowshow") exec sleep 30 ;;
+  "thread list badlist" | "thread show badshow") echo "[{"; exit 0 ;;
+  "thread list empty" | "thread show empty") exit 0 ;;
+  "thread list notarray") echo '{"threads":[]}'; exit 0 ;;
+  "thread list nofield") echo '[{"threadId":"t","projectId":"pown","title":"x","createdAt":"2026-11-20T10:00:00.000Z"}]'; exit 0 ;;
+  "thread list nodate") echo '[{"threadId":"t","projectId":"pown","title":"x","settled":false,"createdAt":"yesterday"}]'; exit 0 ;;
+  "thread show showdown") echo "request failed" >&2; exit 1 ;;
+  "thread show nomessages") echo '{"thread":{}}'; exit 0 ;;
+  "thread show nothread") echo '{"messages":[]}'; exit 0 ;;
+  "thread show nulltext") echo '{"thread":{},"messages":[{"role":"user","runId":null,"text":null}]}'; exit 0 ;;
+  "thread show numtext") echo '{"thread":{},"messages":[{"role":"user","runId":null,"text":5}]}'; exit 0 ;;
+esac
+case "\$1 \$2" in
+  "thread list")
+    [ "\$3" = --project ] && [ "\$5" = --json ] || exit 2
+    id=\$(P="\$4/" awk -F '\t' 'index(ENVIRON["P"], \$1 "/") == 1 && length(\$1) > n { n = length(\$1); id = \$2 }
+      END { print id }' "$T/projects.tsv")
+    if [ -z "\$id" ]; then echo "No T3 Code project matches '\$4'. Pass a project id or a path inside a project." >&2; exit 1; fi
+    /usr/bin/jq -s --arg p "\$id" '[.[] | select(.projectId == \$p) | del(.text)]' "$T/threads.jsonl" ;;
+  "thread show")
+    [ "\$4 \$5 \$6" = "--messages 100000 --json" ] || exit 2
+    /usr/bin/jq -s --arg t "\$3" '.[] | select(.threadId == \$t) |
+      {thread: del(.text), messages: [{role: "user", runId: null, text: "hello"}, {role: "assistant", runId: "r", text: .text}]}' "$T/threads.jsonl" ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$T/bin/t3"
+threads() { : >"$T/threads.jsonl"; }
+thread() { # id project settled created-epoch title text [more-fields-json]
+  /usr/bin/jq -n -c --arg id "$1" --arg p "$2" --argjson s "$3" --arg c "$(date -u -r "$4" +%Y-%m-%dT%H:%M:%S.123Z)" \
+    --arg title "$5" --arg text "$6" --argjson x "${7:-null}" \
+    '{threadId: $id, projectId: $p, settled: $s, createdAt: $c, title: $title, text: $text} + ($x // {})' >>"$T/threads.jsonl"
+}
+ago() { echo $(($(date +%s) - $1 * 86400)); }
+sweep() { /bin/bash "$JOB" --dry-run --ttl-days 14 --landed-days 1 --keep-branches --root "$W" --root "$TW" >"$O" 2>&1; }
+says() { # output action case...: the job's decision for each case
+  local f=$1 act=$2 c
+  shift 2
+  for c in "$@"; do
+    case $c in t3/*) expect "$f" "$act" ".t3/worktrees/${c#t3/}" "" ;; *) expect "$f" "$act" "worktrees/$c" "" ;; esac
+  done
+}
+LANDED="own/a own/a-2 own/a.3 own/plain own/slips own/inmain oth/b pla/c lon/d t3/own/t3-land"
+OWN="own/a own/a-2 own/a.3 own/plain own/slips own/inmain t3/own/t3-land"
+threads
+
+echo "-- no T3, and the short limit"
+O="$T/t-none.out"; : >"$T/gh-calls.log"; sweep
+says "$O" WOULD $LANDED own/old own/gone co/cl
+expect "$O" WOULD worktrees/own/a "branch kept (--keep-branches)"
+expect "$O" WOULD worktrees/own/slips "PR test/own#600 merged under another branch's name"
+expect "$O" KEEP worktrees/own/young "used 0d ago"
+expect "$O" KEEP worktrees/own/pushed "used 2d ago"
+expect "$O" KEEP worktrees/own/pushed "TTL 14d"
+expect "$O" KEEP worktrees/own/closed "used 2d ago"
+expect "$O" KEEP worktrees/own/det "used 2d ago"
+expect "$O" KEEP worktrees/co/clnew "used 2d ago"
+expect "$O" KEEP worktrees/own/local "no merged PR contains this tip"
+expect "$O" KEEP worktrees/own/stacked "PR test/own#601 open"
+expect "$O" SKIP .t3/worktrees/co/tc "which the job never touches"
+chk "no PR lookup for work used inside the short limit" "! grep -q 'fix/young' '$T/gh-calls.log'"
+chk "a commit's PRs are asked for by its sha" "grep -q 'api repos/test/own/commits/$(tip "$W/own/slips")/pulls' '$T/gh-calls.log'"
+/bin/bash "$JOB" --dry-run --ttl-days 14 --root "$W" --root "$TW" >"$T/t-today.out" 2>&1
+says "$T/t-today.out" KEEP $LANDED
+says "$T/t-today.out" WOULD own/old co/cl
+/bin/bash "$JOB" --dry-run --landed-days 3 --root "$W" >"$T/t-three.out" 2>&1
+says "$T/t-three.out" KEEP own/a
+for v in 0 x 15; do
+  /bin/bash "$JOB" --dry-run --ttl-days 14 --landed-days "$v" >/dev/null 2>&1
+  chk "landed days $v is rejected" "[ $? -eq 2 ]"
+done
+# A leading zero is still base ten.
+for v in 08 09 0014; do
+  /bin/bash "$JOB" --dry-run --root "$W" --ttl-days "$v" --log "$T/t-zero.log" >/dev/null 2>&1
+  chk "--ttl-days $v is read as base ten" "[ $? -eq 0 ] && grep -q 'ttl=$((10#$v))d' '$T/t-zero.log'"
+done
+for a in "--ttl-days 10000" "--ttl-days 99999999999999999999" "--landed-days 99999999999999999999" "--landed-days 00001"; do
+  # shellcheck disable=SC2086  # an option and its value
+  /bin/bash "$JOB" --dry-run --root "$W" $a >/dev/null 2>&1
+  chk "$a, more than 4 digits, is rejected" "[ $? -eq 2 ]"
+done
+echo "gh: Not Found (HTTP 404)" >"$T/gh-commit-fail"
+O="$T/t-404.out"; sweep
+expect "$O" KEEP worktrees/own/local "no merged PR contains this tip"
+chk "a 404 for a commit is no gh outage" "! grep -q 'PR state unknown' '$O'"
+echo "gh: Server Error (HTTP 500)" >"$T/gh-commit-fail"
+O="$T/t-500.out"; sweep
+expect "$O" KEEP worktrees/own/slips "PR state unknown (gh: Server Error (HTTP 500))"
+rm "$T/gh-commit-fail"
+
+# A hold check that dies, or whose search fails, is no answer, so it keeps.
+for how in 'kill -9 "$PPID"' 'exit 2'; do
+  printf '#!/bin/bash\ncase "$*" in *hold.cd*) %s ;; esac\nexec /usr/bin/grep "$@"\n' "$how" >"$T/noproc/grep"
+  chmod +x "$T/noproc/grep"
+  O="$T/t-nocheck.out"
+  /bin/bash "$JOB" --dry-run --landed-days 1 --root "$W/oth" >"$O" 2>&1
+  expect "$O" KEEP worktrees/oth/b "could not check what holds it"
+done
+rm "$T/noproc/grep"
+
+echo "-- which threads hold by date"
+ln -s "$T/bin/t3" "$HOME/.local/bin/t3"
+O="$T/t-up.out"; sweep
+says "$O" WOULD $LANDED own/old own/gone co/cl
+threads; thread s1 psrc true "$(ago 90)" Settled "$W/own/a fix/a-2 github.com/test/own/pull/600"
+O="$T/t-settled.out"; sweep
+says "$O" WOULD $LANDED own/old co/cl
+threads; thread o1 pown false "$(ago 3)" "Plan Hurin Tool Rewrite" "nothing named"
+O="$T/t-own.out"; sweep
+says "$O" KEEP $OWN lon/d
+says "$O" WOULD oth/b pla/c own/old own/gone co/cl
+expect "$O" KEEP worktrees/own/a 'open T3 thread "Plan Hurin Tool Rewrite"'
+threads; thread o2 pown false "$(ago 1)" Newer "nothing named"
+O="$T/t-newer.out"; sweep
+says "$O" WOULD $LANDED
+threads; thread o3 pown false "$(stat -f %m "$(git -C "$W/own/a" rev-parse --path-format=absolute --git-dir)/index")" Same "nothing named"
+O="$T/t-same.out"; sweep
+says "$O" KEEP own/a
+for p in psrc pscratch; do
+  threads; thread "o4-$p" "$p" false "$(ago 3)" "No repo" "nothing named"
+  O="$T/t-$p.out"; sweep
+  says "$O" KEEP $LANDED
+  says "$O" WOULD own/old co/cl
+done
+threads; thread o5 poth false "$(ago 90)" "Long one" "nothing named"
+O="$T/t-long.out"; sweep
+says "$O" KEEP oth/b lon/d co/cl
+says "$O" WOULD own/a pla/c own/old
+threads; thread o6 pown false "$(ago 90)" "Long own" "nothing named"
+O="$T/t-longown.out"; sweep
+says "$O" KEEP own/old own/gone
+chk "a hold idle past twice the TTL is flagged" "grep -q 'own/old | kept, idle 40d: .*Long own' '$ATT'"
+
+echo "-- which threads hold by name"
+# named TEXT, then the case that text holds; "" for none.
+named() {
+  local c
+  threads; thread n1 poth false "$(date +%s)" Namer "$1"
+  O="$T/t-named.out"; sweep
+  for c in $LANDED own/old own/gone co/cl; do
+    case " $2 " in
+      *" $c "*) says "$O" KEEP "$c" ;;
+      *) says "$O" WOULD "$c" ;;
+    esac
+  done
+}
+named "Work in $W/own/a. Then ~/worktrees/co/cl/src/x.py" "own/a co/cl"
+named "Look at \`~/worktrees/own/a-2\`, $TW/own/t3-land and ~/worktrees/own/gone" "own/a-2 own/gone t3/own/t3-land"
+# shellcheck disable=SC2088  # a literal ~, as threads write it
+named "~/worktrees/own/a/src and ~/worktrees/own/a.3, not ~/worktrees/own/old-notes or ~/worktrees/own/plainer" "own/a own/a.3"
+named "Review fix/a, please" "own/a"
+named "git log origin/main..fix/a; git diff origin/fix/b" "own/a oth/b"
+named "on fix/a-2." "own/a-2"
+named "branches planner/slips and kl-cl" "own/slips co/cl"
+named "https://github.com/test/own/pull/5" "own/a"
+named "https://github.com/test/own/pull/50/files, github.com/test/own/pull/600. github.com/test/own/pull/58 and https://github.com/test/kl/pull/720" "own/a-2 own/slips own/inmain co/cl"
+named "prefix/a fix/a/b fix/a_1 plainword planner/slips-2 kl-clx ~/worktrees/own/a-22 github.com/test/own/pull/6000 github.com/test/oth/pull/5" ""
+
+echo "-- pending cd steps"
+threads
+mkdir -p "$DRAFTS/own/x/node_modules/p" "$DRAFTS/own/x/.venv" "$DRAFTS/own/x/.git"
+cat >"$DRAFTS/own/x/steps.md" <<EOF
+Run \`cd ~/worktrees/own/a && make\`, then:
+    cd "\$HOME/worktrees/oth/b/sub"
+    cd \${HOME}/worktrees/pla/c
+    cd '$W/lon/d'
+    cd ~/worktrees/own/gone
+    cd ~/worktrees/co/cl; true
+    cd ~/worktrees/own/old-notes
+    ls ~/worktrees/own/plain
+EOF
+echo "cd ~/worktrees/own/a.3" >"$DRAFTS/own/x/steps.txt"
+for d in node_modules/p .venv .git; do echo "cd ~/worktrees/own/a.3" >"$DRAFTS/own/x/$d/skip.md"; done
+echo "- [ ] cd ~/.t3/worktrees/own/t3-land" >"$GATES/gates.md"
+echo "cd ~/worktrees/own/inmain" >"$GATES/notes.md"
+O="$T/t-steps.out"; sweep
+says "$O" KEEP own/a oth/b pla/c lon/d own/gone co/cl t3/own/t3-land
+says "$O" WOULD own/a-2 own/a.3 own/plain own/old own/inmain
+expect "$O" KEEP worktrees/own/a "$DRAFTS/own/x/steps.md"
+expect "$O" KEEP .t3/worktrees/own/t3-land "$GATES/gates.md"
+# A file or folder under agent-drafts the job may not read holds nothing,
+# and the rest of the run goes on.
+mkdir "$DRAFTS/locked"; echo "cd ~/worktrees/own/a-2" >"$DRAFTS/locked/s.md"
+chmod 000 "$DRAFTS/own/x/steps.md" "$DRAFTS/locked"
+O="$T/t-steps-unread.out"; sweep
+says "$O" KEEP t3/own/t3-land
+says "$O" WOULD own/a oth/b pla/c lon/d own/gone co/cl own/a-2 own/old
+chk "steps that can't be read are flagged once" "[ \"\$(grep -c 'pending steps' '$ATT')\" = 1 ]"
+chk "that line says how many were skipped" "grep -q 'pending steps in 2 path(s) under ~/agent-drafts' '$ATT'"
+chmod 644 "$DRAFTS/own/x/steps.md"; chmod 700 "$DRAFTS/locked"; rm -r -- "$DRAFTS/locked"
+# Any other step file that can't be read still keeps everything.
+chmod 000 "$GATES/gates.md"
+O="$T/t-gates-unread.out"; sweep
+says "$O" KEEP $LANDED own/old own/gone co/cl
+chk "and is flagged once" "[ \"\$(grep -c 'pending steps can.t be read' '$ATT')\" = 1 ]"
+chmod 644 "$GATES/gates.md"
+rm -r -- "$DRAFTS/own" "$GATES/gates.md"
+
+echo "-- T3 that cannot answer"
+thread f1 pown false "$(date +%s)" Failing "nothing named"
+echo down >"$T/t3-mode"
+O="$T/t-down.out"; sweep
+says "$O" KEEP $LANDED own/old own/gone co/cl
+chk "a T3 that is down is one attention line, however many it keeps" "[ \"\$(grep -c \"T3's state is unknown\" '$ATT')\" = 1 ] && ! grep -q '| kept, idle' '$ATT'"
+# The decision is one; each way to fail needs only a worktree to keep.
+for mode in badlist empty notarray nofield nodate slow showdown badshow nomessages nothread slowshow; do
+  echo "$mode" >"$T/t3-mode"
+  O="$T/t-$mode.out"
+  WORKTREE_TTL_T3_TIMEOUT=1 /bin/bash "$JOB" --dry-run --landed-days 1 --root "$W/oth" >"$O" 2>&1
+  says "$O" KEEP oth/b
+  chk "$mode: one attention line says T3's state is unknown" "[ \"\$(grep -c \"T3's state is unknown\" '$ATT')\" = 1 ]"
+  case $mode in slow*) chk "$mode: it says t3 timed out" "grep -q 't3 timed out after 1s' '$ATT'" ;; esac
+done
+rm "$T/t3-mode"
+rm "$HOME/.local/bin/t3"; mkdir "$HOME/.t3/userdata"; chmod 000 "$HOME/.t3/userdata"
+O="$T/t-nocli.out"; sweep
+chmod 700 "$HOME/.t3/userdata"; rmdir "$HOME/.t3/userdata"
+says "$O" KEEP $LANDED
+ln -s "$T/bin/t3" "$HOME/.local/bin/t3"
+echo down >"$T/t3-mode"; : >"$T/t3-calls.log"
+/bin/bash "$JOB" --check "$W/own/a" >/dev/null 2>&1
+chk "--check is unchanged: exit 0, and T3 is not asked" "[ $? -eq 0 ] && [ ! -s '$T/t3-calls.log' ]"
+rm "$T/t3-mode"
+
+echo "-- a real run"
+threads; thread r1 poth false "$(date +%s)" Holder "keep ~/worktrees/own/a-2"
+/bin/bash "$JOB" --ttl-days 14 --landed-days 1 --keep-branches --root "$W" --root "$TW" >"$T/t-real.out" 2>&1
+says "$T/t-real.out" REMOVED own/a own/slips own/inmain own/old own/gone co/cl t3/own/t3-land
+says "$T/t-real.out" KEEP own/a-2 own/pushed
+chk "the held worktree is still there" "[ -f '$W/own/a-2/.git' ]"
+chk "T3's worktree is gone and the clone beside it stays" "[ ! -e '$TW/own/t3-land' ] && [ -d '$TW/co/tc/.git' ]"
+for b in fix/a planner/slips fix/inmain t3/land fix/old; do
+  chk "branch $b is kept" "git -C '$R/own' rev-parse -q --verify refs/heads/$b >/dev/null"
+done
+chk "a removed worktree's branch can be checked out again" "git -C '$R/own' worktree add -q '$TW/own/t3-land' t3/land 2>/dev/null"
+
+echo "-- the LaunchAgent"
+PL="$T/worktree-ttl.plist"
+(. "$REPO/tests/lib.sh" && sandbox agent-mini >/dev/null 2>&1 &&
+  cz execute-template <"$REPO/home/private_Library/LaunchAgents/com.carlosetejada.worktree-ttl.plist.tmpl" >"$PL"
+  cleanup_sandbox)
+args=$(plutil -extract ProgramArguments json -o - "$PL" 2>/dev/null | /usr/bin/jq -r '.[1:] | join(" ")')
+chk "the plist passes both limits, keeps branches and sweeps both roots" "[ '$args' = '$HOME/.local/bin/worktree-ttl --ttl-days 14 --landed-days 1 --keep-branches --root $W --root $TW' ]"
+
+echo "== what the reviews found"
+# Cases of their own under ~/wx, swept alone.
+X="$HOME/wx"
+xs() { # output action case...
+  local f=$1 act=$2 c
+  shift 2
+  for c in "$@"; do expect "$f" "$act" "wx/$c" ""; done
+}
+xsweep() { /bin/bash "$JOB" --dry-run --ttl-days 14 --landed-days 1 --keep-branches --root "$X" >"$O" 2>&1; }
+ign() { # path branch pr-number days ignored-file...
+  local p=$1 b=$2 n=$3 d=$4 f
+  shift 4
+  addwt "$R/own" "$p" "$b"
+  printf 'notes/\nnode_modules/\n*.sqlite\n.env.local\ncoverage.xml\n.coverage.*\n' >"$p/.gitignore"
+  work "$p" "i$n"; pushwt "$p"; pr test/own "$b" "$n" MERGED "$(tip "$p")"
+  for f in "$@"; do mkdir -p "$(dirname -- "$p/$f")"; echo x >"$p/$f"; done
+  age "$p" "$d"
+}
+ign "$X/own/notes" fix/x-notes 801 2 notes/todo.md node_modules/p/i.js
+ign "$X/own/dotenv" fix/x-env 802 2 .env.local
+ign "$X/own/db" fix/x-db 803 2 data.sqlite
+ign "$X/own/cache" fix/x-cache 804 2 node_modules/p/i.js .DS_Store
+ign "$X/own/oldnotes" fix/x-oldnotes 805 20 notes/todo.md
+# Test output, which a coverage run leaves in every Python worktree.
+ign "$X/own/cov" fix/x-cov 807 2 coverage.xml .coverage.h1.123
+# An unchanged copy of the main checkout's own CLAUDE.md, as the hook makes.
+echo "notes for agents" >"$R/own/CLAUDE.md"
+ign "$X/own/seeded" fix/x-seeded 806 2
+cp "$R/own/CLAUDE.md" "$X/own/seeded/CLAUDE.md"; age "$X/own/seeded" 2
+for c in bound bound-2 onbr near h1 h2 h3 s1 s2 s3 s4 late1; do landed "$R/own" "$X/own/$c" "fix/x-$c" own "8${#c}$RANDOM" 2; done
+landed "$R/oth" "$X/oth/onbr" fix/x-onbr oth 814 2
+landed "$R/oth" "$X/oth/late2" fix/x-late2 oth 815 2
+landed "$R/own" "$X/own/sp ace" fix/x-space own 831 2
+landed "$R/own" "$X/own/q uote" fix/x-quote own 832 2
+landed "$T/lone" "$X/lon/e" fix/x-e lon 851 2
+landed "$T/lone" "$X/lon/f" fix/x-f lon 852 2
+# Never pushed, and inside two merged PRs of other branches.
+addwt "$R/own" "$X/own/multi" planner/x-multi; work "$X/own/multi" multi
+for n in 821 822; do
+  git -C "$R/own" worktree add -q --no-track -b "planner/x-m$n" "$T/m$n" planner/x-multi 2>/dev/null
+  work "$T/m$n" "m$n"; pushwt "$T/m$n"
+  pr test/own "planner/x-m$n" "$n" MERGED "$(tip "$T/m$n")"
+  git -C "$R/own" worktree remove "$T/m$n"
+  git --git-dir="$T/remote/own.git" branch -q -D "planner/x-m$n"
+done
+git -C "$R/own" fetch -q --prune; age "$X/own/multi" 2
+# Last, since it moves main: merged with its own commit in main.
+addwt "$R/own" "$X/own/inmain" fix/x-inmain; work "$X/own/inmain" xinmain; pushwt "$X/own/inmain"
+git -C "$X/own/inmain" push -q origin HEAD:main 2>/dev/null
+pr test/own fix/x-inmain 841 MERGED "$(tip "$X/own/inmain")"
+git -C "$R/own" fetch -q; age "$X/own/inmain" 2
+now=$(date +%s)
+
+echo "-- landed work keeps ignored files that are no cache to the TTL"
+threads
+O="$T/x-ignored.out"; xsweep
+expect "$O" KEEP wx/own/notes "its work landed, but it holds notes/todo.md, an ignored file that is no cache, so it stays to the 14d TTL"
+expect "$O" KEEP wx/own/dotenv "holds .env.local"
+expect "$O" KEEP wx/own/db "holds data.sqlite"
+xs "$O" WOULD own/cache own/oldnotes own/seeded own/cov
+
+echo "-- a thread bound to a worktree or its branch holds it"
+thread b1 poth false "$now" Bound "nothing named" "{\"worktreePath\": \"$X/own/../own/bound\", \"branch\": null}"
+thread b2 pown false "$now" "On branch" "nothing named" '{"worktreePath": null, "branch": "fix/x-onbr"}'
+thread b3 poth false "$now" Elsewhere "nothing named" '{"branch": "fix/x-near"}'
+O="$T/x-bound.out"; xsweep
+expect "$O" KEEP wx/own/bound 'open T3 thread "Bound" holds it (it runs there)'
+expect "$O" KEEP wx/own/onbr 'open T3 thread "On branch" holds it (it is on its branch)'
+xs "$O" WOULD own/bound-2 oth/onbr own/near own/cache
+for bad in '{"worktreePath": 5}' '{"branch": ["fix/x-near"]}'; do
+  threads; thread b4 pown false "$now" Odd "nothing named" "$bad"
+  O="$T/x-badbound.out"; xsweep
+  expect "$O" KEEP wx/own/cache "T3's state is unknown"
+done
+
+echo "-- message text that is null is empty text"
+threads; thread m0 pown false "$now" Plain "nothing named"
+for mode in nulltext numtext; do
+  echo "$mode" >"$T/t3-mode"
+  O="$T/x-$mode.out"; xsweep
+  case $mode in
+    nulltext) xs "$O" WOULD own/cache ;;
+    numtext) expect "$O" KEEP wx/own/cache "T3's state is unknown" ;;
+  esac
+done
+rm "$T/t3-mode"
+
+echo "-- holds are read again right before a removal"
+threads; thread l1 poth false "$now" Late "now see ~/wx/own/late1"
+mv "$T/threads.jsonl" "$T/late.jsonl"; threads
+mkdir -p "$DRAFTS/late"
+printf 'cat %q >>%q\necho "cd ~/wx/oth/late2" >%q\n' "$T/late.jsonl" "$T/threads.jsonl" "$DRAFTS/late/steps.md" >"$T/gh-hook"
+O="$T/x-late.out"; WORKTREE_TTL_HOLD_MAX_AGE=0 xsweep
+chk "the thread and the step appeared during the PR lookups" "[ -e '$T/gh-hook.ran' ] && [ ! -e '$T/gh-hook' ]"
+expect "$O" KEEP wx/own/late1 'open T3 thread "Late"'
+expect "$O" KEEP wx/oth/late2 "$DRAFTS/late/steps.md"
+: >"$T/t3-calls.log"; O="$T/x-once.out"; xsweep
+chk "holds younger than 5 minutes are not read again" "[ \"\$(grep -c 'thread list --project $R/own --json' '$T/t3-calls.log')\" = 1 ]"
+rm -r -- "$DRAFTS/late"
+
+echo "-- every merged PR GitHub links to the tip counts"
+threads; thread p2 poth false "$now" "Second PR" "see https://github.com/test/own/pull/822"
+O="$T/x-multi.out"; xsweep
+expect "$O" KEEP wx/own/multi 'open T3 thread "Second PR"'
+threads; thread p3 poth false "$now" "No PR" "see https://github.com/test/own/pull/823"
+O="$T/x-multi2.out"; xsweep
+expect "$O" WOULD wx/own/multi "PR test/own#821 merged under another branch's name"
+
+echo "-- cd steps with escaped or quoted spaces, and other Markdown names"
+threads
+mkdir -p "$DRAFTS/x"
+# shellcheck disable=SC2016  # the steps say $HOME, as a person writes it
+printf '%s\n' 'cd ~/wx/own/sp\ ace && make' 'cd "$HOME/wx/own/q uote"' >"$DRAFTS/x/steps.md"
+echo "cd ~/wx/own/s1" >"$DRAFTS/x/UP.MD"
+echo "cd ~/wx/own/s2" >"$DRAFTS/x/plan.markdown"
+echo "cd ~/wx/own/s3" >"$DRAFTS/x/Notes.Markdown"
+echo "cd ~/wx/own/s4" >"$DRAFTS/x/notes.txt"
+O="$T/x-steps.out"; xsweep
+expect "$O" KEEP "wx/own/sp ace" "$DRAFTS/x/steps.md"
+expect "$O" KEEP "wx/own/q uote" "$DRAFTS/x/steps.md"
+expect "$O" KEEP wx/own/s1 "$DRAFTS/x/UP.MD"
+expect "$O" KEEP wx/own/s2 "$DRAFTS/x/plan.markdown"
+expect "$O" KEEP wx/own/s3 "$DRAFTS/x/Notes.Markdown"
+xs "$O" WOULD own/s4
+rm -r -- "$DRAFTS/x"
+
+echo "-- thread text that names \$HOME"
+# shellcheck disable=SC2016  # literal, as threads write it
+threads; thread h0 poth false "$now" Home 'cd $HOME/wx/own/h1, then ${HOME}/wx/own/h2'
+O="$T/x-home.out"; xsweep
+expect "$O" KEEP wx/own/h1 'open T3 thread "Home"'
+expect "$O" KEEP wx/own/h2 'open T3 thread "Home"'
+xs "$O" WOULD own/h3
+
+echo "-- a 404 for a tip in the default branch is unknown"
+threads; thread d1 poth false "$now" Asks "see github.com/test/own/pull/1"
+echo "gh: Not Found (HTTP 404)" >"$T/gh-commit-fail"
+O="$T/x-404.out"; xsweep
+rm "$T/gh-commit-fail"
+expect "$O" KEEP wx/own/inmain "PR state unknown (gh: Not Found (HTTP 404))"
+
+echo "-- the label for a repo in no T3 project"
+threads
+thread o1 poth false "$(ago 3)" Old "nothing named"
+thread o2 poth false "$(ago 3)" Namer2 "see ~/wx/lon/e"
+O="$T/x-nohome.out"; xsweep
+expect "$O" KEEP wx/lon/e 'open T3 thread "Namer2" holds it (it names its path, branch or PR)'
+expect "$O" KEEP wx/lon/f 'its repo is in no T3 project, and open thread "Old" started before its last use'
+# A thread with no title holds all the same.
+threads; thread o3 poth false "$(ago 3)" "" "nothing named"
+O="$T/x-notitle.out"; xsweep
+expect "$O" KEEP wx/lon/f 'its repo is in no T3 project, and open thread "" started before its last use'
+
 echo
 echo "passed=$PASS failed=$FAILS"
 [ "$FAILS" -eq 0 ]

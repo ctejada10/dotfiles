@@ -41,6 +41,7 @@ for file in "$REPO"/tests/*.sh "$REPO"/.githooks/pre-commit \
             "$REPO"/home/dot_claude/hooks/*.sh "$REPO"/home/executable_dot_tmux-window-name.sh \
             "$REPO"/home/dot_local/bin/executable_worktree-ttl \
             "$REPO"/home/dot_local/bin/executable_repo-snapshots \
+            "$REPO"/home/dot_local/share/dotfiles/hermes/storage-watch.sh \
             "$REPO"/home/dot_local/bin/executable_personal-backup; do
   name="${file#"$REPO"/}"
   if out=$(shellcheck -S warning -x "$file" 2>&1); then pass "$name"; else fail "$name" "$out"; fi
@@ -67,6 +68,9 @@ if [ -f "$rules" ]; then
     && pass "opens with the no-AI-attribution rule" || fail "opens with the no-AI-attribution rule"
   stray=$(sed 's/`[^`]*`//g' "$rules" | grep -n '@' || true)
   [ -z "$stray" ] && pass "has no @ outside backticks" || fail "has no @ outside backticks" "$stray"
+  # A clone you work in stays in ~/worktrees; only a throwaway one goes to scratch.
+  clones=$(grep -n 'clone' "$rules" | grep 'scratch' | grep -v -F '/worktrees`' || true)
+  [ -z "$clones" ] && pass "sends only throwaway clones to scratch" || fail "sends only throwaway clones to scratch" "$clones"
   lines=$(wc -l < "$rules" | tr -d ' ')
   [ "$lines" -le 200 ] && pass "stays under 200 lines ($lines)" || fail "stays under 200 lines" "$lines lines"
 else

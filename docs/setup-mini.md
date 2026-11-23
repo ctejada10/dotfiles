@@ -913,7 +913,9 @@ from `hermes.version` in `home/.chezmoidata/hermes.yaml`. It backs up
 `home/dot_local/share/dotfiles/hermes/config.json.tmpl` that differ, and
 restarts the gateway only if something changed. Those keys now win over the
 commands above, and `command_allowlist` holds only what tilde puts there, so an
-"Always" you tap in Telegram is removed on the next apply and reported.
+"Always" you tap in Telegram is removed on the next apply and reported. It
+also keeps [the storage job](#the-storage-job)'s script in `~/.hermes/scripts`
+and its skill in `~/.hermes/skills/mini/`, with no switch.
 
 Hermes stays on its ChatGPT login with smart approvals. `hermes-health` reports
 the state of everything, and the apply prints the steps still to do by hand.
@@ -1190,6 +1192,7 @@ Turn them on one week at a time.
 | Week | Job | Command |
 |---|---|---|
 | 1 | Morning brief | `hermes cron create "daily at 7am" "Morning brief: triage my Gmail inbox, list today's calendar, and list Todoist tasks due today or overdue. Read only; never send email. Suggest Todoist changes as a numbered list for me to approve." --skill email-inbox-triage --skill google-workspace --deliver telegram` |
+| 1 | Storage watch | `hermes cron create "every 3h" --name "Storage watch" --script storage-watch.sh --no-agent --deliver telegram` |
 | 2 | Evening wrap-up | `hermes cron create "daily at 9pm" "Evening wrap-up: what got done in Todoist today, what's left, and tomorrow's calendar. Propose any vault notes as drafts in ~/agent-drafts for me to review." --skill google-workspace --deliver telegram` |
 | 2 | Weekly review prep | `hermes cron create "every sunday 6pm" "Prepare my weekly review: the week's completed and overdue Todoist tasks, next week's calendar, and open loops. Write it as a draft in ~/agent-drafts." --skill google-workspace --deliver telegram` |
 | 2 | Job-search checkpoint | `hermes cron create "0 18 1,15 * *" "Prepare my job-search checkpoint from my applications tracker: status changes, follow-ups due, and next steps." --deliver telegram` |
@@ -1199,6 +1202,10 @@ Turn them on one week at a time.
   `/cron pause <job_id>` and `/cron resume <job_id>` work from Telegram.
 - Scheduled jobs can't ask, so they write drafts to `~/agent-drafts` rather
   than editing the vault.
+- Storage watch runs [the storage job](#the-storage-job) with no model, and
+  sends what it prints. The apply installs its script and its
+  `storage-watch` skill, so you can ask Bree how much space is free, what the
+  job or worktree cleanup did lately, or to run the check now.
 
 **T3's nightly coding** (week 3):
 
@@ -1338,21 +1345,77 @@ through `hooks/worktree.sh`, and FirstMate's crews use treehouse's
 reaches GitHub, and so the laptop, only when its branch is pushed.
 
 Finished worktrees stay, so a follow-up thread can pick one up, and clean up
-after themselves. `~/.local/bin/worktree-ttl` runs daily at 04:17 and removes
-a worktree in `~/worktrees` once it has gone 14 days unused (no edits, commits
-or Claude Code session there; an edit to a file the repo ignores counts too,
-apart from caches, environments and build output) and nothing in it would be
-lost: never one with an open PR, unpushed commits, commits only its reflog
-holds, uncommitted work, a running process or a lock
-(`git worktree lock --reason "keep: <why>"` keeps one). A merged branch goes
-with its worktree. A clone of another repo there is judged the same way, and
-goes only when each of its branches is merged, or pushed with no open PR, and
-it holds no stash. It goes to the Trash, not deleted, and `git worktree lock`
-doesn't apply to a clone: an open draft PR keeps one. The job never fetches,
-prunes, gc's or uses `--force`. It logs to `~/Library/Logs/worktree-ttl/`, and
-anything it can't decide, such as a moved or broken worktree, goes in
-`attention.txt` there. T3's and FirstMate's worktrees are left to them.
+after themselves. `~/.local/bin/worktree-ttl` runs daily at 04:17 over
+`~/worktrees` and `~/.t3/worktrees` and removes a worktree once it has gone
+unused for long enough: a day once its work has landed (its tip is in the
+default branch, or a merged PR holds it, under that branch's name or
+another's), 14 days for the rest. Landed work that holds a file the repo
+ignores, other than caches, environments, build output or an unchanged seed
+copy, such as notes or a database, waits the 14 days too. Use is an edit, a commit or a Claude Code
+session there; an edit to a file the repo ignores counts too, apart from
+caches, environments and build output.
+
+It removes one only when nothing in it would be lost: never one with an open
+PR, unpushed commits that no merged PR holds, commits only its reflog holds,
+uncommitted work, a running process or a lock
+(`git worktree lock --reason "keep: <why>"` keeps one). And at any age it
+keeps one that something still holds:
+
+- an open T3 thread (not settled, snoozed included) that started before the
+  worktree's last use, in the same project. A thread in a project that is no
+  Git repo, such as `src` or scratch, holds any repo's worktrees, and any
+  thread holds one whose main checkout is in no project;
+- an open thread that runs in it, or on its branch in the same project, or
+  whose messages name its path, its branch (a name with a `/` or a `-`) or a
+  merged PR that landed it, whatever the dates;
+- a pending step: a `cd` into it, in a Markdown file (`.md` or `.markdown`)
+  under `~/agent-drafts` or in an orchestrate run's `gates.md`.
+
+The job reads these again right before a removal when they are 5 minutes
+old. Settling a thread, or deleting a step that is done, lets go. When T3
+can't answer, or a step outside `~/agent-drafts` can't be read, the job
+removes nothing and says so in `attention.txt`; a file or folder under
+`~/agent-drafts` it can't read holds nothing and gets one line there.
+
+Branches stay when their worktrees go, so a follow-up thread, or T3 itself,
+can check one out again. A clone of another repo in `~/worktrees` is held the
+same way, waits the 14 days even when merged, and goes only when each of its
+branches is merged, or pushed with no open PR, and it holds no stash. It goes
+to the Trash, not deleted, and `git worktree lock` doesn't apply to a clone:
+an open draft PR keeps one. A clone in `~/.t3/worktrees` is never touched,
+and FirstMate's worktrees are left to it. The job never fetches, prunes, gc's
+or uses `--force`. It logs to `~/Library/Logs/worktree-ttl/`, where each KEEP
+line says what holds it, and anything it can't decide, such as a moved or
+broken worktree, goes in `attention.txt` there.
 `launchctl print gui/$(id -u)/com.carlosetejada.worktree-ttl` shows it loaded.
+
+### The storage job
+
+Hermes's Storage watch cron job runs `~/.hermes/scripts/storage-watch.sh`
+every 3 hours, with no model, for what worktree cleanup doesn't free. Create
+it with the command in [section 9](#9-scheduled-jobs); the apply only
+installs the script. While Colima runs (the job never starts, stops or restarts it),
+it cuts Docker's build cache down to 15 GB and trims the Docker disk, so the
+space Docker frees comes back to macOS. Colima's own weekly trim never reaches
+that disk. Images, containers, volumes and Colima's config are left alone.
+
+Then, whatever the upkeep did, the script prints one message, which Bree
+sends to Telegram, when free space is under 50 GiB, or the per-user temp
+folder (`getconf DARWIN_USER_TEMP_DIR`) or `~/agent-drafts` is over 20 GiB,
+naming each with its size. A step that failed is a line in the same message
+that names the step; what the tool said is only in the log. A new condition,
+a different failed step included, goes at once and the same ones at most once
+in 24 hours. A message counts as sent once it is recorded, just before it
+prints; when it can't be recorded, as on a full disk, it says it may repeat.
+The script exits 0 unless it can't run
+at all, which Hermes reports as a failed job. The job deletes nothing on the
+Mac: what to delete is yours to decide. It logs to
+`~/Library/Logs/storage-watch/`.
+`bash ~/.hermes/scripts/storage-watch.sh --dry-run` prints the sizes and the
+message it would send and changes nothing, and `hermes cron list` shows the
+job. The `storage-watch` skill lets Bree answer from the same dry run and
+logs, and run the job when you ask; it never deletes anything or touches
+Colima.
 
 ### FirstMate
 
@@ -1501,6 +1564,10 @@ Code loads none of the account's claude.ai connectors or synced plugins.
 
 **macOS, Git and the repos**
 
+- **Bree says the mini's storage needs a look:** the message names what is
+  over its limit and any step that failed. `du -hd 1` on that folder shows
+  what filled it, and `~/Library/Logs/storage-watch/storage-watch.log` what
+  Colima's upkeep did ([The storage job](#the-storage-job)).
 - **Screen Sharing is "not permitted":** turn it off and on in System
   Settings ([Remote Login and Screen Sharing](#remote-login-and-screen-sharing)).
 - **Screen Sharing shows a tiny or black screen:** plug in the dummy HDMI

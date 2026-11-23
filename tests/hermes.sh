@@ -95,7 +95,7 @@ fi
 section "role agent-mini, switches off"
 sandbox agent-mini >/dev/null 2>&1
 list=$(cz managed --include=files 2>/dev/null)
-for f in .local/bin/hermes-config-sync .local/bin/hermes-health .local/share/dotfiles/hermes/SKILL.md .local/share/dotfiles/hermes/rivendell/SKILL.md .local/share/dotfiles/hermes/rivendell/rivendell-state.py Library/LaunchAgents/com.carlosetejada.hermes-logs.plist; do
+for f in .local/bin/hermes-config-sync .local/bin/hermes-health .local/share/dotfiles/hermes/SKILL.md .local/share/dotfiles/hermes/storage-watch.sh .local/share/dotfiles/hermes/storage-watch/SKILL.md .local/share/dotfiles/hermes/rivendell/SKILL.md .local/share/dotfiles/hermes/rivendell/rivendell-state.py Library/LaunchAgents/com.carlosetejada.hermes-logs.plist; do
   grep -qx "$f" <<<"$list" && pass "manages $f" || fail "manages $f"
 done
 grep -q 'hurin-bridge\|bridge.env' <<<"$list" && fail "has no bridge" || pass "has no bridge"
@@ -104,12 +104,42 @@ off=$(cz --override-data "$OFF" cat "$SANDBOX/home/.local/share/dotfiles/hermes/
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["command_allowlist"]==[] and d["approvals.mode"]=="smart" and not any("hurin" in k or k.startswith("platforms") for k in d)' <<<"$off" \
   && pass "config has no Hurin keys and an empty allowlist" || fail "config has no Hurin keys and an empty allowlist" "$off"
 grep -qi rivendell <<<"$off" && fail "config has no rivendell route" "$off" || pass "config has no rivendell route"
+# Hermes matches approvals.deny with fnmatch, lowercased, against an agent's
+# terminal command. A no-agent cron script runs outside it, so the storage
+# job's own prune is not gated.
+storage_skill=$REPO/home/dot_local/share/dotfiles/hermes/storage-watch/SKILL.md
+python3 -c '
+import fnmatch, json, sys
+deny = [p.lower() for p in json.load(sys.stdin)["approvals.deny"]]
+hit = lambda c: [p for p in deny if fnmatch.fnmatchcase(c.lower(), p)]
+for p in ("*docker*prune*", "*colima delete*", "*colima stop*", "*find*-delete*"):
+    assert p in deny, p
+for c in ("docker system prune -af --volumes", "docker --context colima image prune -a", "docker volume prune",
+          "colima delete --force", "colima stop", "find ~/agent-drafts -type f -delete"):
+    assert hit(c), c
+lines, fence = [], False
+for line in open(sys.argv[1]):
+    if line.startswith("```"):
+        fence = not fence
+    elif fence and line.strip():
+        lines.append(line.strip())
+assert len(lines) == 4, lines
+for c in lines:
+    assert not hit(c), (c, hit(c))
+' "$storage_skill" <<<"$off" \
+  && pass "the deny list blocks the cleanups the storage skill forbids, and none of its own commands" \
+  || fail "the deny list blocks the cleanups the storage skill forbids, and none of its own commands" "$off"
+grep -n -w -i -E 'he|his|him' "$storage_skill" >/dev/null \
+  && fail "the storage skill names Carlos, never he or his" "$(grep -n -w -i -E 'he|his|him' "$storage_skill")" \
+  || pass "the storage skill names Carlos, never he or his"
 off_script=$(cz --override-data '{"hermes":{"secrets":{"enabled":true},"rivendell":{"enabled":false}}}' execute-template <"$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl")
 grep -q 'op://Hermes/Telegram' <<<"$off_script" && pass "renders the Telegram secrets" || fail "renders the Telegram secrets"
 grep -q 'op://Hermes/Hurin' <<<"$off_script" && fail "renders no Hurin secrets" || pass "renders no Hurin secrets"
 grep -q 'op://Hermes/Rivendell' <<<"$off_script" && fail "renders no Rivendell secret" || pass "renders no Rivendell secret"
 grep -q 'skills/rivendell' <<<"$off_script" && fail "installs no rivendell skill" || pass "installs no rivendell skill"
 grep -q 'rivendell-state.py' <<<"$off_script" && fail "installs no rivendell state script" || pass "installs no rivendell state script"
+grep -q 'scripts/storage-watch.sh' <<<"$off_script" && grep -q 'skills/mini/storage-watch/SKILL.md' <<<"$off_script" \
+  && pass "installs the storage job's script and skill with every switch off" || fail "installs the storage job's script and skill with every switch off"
 
 section "role agent-mini, rivendell on"
 default=$(cz cat "$SANDBOX/home/.local/share/dotfiles/hermes/config.json")
@@ -250,7 +280,9 @@ mkdir -p "$F/home/.hermes/skills/x" "$F/home/.local/bin" "$F/home/.local/share/d
 printf 'model: x\n' >"$F/home/.hermes/config.yaml"
 printf 'OWN=mine\n' >"$F/home/.hermes/.env"
 cp "$sync" "$F/home/.local/bin/hermes-config-sync"; chmod +x "$F/home/.local/bin/hermes-config-sync"
-cp "$REPO/home/dot_local/share/dotfiles/hermes/SKILL.md" "$F/home/.local/share/dotfiles/hermes/"
+cp "$REPO/home/dot_local/share/dotfiles/hermes/SKILL.md" "$REPO/home/dot_local/share/dotfiles/hermes/storage-watch.sh" "$F/home/.local/share/dotfiles/hermes/"
+mkdir -p "$F/home/.local/share/dotfiles/hermes/storage-watch"
+cp "$REPO/home/dot_local/share/dotfiles/hermes/storage-watch/SKILL.md" "$F/home/.local/share/dotfiles/hermes/storage-watch/"
 printf '{"approvals.mode":"smart"}\n' >"$F/home/.local/share/dotfiles/hermes/config.json"
 cat >"$F/home/.local/bin/hermes" <<EOF
 #!/bin/bash
@@ -291,6 +323,12 @@ grep -q '^TOKEN=s3cret$' "$F/home/.hermes/.env" && grep -q '^OWN=mine$' "$F/home
 grep -q '^-a powernap 0$\|pmset -a powernap 0' "$F/root" && pass "sets only the pmset value that differs" || fail "sets only the pmset value that differs" "$(cat "$F/root" 2>/dev/null)"
 [ "$(grep -c pmset "$F/root")" = 1 ] && pass "touches no other pmset value" || fail "touches no other pmset value"
 [ "$(grep -c restart "$F/restarts")" = 1 ] && pass "restarts the gateway after a change" || fail "restarts the gateway after a change"
+cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/storage-watch.sh" "$F/home/.hermes/scripts/storage-watch.sh" \
+  && pass "installs the storage script where Hermes's cron runs scripts" || fail "installs the storage script where Hermes's cron runs scripts"
+cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/storage-watch/SKILL.md" "$F/home/.hermes/skills/mini/storage-watch/SKILL.md" \
+  && pass "and its skill" || fail "and its skill"
+grep -q 'updated the storage script' <<<"$out" && grep -q 'updated the storage skill' <<<"$out" \
+  && pass "and says so" || fail "and says so" "$out"
 
 before=$(cd "$F/home/.hermes" && cat .env config.yaml | cksum)
 backups=$(ls -d "$state"/backup-* | wc -l)
@@ -299,6 +337,43 @@ apply >/dev/null
 [ "$before" = "$(cd "$F/home/.hermes" && cat .env config.yaml | cksum)" ] && pass "a second run changes nothing" || fail "a second run changes nothing"
 [ "$backups" = "$(ls -d "$state"/backup-* | wc -l)" ] && pass "backs up only once" || fail "backs up only once"
 ls "$state"/render.* >/dev/null 2>&1 && fail "leaves no rendered temp file" || pass "leaves no rendered temp file"
+# A cron script is read on every run, so only a new skill needs the gateway.
+echo edited >>"$F/home/.hermes/scripts/storage-watch.sh"
+apply >/dev/null
+cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/storage-watch.sh" "$F/home/.hermes/scripts/storage-watch.sh" \
+  && [ "$(grep -c restart "$F/restarts")" = 1 ] \
+  && pass "a changed storage script is put back without a restart" || fail "a changed storage script is put back without a restart"
+echo edited >>"$F/home/.hermes/skills/mini/storage-watch/SKILL.md"
+apply >/dev/null
+cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/storage-watch/SKILL.md" "$F/home/.hermes/skills/mini/storage-watch/SKILL.md" \
+  && [ "$(grep -c restart "$F/restarts")" = 2 ] \
+  && pass "a changed storage skill is put back with a restart" || fail "a changed storage skill is put back with a restart"
+# bash reads a script as it runs, so a run of the old one must keep the old
+# file: a hard link stands in for that run's open file.
+for pair in scripts/storage-watch.sh=storage-watch.sh skills/mini/storage-watch/SKILL.md=storage-watch/SKILL.md; do
+  f=$F/home/.hermes/${pair%%=*}
+  echo edited >>"$f"
+  ln -f "$f" "$F/running"
+  apply >/dev/null
+  cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/${pair#*=}" "$f" && [ "$(tail -n 1 "$F/running")" = edited ] \
+    && pass "a new ${pair#*=} replaces the old file, which a running job keeps" \
+    || fail "a new ${pair#*=} replaces the old file, which a running job keeps"
+done
+rm -f "$F/running"
+restarts=$(grep -c restart "$F/restarts")
+dir=$F/home/.hermes/skills/mini/storage-watch
+echo edited >>"$dir/SKILL.md"
+chmod 500 "$dir"
+out=$(apply)
+chmod 700 "$dir"
+grep -q "couldn't update the storage skill" <<<"$out" && ! grep -q 'updated the storage skill' <<<"$out" \
+  && [ "$(tail -n 1 "$dir/SKILL.md")" = edited ] && [ "$(grep -c restart "$F/restarts")" = "$restarts" ] \
+  && pass "a copy that fails warns, leaves the old file and doesn't restart" || fail "a copy that fails warns, leaves the old file and doesn't restart" "$out"
+[ "$(ls -A "$dir")" = SKILL.md ] && [ "$(ls -A "$F/home/.hermes/scripts")" = storage-watch.sh ] \
+  && pass "and leaves no temp file" || fail "and leaves no temp file" "$(ls -A "$dir" "$F/home/.hermes/scripts")"
+apply >/dev/null
+cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/storage-watch/SKILL.md" "$dir/SKILL.md" \
+  && pass "and the next apply puts it back" || fail "and the next apply puts it back"
 mv "$F/stub/op" "$F/stub/op.ok"
 printf '#!/bin/sh\necho "op says no" >&2; exit 1\n' >"$F/stub/op"; chmod +x "$F/stub/op"
 before=$(cksum <"$F/home/.hermes/.env")
