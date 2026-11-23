@@ -91,6 +91,8 @@ __pycache__
 .coverage
 htmlcov
 coverage
+coverage.xml
+.coverage.*
 .cache
 .eggs
 *.egg-info
@@ -190,6 +192,8 @@ case $TTL_DAYS in
   '' | *[!0-9]*) printf '%s: --ttl-days needs a whole number\n' "$PROG" >&2; exit 2 ;;
   ?????*) printf '%s: --ttl-days takes at most 4 digits\n' "$PROG" >&2; exit 2 ;;
 esac
+# A leading zero would make the arithmetic read it as octal.
+TTL_DAYS=$((10#$TTL_DAYS))
 if [ "$TTL_DAYS" -lt 1 ]; then
   printf '%s: --ttl-days must be at least 1\n' "$PROG" >&2
   exit 2
@@ -199,6 +203,7 @@ case $LANDED_DAYS in
   *[!0-9]*) printf '%s: --landed-days needs a whole number\n' "$PROG" >&2; exit 2 ;;
   ?????*) printf '%s: --landed-days takes at most 4 digits\n' "$PROG" >&2; exit 2 ;;
 esac
+LANDED_DAYS=$((10#$LANDED_DAYS))
 # Ignored files and transcripts are only read back to the TTL.
 if [ "$LANDED_DAYS" -lt 1 ] || [ "$LANDED_DAYS" -gt "$TTL_DAYS" ]; then
   printf '%s: --landed-days must be from 1 to the TTL\n' "$PROG" >&2
@@ -1186,7 +1191,8 @@ MESSAGES_JQ='if length == 1 and (.[0].messages | type) == "array"
     and all(.[0].messages[]; .text | type == "string" or type == "null")
   then .[0].messages[] | .text // "" else error("not a thread with messages") end'
 # The worktree path and branch a thread is bound to, one line each.
-BIND_JQ='.[0].thread | [.worktreePath, .branch]
+BIND_JQ='if (.[0].thread | type) != "object" then error("no thread") else . end
+  | .[0].thread | [.worktreePath, .branch]
   | if all(type == "string" or type == "null") then .[] | . // "" | gsub("[[:cntrl:]]"; " ")
     else error("not a worktree path and branch") end'
 
@@ -1283,13 +1289,13 @@ CD_HOME="(~|\\\$HOME|\\\$[{]HOME[}])[\"']?"
 #    whatever the dates.
 # 3. A pending step with a cd into WT.
 hold_reason() {
-  local project id theirs created title p b s n oid draft rc wp landed=$LANDED_BY nohome=""
+  local project id theirs created title p b s n oid draft rc wp landed=$LANDED_BY nohome="" nohome_seen=""
   project=$(M=$MAIN awk -F '\t' '$1 == ENVIRON["M"] { print $2; exit }' "$TMP/t3.paths")
   while IFS="$TAB" read -r id theirs created n title; do
     [ "$LAST_USE" -ge "$created" ] || continue
     # Any thread holds it then, but one that names it makes a better label.
     if [ -z "$project" ]; then
-      nohome=${nohome:-$title}
+      [ -n "$nohome_seen" ] || nohome=$title nohome_seen=1
     elif [ "$project" = "$theirs" ] || grep -Fxq -- "$theirs" "$TMP/t3.nongit"; then
       echo "open T3 thread \"$title\" holds it (started before its last use)"
       return 0
@@ -1364,7 +1370,7 @@ hold_reason() {
       *) return 2 ;;
     esac
   done <"$TMP/t3.open"
-  if [ -n "$nohome" ]; then
+  if [ -n "$nohome_seen" ]; then
     echo "its repo is in no T3 project, and open thread \"$nohome\" started before its last use"
     return 0
   fi
