@@ -107,6 +107,16 @@ if ! cmp -s "$data/rivendell/rivendell-state.py" "$HOME/.hermes/scripts/rivendel
 fi
 {{ end -}}
 
+# The storage job: Hermes's cron reads its script on every run, so only the
+# skill that answers about it needs a restart.
+mkdir -p "$HOME/.hermes/scripts" "$HOME/.hermes/skills/mini/storage-watch"
+if ! cmp -s "$data/storage-watch.sh" "$HOME/.hermes/scripts/storage-watch.sh"; then
+  cp "$data/storage-watch.sh" "$HOME/.hermes/scripts/storage-watch.sh" && say "updated the storage script"
+fi
+if ! cmp -s "$data/storage-watch/SKILL.md" "$HOME/.hermes/skills/mini/storage-watch/SKILL.md"; then
+  cp "$data/storage-watch/SKILL.md" "$HOME/.hermes/skills/mini/storage-watch/SKILL.md" && say "updated the storage skill" && changed=1
+fi
+
 if [ -n "$changed" ]; then
   if launchctl print "gui/$(id -u)/ai.hermes.gateway" >/dev/null 2>&1; then
     "$hermes" gateway restart >/dev/null 2>&1 && say "restarted the Hermes gateway" || warn "couldn't restart the Hermes gateway"

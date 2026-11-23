@@ -100,7 +100,6 @@ Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 .claude/routing.md
 .local/bin/worktree-ttl
 .local/bin/repo-snapshots
-.local/bin/storage-watch
 .local/bin/hermes-config-sync
 .local/bin/hermes-health
 .local/bin/hermes-rotate-logs
@@ -108,7 +107,6 @@ Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 Library/LaunchAgents/com.carlosetejada.hermes-logs.plist
 Library/LaunchAgents/com.carlosetejada.worktree-ttl.plist
 Library/LaunchAgents/com.carlosetejada.repo-snapshots.plist
-Library/LaunchAgents/com.carlosetejada.storage-watch.plist
 .claude/attended.md
 .local/share/claude-plugins
 .claude/skills/codebase-design

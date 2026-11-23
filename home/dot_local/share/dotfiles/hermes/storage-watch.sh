@@ -2,27 +2,36 @@
 #
 # storage-watch: keep development sessions from filling the mini's disk.
 #
-# Each run does two things, and a failure in one never skips the other:
+# A Hermes cron job runs it every 3 hours with no agent and sends what it
+# prints to Telegram as it is, so stdout holds the message and nothing else,
+# and empty stdout sends nothing. Each run does two things, and a failure in
+# one never skips the other:
 #
 # 1. Colima's upkeep, only while Colima is running, which it never starts,
 #    stops or restarts: cut the build cache down to 15GB, then trim the
 #    Docker disk. Colima's own weekly fstrim only reads /etc/fstab, so it
 #    never trims that disk. Images, containers, volumes and Colima's config
 #    are never touched.
-# 2. One Telegram message through hermes send when free space is under
-#    50 GiB, or the per-user temp folder or ~/agent-drafts is over 20 GiB,
-#    measured after the upkeep. It sends when a condition hasn't been in a
-#    message for 24 hours, so the same set goes at most once a day, a new one
-#    at once, and a send that failed again the next run.
+# 2. One message when free space is under 50 GiB, or the per-user temp folder
+#    or ~/agent-drafts is over 20 GiB, measured after the upkeep. A step that
+#    failed is a condition of its own. It prints when a condition hasn't been
+#    in a message for 24 hours, so the same set goes at most once a day and a
+#    new one at once.
 #
-# It deletes nothing on the Mac.
+# It exits 0 after any run it could make, so Hermes delivers the message, and
+# non-zero only when it can't run at all, for Hermes's own failure notice. It
+# deletes nothing on the Mac.
 #
-# Usage: storage-watch [--dry-run]
+# Usage: storage-watch.sh [--dry-run]
 
 set -u
 umask 077
 
 PROG=storage-watch
+# Hermes can hand its scripts a profile's HOME; colima, docker and the
+# folders measured here are in the real one.
+HOME=${HERMES_REAL_HOME:-$HOME}
+export HOME
 DRY_RUN=0
 STATE_DIR="$HOME/Library/Logs/storage-watch"
 LOG_FILE="$STATE_DIR/storage-watch.log"
@@ -32,7 +41,6 @@ FREE_MIN_GIB=50
 FOLDER_MAX_GIB=20
 KIB_PER_GIB=1048576
 RESEND_AFTER=86400
-FAILED=0
 TAB=$(printf '\t')
 
 # System tools come first, as in worktree-ttl. colima needs limactl and
@@ -44,9 +52,10 @@ NOW=${STORAGE_WATCH_NOW:-$(date +%s)}
 
 usage() {
   cat <<'EOF'
-Usage: storage-watch [options]
+Usage: storage-watch.sh [options]
 
-  -n, --dry-run   Measure and print: no upkeep, no message, no state, no log.
+  -n, --dry-run   Print each measurement and the message it would send: no
+                  upkeep, no state, no log.
   -h, --help      Show this help.
 
 It logs to ~/Library/Logs/storage-watch/storage-watch.log.
@@ -64,15 +73,17 @@ done
 
 # ---------------------------------------------------------------- helpers
 
+# The log goes to its file, or to stdout on a dry run, never both: a real
+# run's stdout is the message.
 log() {
   local line
   line="$(date '+%Y-%m-%dT%H:%M:%S%z') $*"
-  [ "$DRY_RUN" = 1 ] || printf '%s\n' "$line" >>"$LOG_FILE"
-  printf '%s\n' "$line"
+  if [ "$DRY_RUN" = 1 ]; then printf '%s\n' "$line"; else printf '%s\n' "$line" >>"$LOG_FILE"; fi
 }
 
 failed() {
-  FAILED=1
+  local what=$*
+  printf '%s\t%s\n' failed "failed: ${what//$TAB/ }" >>"$TMP/over"
   log "FAILED  $*"
 }
 
@@ -127,6 +138,7 @@ upkeep() {
 # ------------------------------------------------------------------ alert
 
 # over KEY TEXT: one condition, for the message and for what was last sent.
+# Every failure shares the key failed.
 over() {
   printf '%s\t%s\n' "$1" "$2" >>"$TMP/over"
   log "OVER    $2"
@@ -151,7 +163,8 @@ measure_free() {
 measure_folder() {
   local key=$1 dir=$2 used
   [ -e "$dir" ] || return 0
-  timed 1800 /dev/null du -skxH "$dir"
+  # Every limit together stays under Hermes's cron.script_timeout_seconds, 3600.
+  timed 900 /dev/null du -skxH "$dir"
   used=$(awk 'END { print $1 }' "$TMP/out")
   case $used in '' | *[!0-9]*) failed "du $dir: $(said err)"; return ;; esac
   log "SIZE    $dir holds $(gib "$used") GiB"
@@ -182,32 +195,40 @@ due() {
   return 1
 }
 
+message() {
+  echo "The Mac mini's storage needs a look:"
+  cut -f2 "$TMP/over" | sed 's/^/- /'
+}
+
 notify() {
-  local hermes="$HOME/.local/bin/hermes"
-  [ -s "$TMP/over" ] || return 0
-  [ "$DRY_RUN" = 0 ] || { log "WOULD   send unless it was sent in the last 24 hours"; return 0; }
-  due || return 0
-  [ -x "$hermes" ] || hermes=$(command -v hermes) || { failed "hermes send: hermes not found"; return; }
-  {
-    echo "The Mac mini's storage needs a look:"
-    cut -f2 "$TMP/over" | sed 's/^/- /'
-  } >"$TMP/message"
-  if ! timed 60 "$TMP/message" "$hermes" send --to telegram -q; then
-    failed "hermes send: $(said err)"
-    return
+  local keys
+  if [ "$DRY_RUN" = 1 ]; then
+    if [ -s "$TMP/over" ]; then
+      echo "WOULD   send this, unless it went in the last 24 hours:"
+      message
+    else
+      echo "WOULD   send nothing: nothing to send"
+    fi
+    return 0
   fi
-  log "SENT    $(cut -f1 "$TMP/over" | tr '\n' ' ')"
+  [ -s "$TMP/over" ] || return 0
+  due || return 0
+  message || return 0
+  keys=$(cut -f1 "$TMP/over" | sort -u)
+  log "SENT    $(tr '\n' ' ' <<<"$keys")"
   # What was sent now, then when each other condition last was.
   {
-    awk -F '\t' -v now="$NOW" '{ print $1 "\t" now }' "$TMP/over"
+    awk -v now="$NOW" '{ print $0 "\t" now }' <<<"$keys"
     [ ! -f "$SENT_FILE" ] || awk -F '\t' 'FILENAME == ARGV[1] { now[$1] = 1; next } !($1 in now)' "$TMP/over" "$SENT_FILE"
-  } >"$SENT_FILE.tmp" && mv -- "$SENT_FILE.tmp" "$SENT_FILE" || failed "could not record what was sent"
+  } >"$SENT_FILE.tmp" && mv -- "$SENT_FILE.tmp" "$SENT_FILE" || log "FAILED  could not record what was sent"
 }
 
 # ------------------------------------------------------------------- main
 
 if [ "$DRY_RUN" = 0 ]; then
-  mkdir -p -- "$STATE_DIR" || FAILED=1
+  # With nowhere to log or to keep what was sent, every run would repeat
+  # itself, so it is a run it can't make.
+  mkdir -p -- "$STATE_DIR" || exit 1
   if [ -f "$LOG_FILE" ] && [ "$(wc -l <"$LOG_FILE")" -gt "$LOG_MAX_LINES" ]; then
     tail -n $((LOG_MAX_LINES / 2)) "$LOG_FILE" >"$LOG_FILE.tmp" && mv -- "$LOG_FILE.tmp" "$LOG_FILE"
   fi
@@ -219,4 +240,4 @@ trap 'rm -r -- "$TMP" 2>/dev/null' EXIT
 [ "$DRY_RUN" = 1 ] || upkeep
 measure
 notify
-exit "$FAILED"
+exit 0
