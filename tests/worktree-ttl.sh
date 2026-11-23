@@ -1204,6 +1204,7 @@ case "\$1 \$2 \$mode" in
   "thread list nodate") echo '[{"threadId":"t","projectId":"pown","title":"x","settled":false,"createdAt":"yesterday"}]'; exit 0 ;;
   "thread show showdown") echo "request failed" >&2; exit 1 ;;
   "thread show nomessages") echo '{"thread":{}}'; exit 0 ;;
+  "thread show nothread") echo '{"messages":[]}'; exit 0 ;;
   "thread show nulltext") echo '{"thread":{},"messages":[{"role":"user","runId":null,"text":null}]}'; exit 0 ;;
   "thread show numtext") echo '{"thread":{},"messages":[{"role":"user","runId":null,"text":5}]}'; exit 0 ;;
 esac
@@ -1265,6 +1266,11 @@ says "$T/t-three.out" KEEP own/a
 for v in 0 x 15; do
   /bin/bash "$JOB" --dry-run --ttl-days 14 --landed-days "$v" >/dev/null 2>&1
   chk "landed days $v is rejected" "[ $? -eq 2 ]"
+done
+# A leading zero is still base ten.
+for v in 08 09 0014; do
+  /bin/bash "$JOB" --dry-run --root "$W" --ttl-days "$v" --log "$T/t-zero.log" >/dev/null 2>&1
+  chk "--ttl-days $v is read as base ten" "[ $? -eq 0 ] && grep -q 'ttl=$((10#$v))d' '$T/t-zero.log'"
 done
 for a in "--ttl-days 10000" "--ttl-days 99999999999999999999" "--landed-days 99999999999999999999" "--landed-days 00001"; do
   # shellcheck disable=SC2086  # an option and its value
@@ -1395,7 +1401,7 @@ O="$T/t-down.out"; sweep
 says "$O" KEEP $LANDED own/old own/gone co/cl
 chk "a T3 that is down is one attention line, however many it keeps" "[ \"\$(grep -c \"T3's state is unknown\" '$ATT')\" = 1 ] && ! grep -q '| kept, idle' '$ATT'"
 # The decision is one; each way to fail needs only a worktree to keep.
-for mode in badlist empty notarray nofield nodate slow showdown badshow nomessages slowshow; do
+for mode in badlist empty notarray nofield nodate slow showdown badshow nomessages nothread slowshow; do
   echo "$mode" >"$T/t3-mode"
   O="$T/t-$mode.out"
   WORKTREE_TTL_T3_TIMEOUT=1 /bin/bash "$JOB" --dry-run --landed-days 1 --root "$W/oth" >"$O" 2>&1
@@ -1447,7 +1453,7 @@ ign() { # path branch pr-number days ignored-file...
   local p=$1 b=$2 n=$3 d=$4 f
   shift 4
   addwt "$R/own" "$p" "$b"
-  printf 'notes/\nnode_modules/\n*.sqlite\n.env.local\n' >"$p/.gitignore"
+  printf 'notes/\nnode_modules/\n*.sqlite\n.env.local\ncoverage.xml\n.coverage.*\n' >"$p/.gitignore"
   work "$p" "i$n"; pushwt "$p"; pr test/own "$b" "$n" MERGED "$(tip "$p")"
   for f in "$@"; do mkdir -p "$(dirname -- "$p/$f")"; echo x >"$p/$f"; done
   age "$p" "$d"
@@ -1457,6 +1463,8 @@ ign "$X/own/dotenv" fix/x-env 802 2 .env.local
 ign "$X/own/db" fix/x-db 803 2 data.sqlite
 ign "$X/own/cache" fix/x-cache 804 2 node_modules/p/i.js .DS_Store
 ign "$X/own/oldnotes" fix/x-oldnotes 805 20 notes/todo.md
+# Test output, which a coverage run leaves in every Python worktree.
+ign "$X/own/cov" fix/x-cov 807 2 coverage.xml .coverage.h1.123
 # An unchanged copy of the main checkout's own CLAUDE.md, as the hook makes.
 echo "notes for agents" >"$R/own/CLAUDE.md"
 ign "$X/own/seeded" fix/x-seeded 806 2
@@ -1491,7 +1499,7 @@ O="$T/x-ignored.out"; xsweep
 expect "$O" KEEP wx/own/notes "its work landed, but it holds notes/todo.md, an ignored file that is no cache, so it stays to the 14d TTL"
 expect "$O" KEEP wx/own/dotenv "holds .env.local"
 expect "$O" KEEP wx/own/db "holds data.sqlite"
-xs "$O" WOULD own/cache own/oldnotes own/seeded
+xs "$O" WOULD own/cache own/oldnotes own/seeded own/cov
 
 echo "-- a thread bound to a worktree or its branch holds it"
 thread b1 poth false "$now" Bound "nothing named" "{\"worktreePath\": \"$X/own/../own/bound\", \"branch\": null}"
@@ -1580,6 +1588,10 @@ thread o2 poth false "$(ago 3)" Namer2 "see ~/wx/lon/e"
 O="$T/x-nohome.out"; xsweep
 expect "$O" KEEP wx/lon/e 'open T3 thread "Namer2" holds it (it names its path, branch or PR)'
 expect "$O" KEEP wx/lon/f 'its repo is in no T3 project, and open thread "Old" started before its last use'
+# A thread with no title holds all the same.
+threads; thread o3 poth false "$(ago 3)" "" "nothing named"
+O="$T/x-notitle.out"; xsweep
+expect "$O" KEEP wx/lon/f 'its repo is in no T3 project, and open thread "" started before its last use'
 
 echo
 echo "passed=$PASS failed=$FAILS"
