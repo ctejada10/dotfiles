@@ -320,6 +320,32 @@ apply >/dev/null
 cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/storage-watch/SKILL.md" "$F/home/.hermes/skills/mini/storage-watch/SKILL.md" \
   && [ "$(grep -c restart "$F/restarts")" = 2 ] \
   && pass "a changed storage skill is put back with a restart" || fail "a changed storage skill is put back with a restart"
+# bash reads a script as it runs, so a run of the old one must keep the old
+# file: a hard link stands in for that run's open file.
+for pair in scripts/storage-watch.sh=storage-watch.sh skills/mini/storage-watch/SKILL.md=storage-watch/SKILL.md; do
+  f=$F/home/.hermes/${pair%%=*}
+  echo edited >>"$f"
+  ln -f "$f" "$F/running"
+  apply >/dev/null
+  cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/${pair#*=}" "$f" && [ "$(tail -n 1 "$F/running")" = edited ] \
+    && pass "a new ${pair#*=} replaces the old file, which a running job keeps" \
+    || fail "a new ${pair#*=} replaces the old file, which a running job keeps"
+done
+rm -f "$F/running"
+restarts=$(grep -c restart "$F/restarts")
+dir=$F/home/.hermes/skills/mini/storage-watch
+echo edited >>"$dir/SKILL.md"
+chmod 500 "$dir"
+out=$(apply)
+chmod 700 "$dir"
+grep -q "couldn't update the storage skill" <<<"$out" && ! grep -q 'updated the storage skill' <<<"$out" \
+  && [ "$(tail -n 1 "$dir/SKILL.md")" = edited ] && [ "$(grep -c restart "$F/restarts")" = "$restarts" ] \
+  && pass "a copy that fails warns, leaves the old file and doesn't restart" || fail "a copy that fails warns, leaves the old file and doesn't restart" "$out"
+[ "$(ls -A "$dir")" = SKILL.md ] && [ "$(ls -A "$F/home/.hermes/scripts")" = storage-watch.sh ] \
+  && pass "and leaves no temp file" || fail "and leaves no temp file" "$(ls -A "$dir" "$F/home/.hermes/scripts")"
+apply >/dev/null
+cmp -s "$REPO/home/dot_local/share/dotfiles/hermes/storage-watch/SKILL.md" "$dir/SKILL.md" \
+  && pass "and the next apply puts it back" || fail "and the next apply puts it back"
 mv "$F/stub/op" "$F/stub/op.ok"
 printf '#!/bin/sh\necho "op says no" >&2; exit 1\n' >"$F/stub/op"; chmod +x "$F/stub/op"
 before=$(cksum <"$F/home/.hermes/.env")

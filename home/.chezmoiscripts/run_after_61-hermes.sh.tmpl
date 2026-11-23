@@ -107,15 +107,27 @@ if ! cmp -s "$data/rivendell/rivendell-state.py" "$HOME/.hermes/scripts/rivendel
 fi
 {{ end -}}
 
+# replace SOURCE TARGET WHAT: TARGET becomes a copy of SOURCE through a temp
+# file and mv, never cp over it: bash reads a script as it runs, and a run of
+# the old one, which can last an hour, keeps reading the old file. True only
+# when it replaced TARGET.
+replace() {
+  local tmp=
+  cmp -s "$1" "$2" && return 1
+  if tmp=$(mktemp "$(dirname "$2")/.replace.XXXXXX" 2>/dev/null) && cp "$1" "$tmp" && mv -f "$tmp" "$2"; then
+    say "updated the $3"
+  else
+    rm -f "$tmp"
+    warn "couldn't update the $3; the next apply tries again"
+    return 1
+  fi
+}
+
 # The storage job: Hermes's cron reads its script on every run, so only the
 # skill that answers about it needs a restart.
 mkdir -p "$HOME/.hermes/scripts" "$HOME/.hermes/skills/mini/storage-watch"
-if ! cmp -s "$data/storage-watch.sh" "$HOME/.hermes/scripts/storage-watch.sh"; then
-  cp "$data/storage-watch.sh" "$HOME/.hermes/scripts/storage-watch.sh" && say "updated the storage script"
-fi
-if ! cmp -s "$data/storage-watch/SKILL.md" "$HOME/.hermes/skills/mini/storage-watch/SKILL.md"; then
-  cp "$data/storage-watch/SKILL.md" "$HOME/.hermes/skills/mini/storage-watch/SKILL.md" && say "updated the storage skill" && changed=1
-fi
+replace "$data/storage-watch.sh" "$HOME/.hermes/scripts/storage-watch.sh" "storage script"
+replace "$data/storage-watch/SKILL.md" "$HOME/.hermes/skills/mini/storage-watch/SKILL.md" "storage skill" && changed=1
 
 if [ -n "$changed" ]; then
   if launchctl print "gui/$(id -u)/ai.hermes.gateway" >/dev/null 2>&1; then
