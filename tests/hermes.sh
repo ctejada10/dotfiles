@@ -104,6 +104,31 @@ off=$(cz --override-data "$OFF" cat "$SANDBOX/home/.local/share/dotfiles/hermes/
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["command_allowlist"]==[] and d["approvals.mode"]=="smart" and not any("hurin" in k or k.startswith("platforms") for k in d)' <<<"$off" \
   && pass "config has no Hurin keys and an empty allowlist" || fail "config has no Hurin keys and an empty allowlist" "$off"
 grep -qi rivendell <<<"$off" && fail "config has no rivendell route" "$off" || pass "config has no rivendell route"
+# Hermes matches approvals.deny with fnmatch, lowercased, against an agent's
+# terminal command. A no-agent cron script runs outside it, so the storage
+# job's own prune is not gated.
+storage_skill=$REPO/home/dot_local/share/dotfiles/hermes/storage-watch/SKILL.md
+python3 -c '
+import fnmatch, json, sys
+deny = [p.lower() for p in json.load(sys.stdin)["approvals.deny"]]
+hit = lambda c: [p for p in deny if fnmatch.fnmatchcase(c.lower(), p)]
+for p in ("*docker*prune*", "*colima delete*", "*colima stop*", "*find*-delete*"):
+    assert p in deny, p
+for c in ("docker system prune -af --volumes", "docker --context colima image prune -a", "docker volume prune",
+          "colima delete --force", "colima stop", "find ~/agent-drafts -type f -delete"):
+    assert hit(c), c
+lines, fence = [], False
+for line in open(sys.argv[1]):
+    if line.startswith("```"):
+        fence = not fence
+    elif fence and line.strip():
+        lines.append(line.strip())
+assert len(lines) == 4, lines
+for c in lines:
+    assert not hit(c), (c, hit(c))
+' "$storage_skill" <<<"$off" \
+  && pass "the deny list blocks the cleanups the storage skill forbids, and none of its own commands" \
+  || fail "the deny list blocks the cleanups the storage skill forbids, and none of its own commands" "$off"
 off_script=$(cz --override-data '{"hermes":{"secrets":{"enabled":true},"rivendell":{"enabled":false}}}' execute-template <"$REPO/home/.chezmoiscripts/run_after_61-hermes.sh.tmpl")
 grep -q 'op://Hermes/Telegram' <<<"$off_script" && pass "renders the Telegram secrets" || fail "renders the Telegram secrets"
 grep -q 'op://Hermes/Hurin' <<<"$off_script" && fail "renders no Hurin secrets" || pass "renders no Hurin secrets"
