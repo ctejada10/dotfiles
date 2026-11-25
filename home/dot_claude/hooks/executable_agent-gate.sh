@@ -1,7 +1,8 @@
 #!/bin/bash
-# SessionStart and PreToolUse (Skill, AskUserQuestion) hook, on the mini only.
-# Decides whether Carlos is in the session and keeps superpowers' skills from
-# waiting for Carlos when Carlos isn't there.
+# SessionStart and PreToolUse (Skill, AskUserQuestion, and the edit tools)
+# hook, on the mini only. Decides whether Carlos is in the session, keeps
+# superpowers' skills from waiting for Carlos when Carlos isn't there, and
+# keeps a review child from editing.
 #
 # Who is there:
 #   attended    AGENT_ATTENDED=1, set by T3's "Claude (attended)" instance
@@ -13,7 +14,7 @@
 # same T3 instance, and T3 hands it that instance's environment unchanged, so
 # it carries AGENT_ATTENDED=1 and counts as attended here. Nothing in the
 # environment or the hook's payload tells it from its parent, so this hook
-# leaves that gap open, and ~/.codex/AGENTS.md tells such a session to work
+# leaves that gap open, and ~/.claude/claude-rules.md tells such a session to work
 # as unattended instead. The other hooks no longer give an attended session
 # any write an unattended one lacks, so what the gap allows is a question or a
 # brainstorm that waits for Carlos after Carlos has gone.
@@ -26,6 +27,10 @@
 #   AskUserQuestion                 unattended: refused unless every question
 #                                   starts with STOP:
 #   SessionStart                    unattended: a note that nobody is watching
+#   Edit, Write, MultiEdit,         refused in a review child: a session
+#   NotebookEdit                    route-reminder.sh marked because its
+#                                   brief has "ROLE: review". Its shell
+#                                   commands are not covered.
 #
 # Reads the hook's JSON with macOS's own plutil, so it needs nothing from
 # Homebrew. The messages are one line of ASCII with no double quotes or
@@ -69,6 +74,8 @@ DENY_BRAINSTORM="Carlos is not in this session, so superpowers:brainstorming wou
 
 DENY_BRAINSTORM_FM="In a FirstMate crew, the FirstMate launch brief is the approved design, so skip brainstorming and continue with the brief. Raise anything only the captain can decide to firstmate the way your brief says."
 
+DENY_REVIEW="This session is a review child: its brief gives it ROLE: review, and routing.md's brief format says a reviewer edits no files. Report the change you would make as a finding instead."
+
 DENY_ASK="Carlos is not watching this session, so this question would wait unseen. Decide it yourself: take your recommended answer and continue. Only if it is one of the stops in your rules, ask again with every question text starting STOP: and it will reach Carlos."
 
 deny() {
@@ -89,6 +96,14 @@ case "$event" in
   PreToolUse)
     tool=$(get tool_name)
     case "$tool" in
+      Edit|Write|MultiEdit|NotebookEdit)
+        session=$(get session_id)
+        case "$session" in
+          ""|*[!A-Za-z0-9_-]*) exit 0 ;;
+        esac
+        [ -f "$HOME/.local/state/dotfiles/review-children/$session" ] && deny "$DENY_REVIEW"
+        exit 0
+        ;;
       Skill)
         skill=$(get tool_input.skill)
         case "$skill" in

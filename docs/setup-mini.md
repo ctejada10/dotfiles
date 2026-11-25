@@ -656,24 +656,25 @@ Antigravity profile.
 
 ### Seat the roles
 
-1. Start a new thread on **Claude (attended)**, in any project, on the
-   current checkout. The setup only writes `~/.config/t3-pstack/models.md`,
-   outside the repo.
-2. Send the `AGENT_ATTENDED` test from [Providers](#providers) first. If it
-   prints anything but `[1]`, fix the instance; on the default instance the
-   hook blocks the setup's questions and Claude picks defaults itself.
-3. Send `/t3-pstack:setup-pstack`. Its questions arrive as cards. Answer:
-   - **Budget:** `medium - high reasoning`. Large puts most roles at xhigh and
-     uses up the plans' limits fastest.
-   - **Roles:** change them to the sheet below. It drops the retired lines
-     (how, why, reflect, architect, hardest tasks) itself.
-   - **Session hook:** on.
-   - **The verification and formal verification skills:** no. They would
-     write into a repo mid-setup; ask for one later in its own thread.
-4. `npx -y github:chhoumann/t3-pstack#v2.5.0 doctor` shows the sheet valid,
-   and only the auto-update FAIL.
+The model sheet lives in this repo, in
+`home/dot_local/share/dotfiles/t3-pstack/models.md`. The apply writes it to
+`~/.local/share/dotfiles/t3-pstack/models.md` and links
+`~/.config/t3-pstack/models.md` to it, keeping a sheet that was already there
+as `models.md.before-dotfiles`. t3-pstack reads the sheet through the link.
+`tests/check-model-sheet.sh` fails on anything above high, on `fastMode`, on
+Fable outside the arena runners, on Neon below or above high, on Codex above
+medium, and on a missing role, which would run on t3-pstack's own defaults
+(Opus at xhigh, Fable at max, a priced fast tier).
 
-The sheet, as of 19 Nov 2026:
+1. After the apply, `readlink ~/.config/t3-pstack/models.md` names the
+   repo's copy.
+2. `npx -y github:chhoumann/t3-pstack#v2.5.0 doctor` shows the sheet valid,
+   and only the auto-update FAIL.
+3. Never run `/t3-pstack:setup-pstack` on the mini: it writes through the
+   link into the repo's copy, and the next apply puts the repo's sheet back.
+   Change the sheet in a PR to this repo instead.
+
+The sheet, as of 25 Nov 2026, under its comment lines:
 
 ```
 feature, refactoring: claudeAgent/claude-opus-5-5 effort=high
@@ -709,15 +710,16 @@ Why each line:
   findings a run proves, which covers Neon's habit of claiming things that
   aren't there.
 - No `fastMode` anywhere (on T3 it's a priced mode), and nothing above high.
+- **Seats the sheet has no role for** are in `routing.md`'s roster: Codex
+  Luna for chores, a Codex Sol spec draft and cross-family review, Neon's
+  check of the plan, and Fable as the deep thinker ([Routing](#routing)).
 
-Model IDs are what T3 lists on 19 Nov; if setup-pstack can't find one, use
-the ID `orchestrator_capabilities` shows for the same model. The setup
-validates every line against T3's model list, so a model T3 can't run is
-caught before the sheet is written. Re-running `/t3-pstack:setup-pstack`
-changes the sheet.
+Model IDs are what T3 listed on 19 Nov; if one changes, use the ID
+`orchestrator_capabilities` shows for the same model, in both the sheet and
+`routing.md`.
 
-**When a plan runs out mid-week,** re-run setup-pstack rather than editing
-the sheet by hand:
+**When a plan runs out mid-week,** change the repo's sheet in a PR, then
+apply:
 
 - Claude: writing roles on `codex/gpt-6.2-sol reasoningEffort=medium`, swarm
   on `codex/gpt-6-luna reasoningEffort=high`, and panels Codex plus Neon.
@@ -743,29 +745,75 @@ yours sprawls, narrow DEEP in `routing.md` (below).
 
 ### Routing
 
-You don't have to type `/go` or name poteto-mode. On every message you send,
-`hooks/route-reminder.sh` adds `~/.claude/routing.md`, and the reply's first
-line names the route it took:
+You don't have to name poteto-mode. On every message you send,
+`hooks/route-reminder.sh` adds the route card at the top of
+`~/.claude/routing.md`, and the reply's first line names the route it took.
+The card is ten lines and tells the agent to read the whole file once per
+thread; the hook's text stays in the conversation, so a long thread used to
+carry a full copy of routing.md for every message.
 
 - **DEEP**, the default: anything that builds, changes, fixes, refactors,
   debugs, speeds up or designs code, config or infrastructure. It goes through
-  poteto-mode, then one `/ponytail-review` of the final diff before the draft
-  PR. When the diff touches secrets, outside input, the network, CI workflows
-  or permissions, an adversarial pass runs between interrogate and the
-  Ponytail review (below).
-- **TRIVIAL**: one file, about ten lines, no new behavior, cause known. /go's
-  small path, in the thread, with no subagents.
+  poteto-mode. When the work needs a design choice, Neon checks the plan
+  before any builder starts. When the diff touches secrets, outside input, the
+  network, CI workflows or permissions, an adversarial pass runs (below).
+  Then deslop, one `/ponytail-review` of the final diff, and one cross-family
+  review on Codex Sol before the draft PR. There is no separate
+  `/code-review` on DEEP.
+- **TRIVIAL**: one file, about ten lines, no new behavior, cause known. Done
+  in the thread with no children: test first, the full suite, deslop, a
+  low-level `/code-review`, the draft PR.
 - **QUESTION**: answered, with no edits.
 - **SKIP**: start a message with `--` and it's done as written, with no skills.
 
 When the agent can't tell TRIVIAL from DEEP, it picks DEEP. On **Claude
 (attended)** it names the route and its first steps and asks before editing.
-Typing `/go <task>` still runs /go's own triage, which keeps more work on the
-cheaper small path; the hook leaves slash commands alone.
+The hook leaves slash commands alone. DEEP spends the most of the Claude
+plan, since poteto-mode starts several children per task; if the plan runs
+out early in the week, start small asks with `--`, or narrow DEEP in
+`routing.md`.
 
-DEEP spends more of the Claude plan than the old default: poteto-mode starts
-several Opus subagents per task. If the Claude plan runs out early in the
-week, start small asks with `--` or `/go`, or narrow DEEP in `routing.md`.
+**The roster.** One seat per job, after Theo's T3 setup: an Opus conductor
+that splits the work and delegates, cheap specialists from other vendors, and
+a different model family checking the result.
+
+| Job | Seat |
+| --- | --- |
+| Conductor, builders, judgment | Opus 5.5, high (the model sheet) |
+| Swarm workers, verification, the adversarial pass | Sonnet 5.5, high |
+| Chores: lookups, CI and log triage, summaries, mechanical edits | Codex Luna, medium, up to 4 per DEEP task |
+| A first spec or research draft | Codex Sol, medium, one per DEEP task |
+| Cross-family review of the final diff | Codex Sol, medium, one per PR |
+| Second opinion: the plan check, interrogate, arena judging | Gemini 4 Neon, high, as a child only |
+| Deep thinker | Fable 5.2, high, as a child only |
+
+Neon holds the second-opinion seat that Gemini 4 Argon held in Theo's
+numbers; Neon replaced Argon on Google AI Pro and Ultra on 18 Nov 2026.
+Fable runs for a bug whose cause one Opus attempt didn't find, a perf or
+hillclimb task where Opus stalled, the first build of hard concurrency,
+safety or money design, and the arena's second runner. At most one Fable
+child per DEEP task, and never for reviews, fix rounds or chores. Fable may
+use at most half of the Claude plan's weekly limit and then bills usage
+credits, so a Fable child that reports a limit or credit use ends Fable for
+the run, and its step is redone on Opus.
+
+Codex's 5-hour Plus window is shared by every Codex session here, so per
+DEEP task it gets at most one Sol draft, the one Sol review and four Luna
+chores. On a Codex limit the work moves to Claude and the PR says so. Recheck
+these limits when ChatGPT and Codex move to one shared allowance in December.
+
+**The budget.** At most 4 children at once, every child a leaf, 3 review
+rounds per change and 4 agent-to-agent handoffs without you. Every brief
+uses seven fields (BRIEF FOR, ROLE, GOAL, CONTEXT, DONE WHEN, DO NOT,
+RETURN), says to start no subagents, and asks for the model that actually
+ran. Finished children are settled in T3 once their results are read.
+
+**Review children edit nothing.** When a child's brief has `ROLE: review`,
+or T3 opened it as its review sub-agent, `route-reminder.sh` marks its session
+in `~/.local/state/dotfiles/review-children`, and `agent-gate.sh` refuses its
+Edit, Write, MultiEdit and NotebookEdit calls. That covers Claude children
+only, and not their shell commands; Codex and Neon reviewers have only their
+brief.
 
 **The adversarial pass** is one more child thread, on Sonnet 5.5 at high
 effort, acting as `~/.claude/agents/adversarial-reviewer.md` from the
@@ -795,7 +843,7 @@ throwaway branch:
 | "The worktree-ttl job sometimes deletes live worktrees; find out why" | `Route: DEEP` |
 | "-- print pins.yaml" | `Route: SKIP` |
 | "Add a /hooks/github endpoint that checks the webhook secret" (in hurin) | `Route: DEEP`, and an adversarial child on Sonnet after interrogate |
-| "/go fix the typo in README" | /go's steps, no Route line |
+| "/superpowers:brainstorming a cache for Lindir" | the skill, no Route line |
 | The DEEP one on **Claude (attended)** | `Route: DEEP`, then a question before any edit |
 | After 20 turns of talk: "ok, change the timeout to 30s in that file" | `Route: TRIVIAL` |
 
@@ -809,6 +857,12 @@ throwaway branch:
   menu.
 - Before an agent's first push, its thread shows `rules: mini <date>` on a
   line of its own, which says the rules file loaded.
+- **Each seat answers.** After a t3-pstack update or a change to the model
+  sheet, open one thread per seat (Claude, Claude (attended), Codex Sol,
+  Codex Luna, Antigravity Neon, Fable) and send only: `Reply with exactly:
+  "ok from <model name>". Do not read, run or edit anything.` Check each reply
+  against `orchestrator_capabilities`. An Antigravity seat that fails is
+  usually one of T3's open bugs (#38123, #28658, #22876, #38312).
 - The first transcript shows t3-pstack's and Ponytail's session text and no
   superpowers. If Ponytail's rules and poteto-mode pull in different
   directions, switch Ponytail off on the mini too.
@@ -1438,8 +1492,10 @@ Desktop on either Mac.
 
 - **Process:** t3-pstack routes, through poteto-mode, and is the only plugin
   whose session hook steers the work. The repo's `hooks/route-reminder.sh`
-  repeats `~/.claude/routing.md` on every message, so deep work goes through
-  poteto-mode by default ([Routing](#routing)). Both hooks also load in plain
+  adds `~/.claude/routing.md`'s route card to every message, so deep work
+  goes through poteto-mode by default ([Routing](#routing)). Claude Code
+  reads `~/.codex/AGENTS.md` and then its own rules,
+  `~/.claude/claude-rules.md`; Codex reads only AGENTS.md. Both hooks also load in plain
   `claude` runs outside T3; start one with
   `claude --settings '{"enabledPlugins":{"t3-pstack@t3-pstack":false}}'` to
   leave t3-pstack out, and with a message starting `--` to skip the routing.
@@ -1464,12 +1520,6 @@ Desktop on either Mac.
   auditor, property-based-testing, mutation-testing and
   spec-to-code-compliance. No pstack. No claude.ai connectors or synced
   plugins.
-- **`/go <task>`:** your own command, from `home/dot_claude/skills/go`. It
-  sends big tasks to poteto-mode and runs small ones in the thread with no
-  subagents, calling superpowers' test-first, debugging and verification
-  skills, deslop and a low-level `/code-review`, through to a draft PR. Type
-  `/go` alone to see the steps and the table. Claude never starts it on its
-  own.
 - **Skills copied in under their licences:** a subset of Matt Pocock's
   (grill-me, to-spec and the architecture ones), HumanLayer's research, plan
   and implement set (`rpi-`), GitHub's Actions hardening review and
@@ -1600,7 +1650,6 @@ Done by hand on the mini first, then to be brought in here:
   on it would replace the template with a copy of the mini's file); and its
   marketplace, plugin and hook-trust entries in `~/.codex/config.toml`, which
   chezmoi doesn't manage, so `chezmoi diff` never shows them.
-- `~/.config/t3-pstack/models.md` as a managed file.
 - A `modify_` template for `~/.hermes/config.yaml` that merges only the keys
   set here: `approvals`, `auth.adopt_external_logins`,
   `agent.disabled_toolsets`, `streaming`, `display.platforms.telegram`,

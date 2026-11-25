@@ -43,6 +43,8 @@ for role in "${roles[@]}"; do
     laptop)
       lacks "$list" ".claude/pstack-models.md" && pass "has no pstack model sheet" || fail "has no pstack model sheet"
       has "$list" ".claude/rules/job-search.md" && pass "has the job-search rules" || fail "has the job-search rules"
+      lacks "$list" ".claude/claude-rules.md" && lacks "$list" ".local/share/dotfiles/t3-pstack/models.md" \
+        && pass "has no agent rules or t3-pstack sheet" || fail "has no agent rules or t3-pstack sheet"
       bad=$(grep -E '^\.codex|^\.claude/(skills/(rpi-|grill|to-spec|i-have-adhd|github-actions|openscad|read-only-log|frontend-e2e|codebase-design|domain-modeling|improve-codebase|writing-for-agents|go/|pack-)|agents/(rpi-|ecc-|adversarial-reviewer))|^\.local/share/(openscad|georgeskills|dotfiles/git/read)' <<< "$list" | grep -v '^\.local/share/dotfiles/git/read-only-hooks' || true)
       [ -z "$bad" ] && pass "has no development rules, skills, agents or tools" || fail "has no development rules, skills, agents or tools" "$bad"
       has "$list" "Library/CloudStorage/Dropbox/config-files/1Password/ssh/agent.toml" \
@@ -81,10 +83,12 @@ for role in "${roles[@]}"; do
       lacks "$list" ".claude/rules/job-search.md" && pass "has no job-search rules" || fail "has no job-search rules"
       for path in .codex/AGENTS.md .claude/skills/rpi-create-plan/SKILL.md \
                   .claude/skills/grill-me/SKILL.md .claude/agents/ecc-python-reviewer.md \
-                  .claude/skills/github-actions-hardening/SKILL.md .claude/skills/openscad-bosl2 .claude/skills/go/SKILL.md \
+                  .claude/skills/github-actions-hardening/SKILL.md .claude/skills/openscad-bosl2 .claude/claude-rules.md \
+                  .local/share/dotfiles/t3-pstack/models.md \
                   .local/share/openscad/libraries/BOSL2 .local/share/georgeskills; do
         has "$list" "$path" && pass "has $path" || fail "has $path"
       done
+      grep -q '^\.claude/skills/go' <<< "$list" && fail "has no /go skill" "$(grep '^\.claude/skills/go' <<< "$list")" || pass "has no /go skill"
       ;;
     server)
       has "$list" ".claude/pstack-models.md" && pass "has the pstack model sheet" || fail "has the pstack model sheet"
@@ -230,6 +234,10 @@ for role in "${roles[@]}"; do
       jq -e '.hooks.SessionStart[].hooks[] | select(.command | endswith("/agent-gate.sh"))' <<< "$settings" >/dev/null \
         && jq -e '.hooks.PreToolUse[] | select(.matcher == "Skill|AskUserQuestion") | .hooks[] | select(.command | endswith("/agent-gate.sh"))' <<< "$settings" >/dev/null \
         && pass "the gate runs at session start and before Skill and AskUserQuestion" || fail "the gate runs at session start and before Skill and AskUserQuestion"
+      jq -e '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit|NotebookEdit") | .hooks[] | select(.command | endswith("/agent-gate.sh"))' <<< "$settings" >/dev/null \
+        && pass "the gate runs before every edit tool, for review children" || fail "the gate runs before every edit tool, for review children"
+      jq -e '[.permissions.deny[] | select(endswith("/.claude/claude-rules.md)") or endswith("/.claude/routing.md)"))] | length == 2' <<< "$settings" >/dev/null \
+        && pass "agents may not edit the deployed claude-rules.md or routing.md" || fail "agents may not edit the deployed claude-rules.md or routing.md"
       jq -e '.hooks.UserPromptSubmit[].hooks[] | select(.command | endswith("/route-reminder.sh"))' <<< "$settings" >/dev/null \
         && pass "the router runs on every message" || fail "the router runs on every message"
       has "$list" ".local/share/claude-plugins/sp-gated/.claude-plugin/marketplace.json" \
@@ -293,8 +301,9 @@ for role in "${roles[@]}"; do
       gp "$dbx/career-ops/x.md" 0 && fail "the mini never edits a repo in Dropbox's old repositories folder" || pass "the mini never edits a repo in Dropbox's old repositories folder"
       gp "${dbx/CloudStorage/cloudstorage}/career-ops/x.md" 0 && fail "nor through a differently cased path there" || pass "nor through a differently cased path there"
       gp "$HOME/worktrees/career-ops/fix/x.md" 0 && pass "a clone of another repo in ~/worktrees is fine" || fail "a clone of another repo in ~/worktrees is fine"
-      [ "$mini_claude" = "@~/.codex/AGENTS.md"$'\n'"." ] && pass "the mini's CLAUDE.md is the one line that imports the shared rules" \
-        || fail "the mini's CLAUDE.md is the one line that imports the shared rules" "${mini_claude%.}"
+      [ "$mini_claude" = "@~/.codex/AGENTS.md"$'\n'"@~/.claude/claude-rules.md"$'\n'"." ] \
+        && pass "the mini's CLAUDE.md only imports the shared rules, then Claude Code's own" \
+        || fail "the mini's CLAUDE.md only imports the shared rules, then Claude Code's own" "${mini_claude%.}"
       cleanup_sandbox
       [ "$(grep -v '^#' <<< "$sshcfg" | grep -v '^$' | head -n 1)" = "Include ~/.colima/ssh_config" ] \
         && pass "the mini's SSH config starts with Colima's Include" || fail "the mini's SSH config starts with Colima's Include" "$sshcfg"
@@ -378,6 +387,9 @@ for role in "${roles[@]}"; do
   cleanup_sandbox
   case "$role" in
     server) grep -qx '@~/.claude/pstack-models.md' <<< "$out" && pass "$role includes the sheet" || fail "$role includes the sheet" ;;
+    agent-mini) grep -qx '@~/.claude/claude-rules.md' <<< "$out" && grep -qx '@~/.codex/AGENTS.md' <<< "$out" \
+                  && pass "$role includes AGENTS.md and claude-rules.md" || fail "$role includes AGENTS.md and claude-rules.md" "$out"
+                grep -q 'pstack-models' <<< "$out" && fail "$role leaves the sheet out" || pass "$role leaves the sheet out" ;;
     *)             grep -q 'pstack-models' <<< "$out" && fail "$role leaves the sheet out" || pass "$role leaves the sheet out" ;;
   esac
 done

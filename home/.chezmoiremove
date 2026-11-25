@@ -1,0 +1,7 @@
+{{- /*
+  Targets an apply removes. The mini's old /go skill: routing.md now holds its
+  small path and its tool table, so nothing calls it.
+*/ -}}
+{{ if .isAgent -}}
+.claude/skills/go
+{{- end }}

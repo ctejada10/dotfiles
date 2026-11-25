@@ -1,0 +1,31 @@
+{{- if .isAgent -}}
+#!/bin/bash
+# Points t3-pstack's model sheet, ~/.config/t3-pstack/models.md, at the copy
+# this repo keeps in ~/.local/share/dotfiles/t3-pstack/models.md. chezmoi
+# leaves the mini's ~/.config alone, so the repo can't own that path itself;
+# a link can, and t3-pstack reads and writes through it. A sheet already
+# there is kept beside it as models.md.before-dotfiles, once.
+
+set -uo pipefail
+SCRIPT=t3-pstack-sheet
+{{ template "script-lib.sh" . }}
+
+src="$HOME/.local/share/dotfiles/t3-pstack/models.md"
+dir="${XDG_CONFIG_HOME:-$HOME/.config}/t3-pstack"
+sheet="$dir/models.md"
+
+[ -f "$src" ] || { warn "$src is missing; left the sheet alone"; exit 0; }
+[ -L "$sheet" ] && [ "$(readlink "$sheet")" = "$src" ] && exit 0
+
+mkdir -p "$dir" || { warn "couldn't make $dir"; exit 0; }
+if [ -e "$sheet" ] || [ -L "$sheet" ]; then
+  if [ -e "$sheet.before-dotfiles" ] || [ -L "$sheet.before-dotfiles" ]; then
+    rm -f "$sheet" && say "replaced $sheet with the link: the repo's sheet wins"
+  else
+    mv "$sheet" "$sheet.before-dotfiles" || { warn "couldn't move the old sheet aside"; exit 0; }
+    say "kept the old sheet as $sheet.before-dotfiles"
+  fi
+fi
+ln -s "$src" "$sheet" && say "linked $sheet to the repo's sheet"
+exit 0
+{{ end -}}
