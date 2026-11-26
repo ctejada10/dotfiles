@@ -77,6 +77,21 @@ else
   fail "exists" "$rules"
 fi
 
+# Claude Code's own rules on the mini, imported after AGENTS.md: the same
+# limits, since an @ outside backticks would be read as another import.
+section "Claude Code's rules file"
+cc="$REPO/home/dot_claude/claude-rules.md"
+grep -n $'\xe2\x80\x94' "$cc" >/dev/null && fail "has no em dashes" "$(grep -n $'\xe2\x80\x94' "$cc")" || pass "has no em dashes"
+odd=$(LC_ALL=C grep -n '[^ -~]' "$cc" || true)
+[ -z "$odd" ] && pass "is plain ASCII" || fail "is plain ASCII" "$odd"
+stray=$(sed 's/`[^`]*`//g' "$cc" | grep -n '@' || true)
+[ -z "$stray" ] && pass "has no @ outside backticks" || fail "has no @ outside backticks" "$stray"
+for section_name in Asking Routing 'Skills and reviews' Models 'Memory and permission prompts'; do
+  grep -qx "## $section_name" "$cc" && pass "has $section_name" || fail "has $section_name"
+  grep -qx "### $section_name" "$REPO/home/dot_codex/AGENTS.md" && fail "AGENTS.md no longer has $section_name" || pass "AGENTS.md no longer has $section_name"
+done
+grep -n $'\xe2\x80\x94' "$REPO/home/dot_claude/routing.md" >/dev/null && fail "routing.md has no em dashes" || pass "routing.md has no em dashes"
+
 # Parsed, not compiled: py_compile would leave a bytecode cache in the source.
 section "Python hooks parse with macOS's own python3"
 for file in "$REPO"/home/dot_claude/hooks/*.py; do

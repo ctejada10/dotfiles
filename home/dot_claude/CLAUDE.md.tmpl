@@ -1,8 +1,10 @@
 {{- if .isAgent -}}
-{{- /* On the mini every agent reads one rules file, ~/.codex/AGENTS.md
+{{- /* On the mini every agent reads one shared rules file, ~/.codex/AGENTS.md
        (home/dot_codex/AGENTS.md here): Codex directly, Claude Code through
-       this import. Edit that file, not this one. */ -}}
+       this import. Claude Code also reads its own rules after it,
+       ~/.claude/claude-rules.md. Edit those files, not this one. */ -}}
 @~/.codex/AGENTS.md
+@~/.claude/claude-rules.md
 {{- else -}}
 # How I work
 

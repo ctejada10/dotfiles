@@ -26,6 +26,7 @@ run tests/guard-vault.sh
 run tests/warn-risky.sh
 run tests/agent-gate.sh
 run tests/route-reminder.sh
+run tests/check-model-sheet.sh
 run tests/check-doia.sh
 run tests/worktree.sh
 run tests/worktree-ttl.sh

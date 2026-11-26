@@ -98,6 +98,8 @@ Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 .claude/agents/adversarial-reviewer.md
 .claude/skills/pack-*
 .claude/routing.md
+.claude/claude-rules.md
+.local/share/dotfiles/t3-pstack
 .local/bin/worktree-ttl
 .local/bin/repo-snapshots
 .local/bin/hermes-config-sync
@@ -113,7 +115,6 @@ Library/LaunchAgents/com.carlosetejada.repo-snapshots.plist
 .claude/skills/domain-modeling
 .claude/skills/frontend-e2e-evaluator-ops
 .claude/skills/github-actions-hardening
-.claude/skills/go
 .claude/skills/grill-me
 .claude/skills/grill-with-docs
 .claude/skills/grilling

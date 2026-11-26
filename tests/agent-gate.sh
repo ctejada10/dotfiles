@@ -73,4 +73,32 @@ expect deny unattended "a STOP: question next to an ordinary one" "$(ask 'STOP: 
 expect allow attended "an ordinary question" "$(ask 'Which retry policy?')"
 expect allow firstmate "an ordinary question" "$(ask 'Which retry policy?')"
 
+section "review children"
+# edit <mode> <tool> <session> <marked>: the gate's decision on an edit tool,
+# in a throwaway home where route-reminder.sh did or didn't mark the session.
+edit() {
+  local mode="$1" tool="$2" session="$3" marked="$4" home out env
+  home=$(mktemp -d)
+  mkdir -p "$home/.local/state/dotfiles/review-children"
+  [ "$marked" = marked ] && : > "$home/.local/state/dotfiles/review-children/$session"
+  env=(env -i PATH=/usr/bin:/bin HOME="$home")
+  [ "$mode" = attended ] && env+=(AGENT_ATTENDED=1)
+  out=$(printf '{"hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"file_path":"/tmp/x"},"session_id":"%s","cwd":"/tmp"}' "$tool" "$session" \
+    | "${env[@]}" /bin/bash "$hook")
+  rm -rf "$home"
+  if [ -z "$out" ]; then echo allow
+  elif [ "$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<< "$out")" = deny ]; then echo deny
+  else echo "unexpected: $out"; fi
+}
+for tool in Edit Write MultiEdit NotebookEdit; do
+  got=$(edit unattended "$tool" s1 marked)
+  [ "$got" = deny ] && pass "deny $tool in a review child" || fail "deny $tool in a review child" "got $got"
+done
+got=$(edit attended Edit s1 marked)
+[ "$got" = deny ] && pass "deny Edit in a review child of an attended thread" || fail "deny Edit in a review child of an attended thread" "got $got"
+got=$(edit unattended Edit s1 unmarked)
+[ "$got" = allow ] && pass "allow Edit in a builder child" || fail "allow Edit in a builder child" "got $got"
+got=$(edit unattended Edit s2 unmarked)
+[ "$got" = allow ] && pass "allow Edit in another session" || fail "allow Edit in another session" "got $got"
+
 summary

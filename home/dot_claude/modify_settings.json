@@ -152,7 +152,7 @@
        source that makes them is guarded by hooks/guard-paths.sh instead.
        Session transcripts too, since guard-git.py reads the merge grant
        from them. */ -}}
-{{-   range $path := list ".codex/**" ".claude/settings.json" ".claude/CLAUDE.md" ".claude/attended.md"
+{{-   range $path := list ".codex/**" ".claude/settings.json" ".claude/CLAUDE.md" ".claude/attended.md" ".claude/claude-rules.md" ".claude/routing.md"
         ".claude/hooks/**" ".claude/skills/**" ".claude/agents/**" ".claude/plugins/**" ".claude/projects/**/*.jsonl"
         ".local/share/claude-plugins/**" ".gitconfig" ".zshrc" ".zshenv" ".zprofile" ".zsh/**" -}}
 {{-     $deny = append $deny (printf "Edit(/%s/%s)" $home $path) -}}
@@ -206,13 +206,15 @@
 {{-   $_ := set $ours "WorktreeRemove" (list (dict "hooks" (list
         (dict "type" "command" "command" (printf "%s/worktree.sh remove" $hookDir) "timeout" 60)))) -}}
 {{- /* agent-gate.sh keeps superpowers' skills from waiting on Carlos when
-       Carlos isn't in the session (see the hook). */ -}}
+       Carlos isn't in the session, and keeps a review child from editing
+       (see the hook). */ -}}
 {{-   $gate := dict "type" "command" "command" (printf "%s/agent-gate.sh" $hookDir) "timeout" 10 -}}
 {{-   $_ := set $ours "PreToolUse" (append (get $ours "PreToolUse") (dict "matcher" "Skill|AskUserQuestion" "hooks" (list $gate))) -}}
+{{-   $_ := set $ours "PreToolUse" (append (get $ours "PreToolUse") (dict "matcher" "Edit|Write|MultiEdit|NotebookEdit" "hooks" (list $gate))) -}}
 {{-   $_ := set $ours "SessionStart" (list (dict "matcher" "startup|resume|clear|compact|fork" "hooks" (list $gate))) -}}
 {{-   $_ := set $ours "PostToolUse" (list (dict "matcher" "Bash" "hooks" (list
         (dict "type" "command" "command" (printf "%s/merge-notify.py" $hookDir) "timeout" 30)))) -}}
-{{- /* route-reminder.sh repeats ~/.claude/routing.md on every message
+{{- /* route-reminder.sh adds routing.md's route card to every message
        Carlos sends, so deep work goes through poteto-mode by default. */ -}}
 {{-   $_ := set $ours "UserPromptSubmit" (list (dict "hooks" (list
         (dict "type" "command" "command" (printf "%s/route-reminder.sh" $hookDir) "timeout" 10)))) -}}
@@ -244,7 +246,7 @@
        them is the whole install. Entries are set one by one, so plugins added
        by hand stay. Third-party marketplaces don't auto-update; refresh them
        with `claude plugin marketplace update <name>`. Which plugin does which
-       job is in AGENTS.md's Routing section. */ -}}
+       job is in ~/.claude/claude-rules.md and routing.md. */ -}}
 {{- $marketplaces := dict -}}
 {{- $plugins := dict -}}
 {{- $env := dict -}}
