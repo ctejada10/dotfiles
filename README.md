@@ -97,6 +97,8 @@ a line that only adds it can go.
   in to), `keys.yaml` (public keys only), `repos.yaml`, `pins.yaml` and
   `fonts.toml`. The setup scripts are in `home/.chezmoiscripts/`.
 - `ansible/`: the server playbook.
+- `gmail/`: both Gmail accounts' filters and labels, as Apps Script, with
+  1Password references for anything personal. Not deployed by chezmoi.
 - `Brewfile`: both Macs' packages, one block per role.
 - `tests/`: the suite. `.githooks/`: the pre-commit hook.
 - `LICENSES/`: the licences of the skills copied in.

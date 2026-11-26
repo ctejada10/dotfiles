@@ -1,0 +1,44 @@
+#!/bin/sh
+# Renders each account's Apps Script files into gmail/build/, ready to paste into
+# its project. The rule templates name people, providers and clients only by
+# 1Password reference (vault Private, item gmail-rules), so run this on the
+# laptop, the one Mac with 1Password. build/ is ignored and private; nothing
+# rendered is ever committed, and op's errors name no values.
+#
+#   build/personal/  Code.gs (Survey.gs), Engine.gs, Rules.gs, appsscript.json
+#   build/work/      Code.gs (Rules + Engine in one file), appsscript.json
+
+set -eu
+cd "$(dirname "$0")"
+
+if ! command -v op >/dev/null 2>&1; then
+  echo "render: op isn't installed" >&2
+  exit 1
+fi
+if ! op whoami >/dev/null 2>&1; then
+  echo "render: 1Password isn't signed in; run op signin, or turn on the app's CLI integration" >&2
+  exit 1
+fi
+
+umask 077
+out=build
+mkdir -p "$out/personal" "$out/work"
+
+# inject TEMPLATE TARGET: the cat makes stdin a pipe, which op inject needs.
+inject() {
+  if ! cat "$1" | op inject --force -o "$2" >/dev/null; then
+    echo "render: op inject couldn't render $1" >&2
+    exit 1
+  fi
+}
+
+inject Rules.personal.gs.op "$out/personal/Rules.gs"
+cp Engine.gs appsscript.json "$out/personal/"
+cp Survey.gs "$out/personal/Code.gs"
+
+inject Rules.work.gs.op "$out/work/Rules.gs"
+cat "$out/work/Rules.gs" Engine.gs >"$out/work/Code.gs"
+rm "$out/work/Rules.gs"
+cp appsscript.json "$out/work/"
+
+echo "rendered into gmail/$out/"
