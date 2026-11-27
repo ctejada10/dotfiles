@@ -98,6 +98,8 @@ Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 .claude/hooks/route-reminder.sh
 .claude/agents/adversarial-reviewer.md
 .claude/skills/pack-*
+.claude/skills/sol-loop
+.claude/skills/council
 .claude/routing.md
 .claude/claude-rules.md
 .local/share/dotfiles/t3-pstack

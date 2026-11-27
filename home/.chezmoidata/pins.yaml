@@ -47,3 +47,15 @@ pins:
       home/dot_claude/skills/pack-linux-platform/SKILL.md: 8c2ed3594f87523f176a8bd06546c29870cd0da847ab9eb1475ae22018db4c79
       home/dot_claude/skills/pack-python-untrusted-input/SKILL.md: b6fe97e46d2503bd21f6bb689ed1e1551f69a77c56790df979a83d96cbe2eaf7
       home/dot_claude/skills/pack-threat-model/SKILL.md: e1e5d1c39a133b56e832c830ed2c3758105aebf20abf024f43aa2f6466c2b668
+  # tstack: Theo Browne's sol-loop and council skills, copied in unchanged
+  # from this commit, under MIT (see LICENSES/README.md). The mini's routing
+  # runs them as DEEP work's review, and routing.md overrides the lines that
+  # clash with the rules. tests/check-tstack.sh checks each file against its
+  # sha256 here. To update, read the upstream diff, copy the files over and
+  # change these lines; never edit a copied file.
+  tstack:
+    repo: t3dotgg/tstack
+    commit: 11e37a74d0a6868c121cd0910ab2b3bd9873b92a
+    files:
+      home/dot_claude/skills/council/SKILL.md: 91cab56e85ca2ce2920961b50931573890e0513adbc5a60b33969b1e2501251c
+      home/dot_claude/skills/sol-loop/SKILL.md: 1db1eb4c4a156ee666070e9a12623d520cd1bd9b19c3fc21003fe5a440ba0b10

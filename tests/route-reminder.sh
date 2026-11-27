@@ -21,6 +21,15 @@ for route in DEEP TRIVIAL QUESTION SKIP; do
 done
 grep -q '^Route: DEEP|TRIVIAL|QUESTION|SKIP' <<< "$card" && pass "the card asks for the Route line" || fail "the card asks for the Route line"
 grep -q 'read ~/.claude/routing.md in full' <<< "$card" && pass "the card sends the agent to the whole file" || fail "the card sends the agent to the whole file"
+grep -q 'review: loop|council' <<< "$card" && grep -q 'end: gate|pr|merge' <<< "$card" \
+  && pass "the Route line names the review and the end" || fail "the Route line names the review and the end"
+grep -q 'merge only on his plain-words grant' <<< "$card" && pass "the card merges only on Carlos's grant" \
+  || fail "the card merges only on Carlos's grant"
+for section in '## QUESTION' '## Review' '## Ending' '## Skills poteto-mode reads by path'; do
+  grep -qx "$section" "$rules" && pass "routing.md has $section" || fail "routing.md has $section"
+done
+grep -q 'never a rebase or a force-push' "$rules" && pass "the gate keeps the branch current without a rebase" \
+  || fail "the gate keeps the branch current without a rebase"
 grep -q '`t3-pstack:poteto-mode`' "$rules" && pass "sends DEEP work to poteto-mode" || fail "sends DEEP work to poteto-mode"
 grep -q '^## TRIVIAL' "$rules" && grep -q 'then `code-review` at level `low`' "$rules" \
   && pass "holds TRIVIAL's own steps" || fail "holds TRIVIAL's own steps"

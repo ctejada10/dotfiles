@@ -15,8 +15,8 @@ commit=$(sed -n '/^  doia:/,/^  [a-z]/s/^    commit: \([0-9a-f]*\)$/\1/p' "$pins
 tag=$(sed -n '/^  doia:/,/^  [a-z]/s/^    tag: \(.*\)$/\1/p' "$pins")
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] && pass "pins a full commit ($tag)" || fail "pins a full commit" "${commit:-none}"
 
-# "path sha256" for each file under doia.files.
-files=$(sed -n '/^    files:/,/^  [a-z]/s/^      \([^:]*\): \([0-9a-f]\{64\}\)$/\1 \2/p' "$pins")
+# "path sha256" for each file under doia.files, and no other pin's.
+files=$(sed -n '/^  doia:/,/^  [a-z]/s/^      \([^:]*\): \([0-9a-f]\{64\}\)$/\1 \2/p' "$pins")
 count=$(grep -c . <<< "$files")
 [ "$count" = 5 ] && pass "lists five files" || fail "lists five files" "$count"
 
