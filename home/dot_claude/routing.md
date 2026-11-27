@@ -116,7 +116,7 @@ Each job goes to one seat. The t3-pstack model sheet (`~/.config/t3-pstack/model
 | Second opinion: the plan check, interrogate, arena judging, a council seat | `antigravity/gemini-4-neon thinking_level=high` | As a child only. |
 | Deep thinker | `claudeAgent/claude-fable-5-2 effort=high` | See Fable below. |
 
-Codex shares one 5-hour ChatGPT Plus window with every Codex session on this Mac. Per DEEP task, Codex gets at most one Sol spec draft, Sol in the review (up to 3 rounds, loop or council), and four Luna chores, plus the arena judge and why investigator that claude-rules.md allows. If Codex reports a usage limit, move that work to Claude (Sonnet for chores, Opus for a spec or a review), never wait for the window to reset, and say so in the PR body.
+Codex shares one 5-hour ChatGPT Plus window with every Codex session on this Mac. Per DEEP task, Codex gets at most one Sol spec draft, Sol in the review (up to 3 rounds, loop or council), and four Luna chores, plus the arena judge and why investigator that claude-rules.md allows. If Codex reports a usage limit, move that work to Claude (Sonnet for chores, Opus for a spec) and a review to Neon, as Review says, never wait for the window to reset, and say so in the PR body.
 
 A seat Carlos names in his message with T3's `@` mention (`@sol`, `@neon`, `@fable`, `@opus`) takes the job he names it for, within the limits above; `@fable` counts as Carlos typing more Fable.
 
