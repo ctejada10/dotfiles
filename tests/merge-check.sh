@@ -29,13 +29,14 @@ git -C "$work/repo" add .github && git -C "$work/repo" -c user.name=t -c user.em
 wfhead=$(git -C "$work/repo" rev-parse HEAD)
 git -C "$work/repo" switch -q feature
 
-# The stand-in gh: pr view and api graphql print $fake/<name>.json, exit with
+# The stand-in gh: pr view, api graphql and the compare API print $fake/<name>.json, exit with
 # $fake/<name>.status if it exists, and first sleep $fake/<name>.sleep seconds.
 cat > "$work/bin/gh" <<'EOF'
 #!/bin/sh
 case "$1 $2" in
   "pr view") name=pr ;;
   "api graphql") name=graphql ;;
+  "api repos/"*"/compare/"*) name=compare ;;
   *) echo "fake gh: unexpected $*" >&2; exit 1 ;;
 esac
 [ -f "$FAKE_GH/$name.sleep" ] && sleep "$(cat "$FAKE_GH/$name.sleep")"
@@ -56,7 +57,8 @@ reset() {
       files: [{path: "src/app.py"}], changedFiles: 1, reviewDecision: "APPROVED",
       statusCheckRollup: [{__typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS"},
                           {__typename: "StatusContext", context: "ci/legacy", state: "SUCCESS"}]}' > "$fake/pr.json"
-  jq -n '{data: {repository: {mergeQueue: null, ref: {compare: {behindBy: 0}},
+  printf '{"behind_by": 0, "ahead_by": 1}' > "$fake/compare.json"
+  jq -n '{data: {repository: {mergeQueue: null,
       pullRequest: {reviewThreads: {nodes: [{isResolved: true}], pageInfo: {hasNextPage: false}}}}}}' > "$fake/graphql.json"
   mkdir -p "$(dirname "$verdict")"
   printf 'MERGE %s\nThe diff only renames a helper.\n' "$head" > "$verdict"
@@ -142,9 +144,10 @@ reset; pr '.statusCheckRollup[1].state = "PENDING"'; check unsafe "a pending sta
 reset; pr '.statusCheckRollup[1].state = "ERROR"'; check unsafe "a failed status" "ci/legacy"
 
 section "up to date and mergeable"
-reset; gql '.data.repository.ref.compare.behindBy = 3'; check unsafe "a branch behind the default branch" "3 commit(s) behind main"
-reset; gql '.data.repository.ref.compare.behindBy = 3'; check unsafe "a branch behind says how to catch up without a rebase" "git pull --no-rebase origin main"
-reset; gql '.data.repository.ref = null'; check unsafe "a base GitHub can't compare" "can't say whether the branch is behind"
+reset; printf '{"behind_by": 3}' > "$fake/compare.json"; check unsafe "a branch behind the default branch" "3 commit(s) behind main"
+reset; printf '{"behind_by": 3}' > "$fake/compare.json"; check unsafe "a branch behind says how to catch up without a rebase" "git pull --no-rebase origin main"
+reset; printf '{"message": "Not Found"}' > "$fake/compare.json"; check unsafe "a compare with no count" "can't say whether the branch is behind"
+reset; printf '1' > "$fake/compare.status"; check unsafe "the compare API failing" "gh api"
 reset; pr '.mergeable = "CONFLICTING"'; check unsafe "a conflicting PR" "CONFLICTING"
 reset; pr '.mergeable = "UNKNOWN"'; check unsafe "mergeability not worked out yet" "UNKNOWN"
 reset; pr 'del(.mergeable)'; check unsafe "gh says nothing about mergeability" "not MERGEABLE"

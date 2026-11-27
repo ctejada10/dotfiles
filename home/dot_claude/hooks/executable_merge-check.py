@@ -32,10 +32,9 @@ import sys
 
 TIMEOUT = 15
 GREEN = ("SUCCESS", "NEUTRAL", "SKIPPED")
-QUERY = """query($owner: String!, $name: String!, $base: String!, $number: Int!, $head: String!) {
+QUERY = """query($owner: String!, $name: String!, $base: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     mergeQueue(branch: $base) { id }
-    ref(qualifiedName: $base) { compare(headRef: $head) { behindBy } }
     pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } } }
   }
 }"""
@@ -163,21 +162,13 @@ def problems(cwd, action, sha, allowed):
         found.append("A review requests changes.")
 
     graph = ask(run_json, "gh", "api", "graphql", "-f", f"query={QUERY}", "-f", f"owner={owner}",
-                "-f", f"name={name}", "-f", f"base={pr.get('baseRefName')}", "-F", f"number={number}",
-                "-f", f"head={pr.get('headRefName')}")
+                "-f", f"name={name}", "-f", f"base={pr.get('baseRefName')}", "-F", f"number={number}")
     if graph is not None:
         try:
             repository = graph["data"]["repository"]
             threads = repository["pullRequest"]["reviewThreads"]
             if repository["mergeQueue"] is not None:
                 found.append(f"{pr.get('baseRefName')} has a merge queue, so a merge there is deferred. Wait for Carlos.")
-            compared = (repository.get("ref") or {}).get("compare")
-            if not isinstance(compared, dict) or not isinstance(compared.get("behindBy"), int):
-                found.append(f"GitHub can't say whether the branch is behind {pr.get('baseRefName')}.")
-            elif compared["behindBy"]:
-                found.append(f"The branch is {compared['behindBy']} commit(s) behind {pr.get('baseRefName')}. Bring it "
-                             f"up to date with `git pull --no-rebase origin {pr.get('baseRefName')}` or "
-                             "`gh pr update-branch`, push, and let every check run again on the new head.")
             open_threads = sum(1 for t in threads["nodes"] if not t["isResolved"])
             if open_threads:
                 found.append(f"{open_threads} review thread(s) are unresolved.")
@@ -185,6 +176,19 @@ def problems(cwd, action, sha, allowed):
                 found.append("The PR has more than 100 review threads, more than this checks.")
         except (KeyError, TypeError):
             found.append(f"`gh api graphql` gave no answer: {json.dumps(graph.get('errors', graph))[:300]}")
+
+    if re.fullmatch(r"[0-9a-fA-F]{40}", head):
+        compared = ask(run_json, "gh", "api", f"repos/{owner}/{name}/compare/{pr.get('baseRefName')}...{head}")
+        if isinstance(compared, dict):
+            behind = compared.get("behind_by")
+            if not isinstance(behind, int):
+                found.append(f"GitHub can't say whether the branch is behind {pr.get('baseRefName')}.")
+            elif behind:
+                found.append(f"The branch is {behind} commit(s) behind {pr.get('baseRefName')}. Bring it up to date "
+                             f"with `git pull --no-rebase origin {pr.get('baseRefName')}` or `gh pr update-branch`, "
+                             "push, and let every check run again on the new head.")
+    else:
+        found.append(f"GitHub's head, {head or '(none)'}, is no full SHA, so how far behind it is can't be checked.")
 
     files = [str(f.get("path")) for f in pr.get("files") or [] if isinstance(f, dict)]
     if len(files) < (pr.get("changedFiles") or 0):
