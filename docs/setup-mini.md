@@ -1331,16 +1331,25 @@ Agents commit, push and open draft PRs on their own branches without asking;
 never on the default branch, never a force-push, a merge or a PR opened ready.
 Claude Code's `hooks/guard-git.py` blocks the ordinary forms of each, and
 refuses a commit or PR that credits an AI. The one exception is a merge you
-grant: type "merge when safe" on a line of its own in a thread, or
-"merge when safe: #59" for just that PR, and its agent may ready and merge
-its own PR from its branch with `gh pr merge --match-head-commit <sha>` after
-it checks the PR against the Merging rules, or leave it a draft with a
-`WAITING:` line. A later line that says "don't merge", "do not merge",
-"stop merging" or "no merging" anywhere takes the grant back. Before the merge runs,
-`hooks/merge-check.py` checks the PR on GitHub (checks, review threads, merge
-queue, the reviewer's verdict in
+grant: ask for it in plain words in a thread, such as "merge it once it's
+green", "ship it", "go ahead and merge" or "full send", with `#59` in the
+line for just that PR, and its agent may ready and merge its own PR from its
+branch with `gh pr merge --match-head-commit <sha>` after it checks the PR
+against the Merging rules, or leave it a draft with a `WAITING:` line. A line
+that asks a question or hedges ("maybe", "wait", "I'll", "let me") grants
+nothing, and "make the bot merge when CI passes" doesn't either, since the ask
+has to start a clause. A later line that says "don't merge", "stop merging",
+"hold off on merging" or "not yet" before a merge word takes the grant back.
+Before the merge runs, `hooks/merge-check.py` checks the PR on GitHub (every
+check green and at least one run, mergeable and no commit behind the default
+branch, review threads, merge queue, a `## Testing` section in the body and no
+`WAITING:` line, the reviewer's verdict in
 `~/agent-drafts/<repo>/<branch>/merge-verdict.txt`, and the paths in
-`hooks/merge-wait.json`) and blocks it if any fails. After a merge,
+`hooks/merge-wait.json`) and blocks it if any fails. T3's own PR tools can't
+get around it: `hooks/guard-t3.py` blocks T3's `pull_request_merge` and
+`pull_request_review`, a `pull_request_update` that readies a PR or requests a
+reviewer, a `pull_request_create` that isn't a draft, and a
+`pull_request_respond` that comments on the PR instead of in a thread. After a merge,
 `hooks/merge-notify.py` logs it to `~/.local/state/agent-merges.log` and sends
 you a Telegram message through Hermes. Subagents, FirstMate crews and T3's
 delegated children never hold the grant.

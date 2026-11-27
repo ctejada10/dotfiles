@@ -248,6 +248,9 @@ for role in "${roles[@]}"; do
       jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.command | endswith("/guard-git.py"))' <<< "$settings" >/dev/null \
         && pass "the mini runs the git guard" || fail "the mini runs the git guard"
       has "$list" ".claude/hooks/guard-git.py" && pass "the mini has the git guard" || fail "the mini has the git guard"
+      jq -e '.hooks.PreToolUse[] | select(.matcher == "mcp__t3.*__pull_request_.*") | .hooks[] | select(.command | endswith("/guard-t3.py")) | select(.onFailure == "block")' <<< "$settings" >/dev/null \
+        && pass "the mini guards T3's PR tools, blocking when the guard fails" || fail "the mini guards T3's PR tools, blocking when the guard fails"
+      has "$list" ".claude/hooks/guard-t3.py" && pass "the mini has the T3 guard" || fail "the mini has the T3 guard"
       jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.command | endswith("/guard-git.py")) | select(.onFailure == "block" and .timeout == 60)' <<< "$settings" >/dev/null \
         && pass "a git guard that fails or times out blocks the command" || fail "a git guard that fails or times out blocks the command"
       jq -e '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.command | endswith("/merge-notify.py"))' <<< "$settings" >/dev/null \

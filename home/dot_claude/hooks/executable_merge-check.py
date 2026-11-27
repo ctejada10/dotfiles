@@ -10,9 +10,12 @@ sha} on stdout, and 2 otherwise, with one reason per failed check on stderr.
 The PR must be open, the branch's own under the same name, from this repo,
 into the default branch, on the local HEAD, and one of the grant's PRs when it
 names some; a merge's PR is no draft, and its --match-head-commit SHA must be
-that head. Every check on GitHub is green, and some check has reported when
-the head has workflows in .github/workflows. No review requests changes, no
-review thread is unresolved, and the base has no merge queue. No changed file
+that head. Every check on GitHub is green, and at least one has reported:
+a repo with no CI waits for Carlos. GitHub calls the PR mergeable, a merge's
+merge state is clean, and the branch is no commit behind the default branch,
+so CI ran on what would land. No review requests changes, no review thread is
+unresolved, and the base has no merge queue. The PR body's first line is no
+WAITING line, and its ## Testing section says what ran: the proof. No changed file
 is on the wait list in merge-wait.json beside this file, by its full path or
 its name, in any case. The cross-family reviewer's verdict in
 ~/agent-drafts/<name>/<branch>/merge-verdict.txt, where name is the GitHub
@@ -107,7 +110,7 @@ def problems(cwd, action, sha, allowed):
     local = ask(run, "git", "rev-parse", "HEAD")
     pr = ask(run_json, "gh", "pr", "view", "--json",
              "number,url,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,files,"
-             "changedFiles,statusCheckRollup,reviewDecision")
+             "changedFiles,statusCheckRollup,reviewDecision,mergeable,mergeStateStatus,body")
     if not isinstance(pr, dict):
         if pr is not None:
             found.append("`gh pr view` printed something other than a PR.")
@@ -139,8 +142,22 @@ def problems(cwd, action, sha, allowed):
     bad = checks_failing(pr.get("statusCheckRollup"))
     if bad:
         found.append(f"Not every check is green: {', '.join(bad)}.")
-    if not pr.get("statusCheckRollup") and ask(run, "git", "ls-tree", "--name-only", "HEAD", ".github/workflows"):
-        found.append("No checks have reported on this head yet. Wait for CI and check again.")
+    if not pr.get("statusCheckRollup"):
+        found.append("No checks have reported on this head yet. Wait for CI and check again; a repo with no CI "
+                     "waits for Carlos.")
+    if pr.get("mergeable") != "MERGEABLE":
+        found.append(f"GitHub calls the PR {pr.get('mergeable') or 'UNKNOWN'}, not MERGEABLE. Resolve any conflict "
+                     "with a merge, push, or wait for GitHub to work it out, and check again.")
+    if action == "merge" and pr.get("mergeStateStatus") not in ("CLEAN", "HAS_HOOKS"):
+        found.append(f"The PR's merge state is {pr.get('mergeStateStatus') or 'UNKNOWN'}, not CLEAN.")
+    body = str(pr.get("body") or "")
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    if lines and lines[0].upper().startswith("WAITING:"):
+        found.append(f"The PR body opens with {lines[0]!r}. Take that line out only once its reason is gone.")
+    testing = re.search(r"(?ims)^##[ \t]+testing[ \t]*$(.*?)(?=^##[ \t]|\Z)", body)
+    proof = testing.group(1).strip() if testing else ""
+    if not proof or re.fullmatch(r"(?i)[\s\-*.]*(?:none|n/?a|tbd|todo|-)?[\s.]*", proof):
+        found.append("The PR body has no ## Testing section saying what ran on this head and what it showed.")
     if pr.get("reviewDecision") == "CHANGES_REQUESTED":
         found.append("A review requests changes.")
 
@@ -159,6 +176,19 @@ def problems(cwd, action, sha, allowed):
                 found.append("The PR has more than 100 review threads, more than this checks.")
         except (KeyError, TypeError):
             found.append(f"`gh api graphql` gave no answer: {json.dumps(graph.get('errors', graph))[:300]}")
+
+    if re.fullmatch(r"[0-9a-fA-F]{40}", head):
+        compared = ask(run_json, "gh", "api", f"repos/{owner}/{name}/compare/{pr.get('baseRefName')}...{head}")
+        if isinstance(compared, dict):
+            behind = compared.get("behind_by")
+            if not isinstance(behind, int):
+                found.append(f"GitHub can't say whether the branch is behind {pr.get('baseRefName')}.")
+            elif behind:
+                found.append(f"The branch is {behind} commit(s) behind {pr.get('baseRefName')}. Bring it up to date "
+                             f"with `git pull --no-rebase origin {pr.get('baseRefName')}` or `gh pr update-branch`, "
+                             "push, and let every check run again on the new head.")
+    else:
+        found.append(f"GitHub's head, {head or '(none)'}, is no full SHA, so how far behind it is can't be checked.")
 
     files = [str(f.get("path")) for f in pr.get("files") or [] if isinstance(f, dict)]
     if len(files) < (pr.get("changedFiles") or 0):
