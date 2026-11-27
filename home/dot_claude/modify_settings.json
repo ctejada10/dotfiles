@@ -182,7 +182,7 @@
        entry or event, stay where they are. */ -}}
 {{- $hookDir := printf "%s/.claude/hooks" $home -}}
 {{- $shipped := list -}}
-{{- range $name := list "guard-paths.sh" "warn-risky.sh" "guard-git.py" "guard-vault.py" "worktree.sh create" "worktree.sh remove" "agent-gate.sh" "merge-notify.py" "route-reminder.sh" -}}
+{{- range $name := list "guard-paths.sh" "warn-risky.sh" "guard-git.py" "guard-vault.py" "worktree.sh create" "worktree.sh remove" "agent-gate.sh" "merge-notify.py" "route-reminder.sh" "guard-t3.py" -}}
 {{-   $shipped = append $shipped (printf "%s/%s" $hookDir $name) -}}
 {{- end -}}
 {{- $bashHooks := list (dict "type" "command" "command" (printf "%s/warn-risky.sh" $hookDir) "timeout" 10) -}}
@@ -211,6 +211,11 @@
 {{-   $gate := dict "type" "command" "command" (printf "%s/agent-gate.sh" $hookDir) "timeout" 10 -}}
 {{-   $_ := set $ours "PreToolUse" (append (get $ours "PreToolUse") (dict "matcher" "Skill|AskUserQuestion" "hooks" (list $gate))) -}}
 {{-   $_ := set $ours "PreToolUse" (append (get $ours "PreToolUse") (dict "matcher" "Edit|Write|MultiEdit|NotebookEdit" "hooks" (list $gate))) -}}
+{{- /* guard-t3.py holds T3's own PR tools to guard-git.py's rules: no merge
+       or review through them, drafts only, no ready, no reviewers, no PR
+       comment. Like guard-git.py it blocks when it fails. */ -}}
+{{-   $_ := set $ours "PreToolUse" (append (get $ours "PreToolUse") (dict "matcher" "mcp__t3.*__pull_request_.*" "hooks" (list
+        (dict "type" "command" "command" (printf "%s/guard-t3.py" $hookDir) "timeout" 30 "onFailure" "block")))) -}}
 {{-   $_ := set $ours "SessionStart" (list (dict "matcher" "startup|resume|clear|compact|fork" "hooks" (list $gate))) -}}
 {{-   $_ := set $ours "PostToolUse" (list (dict "matcher" "Bash" "hooks" (list
         (dict "type" "command" "command" (printf "%s/merge-notify.py" $hookDir) "timeout" 30)))) -}}

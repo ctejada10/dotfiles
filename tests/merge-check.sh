@@ -51,11 +51,12 @@ reset() {
   rm -f "$fake"/*.status "$fake"/*.sleep
   jq -n --arg h "$head" '{number: 12, url: "https://github.com/ctejada10/scripts/pull/12",
       headRefName: "feature", headRefOid: $h, baseRefName: "main", isCrossRepository: false,
-      state: "OPEN", isDraft: false,
+      state: "OPEN", isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
+      body: "## Why\nThe parser drops tabs.\n\n## What changed\n- Keep tabs.\n\n## Testing\n- `bash tests/run.sh`: 40 passed.\n",
       files: [{path: "src/app.py"}], changedFiles: 1, reviewDecision: "APPROVED",
       statusCheckRollup: [{__typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS"},
                           {__typename: "StatusContext", context: "ci/legacy", state: "SUCCESS"}]}' > "$fake/pr.json"
-  jq -n '{data: {repository: {mergeQueue: null,
+  jq -n '{data: {repository: {mergeQueue: null, ref: {compare: {behindBy: 0}},
       pullRequest: {reviewThreads: {nodes: [{isResolved: true}], pageInfo: {hasNextPage: false}}}}}}' > "$fake/graphql.json"
   mkdir -p "$(dirname "$verdict")"
   printf 'MERGE %s\nThe diff only renames a helper.\n' "$head" > "$verdict"
@@ -125,7 +126,7 @@ reset; check unsafe "--match-head-commit names no SHA" "match-head-commit" merge
 reset; check unsafe "--match-head-commit names too short a SHA" "match-head-commit" merge "${head:0:6}"
 
 section "checks"
-reset; pr '.statusCheckRollup = []'; check safe "no checks at all on a head with no workflows"
+reset; pr '.statusCheckRollup = []'; check unsafe "no checks at all, even on a head with no workflows" "a repo with no CI waits for Carlos"
 reset; git -C "$work/repo" switch -q wf
 pr ".headRefName = \"wf\" | .headRefOid = \"$wfhead\" | .statusCheckRollup = []"
 mkdir -p "$work/home/agent-drafts/scripts/wf"; printf 'MERGE %s\n' "$wfhead" > "$work/home/agent-drafts/scripts/wf/merge-verdict.txt"
@@ -139,6 +140,27 @@ reset; pr '.statusCheckRollup[0].conclusion = "FAILURE"'; check unsafe "a failed
 reset; pr '.statusCheckRollup[0] |= (.status = "IN_PROGRESS" | .conclusion = "")'; check unsafe "a pending check" "test"
 reset; pr '.statusCheckRollup[1].state = "PENDING"'; check unsafe "a pending status" "ci/legacy"
 reset; pr '.statusCheckRollup[1].state = "ERROR"'; check unsafe "a failed status" "ci/legacy"
+
+section "up to date and mergeable"
+reset; gql '.data.repository.ref.compare.behindBy = 3'; check unsafe "a branch behind the default branch" "3 commit(s) behind main"
+reset; gql '.data.repository.ref.compare.behindBy = 3'; check unsafe "a branch behind says how to catch up without a rebase" "git pull --no-rebase origin main"
+reset; gql '.data.repository.ref = null'; check unsafe "a base GitHub can't compare" "can't say whether the branch is behind"
+reset; pr '.mergeable = "CONFLICTING"'; check unsafe "a conflicting PR" "CONFLICTING"
+reset; pr '.mergeable = "UNKNOWN"'; check unsafe "mergeability not worked out yet" "UNKNOWN"
+reset; pr 'del(.mergeable)'; check unsafe "gh says nothing about mergeability" "not MERGEABLE"
+reset; pr '.mergeStateStatus = "BLOCKED"'; check unsafe "a blocked merge state" "BLOCKED"
+reset; pr '.mergeStateStatus = "UNSTABLE"'; check unsafe "an unstable merge state" "UNSTABLE"
+reset; pr '.mergeStateStatus = "HAS_HOOKS"'; check safe "a merge state with hooks"
+reset; pr '.isDraft = true | .mergeStateStatus = "DRAFT"'; check safe "readying a draft, whose merge state is DRAFT" "" ready ""
+
+section "the PR body"
+reset; pr '.body = "WAITING: the diff touches auth\n\n" + .body'; check unsafe "a WAITING line" "WAITING: the diff touches auth"
+reset; pr '.body = "## Why\nx\n\n## What changed\n- y\n"'; check unsafe "no Testing section" "## Testing"
+reset; pr '.body = "## Why\nx\n\n## Testing\n\n## Risks\nNone.\n"'; check unsafe "an empty Testing section" "## Testing"
+reset; pr '.body = "## Testing\nN/A\n"'; check unsafe "a Testing section that says N/A" "## Testing"
+reset; pr '.body = "## Testing\n- none\n"'; check unsafe "a Testing section that says none" "## Testing"
+reset; pr '.body = "## testing\nRan pytest: 12 passed.\n\n## Risks\nA slow start."'; check safe "a Testing section in any case, before Risks"
+reset; pr 'del(.body)'; check unsafe "gh says nothing about the body" "## Testing"
 
 section "reviews"
 reset; pr '.reviewDecision = "REVIEW_REQUIRED"'; check safe "no review decision yet"
