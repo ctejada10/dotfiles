@@ -186,6 +186,19 @@ def problems(cwd, action, sha, allowed):
         except (KeyError, TypeError):
             found.append(f"`gh api graphql` gave no answer: {json.dumps(graph.get('errors', graph))[:300]}")
 
+    if re.fullmatch(r"[0-9a-fA-F]{40}", head):
+        compared = ask(run_json, "gh", "api", f"repos/{owner}/{name}/compare/{pr.get('baseRefName')}...{head}")
+        if isinstance(compared, dict):
+            behind = compared.get("behind_by")
+            if not isinstance(behind, int):
+                found.append(f"GitHub can't say whether the branch is behind {pr.get('baseRefName')}.")
+            elif behind:
+                found.append(f"The branch is {behind} commit(s) behind {pr.get('baseRefName')}. Bring it up to date "
+                             f"with `git pull --no-rebase origin {pr.get('baseRefName')}` or `gh pr update-branch`, "
+                             "push, and let every check run again on the new head.")
+    else:
+        found.append(f"GitHub's head, {head or '(none)'}, is no full SHA, so how far behind it is can't be checked.")
+
     files = [str(f.get("path")) for f in pr.get("files") or [] if isinstance(f, dict)]
     if len(files) < (pr.get("changedFiles") or 0):
         found.append(f"The PR changes {pr.get('changedFiles')} files and gh lists only {len(files)}, so the wait list can't be checked.")
