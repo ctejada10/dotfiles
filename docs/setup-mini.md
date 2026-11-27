@@ -748,7 +748,7 @@ yours sprawls, narrow DEEP in `routing.md` (below).
 You don't have to name poteto-mode. On every message you send,
 `hooks/route-reminder.sh` adds the route card at the top of
 `~/.claude/routing.md`, and the reply's first line names the route it took.
-The card is ten lines and tells the agent to read the whole file once per
+The card is eleven lines and tells the agent to read the whole file once per
 thread; the hook's text stays in the conversation, so a long thread used to
 carry a full copy of routing.md for every message.
 
@@ -757,14 +757,32 @@ carry a full copy of routing.md for every message.
   poteto-mode. When the work needs a design choice, Neon checks the plan
   before any builder starts. When the diff touches secrets, outside input, the
   network, CI workflows or permissions, an adversarial pass runs (below).
-  Then deslop, one `/ponytail-review` of the final diff, and one cross-family
-  review on Codex Sol before the draft PR. There is no separate
+  Then deslop, one `/ponytail-review` of the final diff, and the review the
+  route line names before the draft PR: Theo's sol-loop (Codex Sol, up to 3
+  rounds, another only while a real finding stays open) by default, or his
+  council (Opus, Sol and Neon, read-only, scoring out of 10) when the diff
+  touches the Fable triggers, the merge wait list, auth, permissions,
+  secrets, a migration or a real account. There is no separate
   `/code-review` on DEEP.
 - **TRIVIAL**: one file, about ten lines, no new behavior, cause known. Done
   in the thread with no children: test first, the full suite, deslop, a
   low-level `/code-review`, the draft PR.
-- **QUESTION**: answered, with no edits.
+- **QUESTION**: answered, with no edits. One that needs a sweep of code or
+  logs goes through poteto-mode's Investigation playbook, read-only, and a
+  costly decision gets a read-only council.
 - **SKIP**: start a message with `--` and it's done as written, with no skills.
+
+The route line also names the end, picked from the repo and your message:
+**gate** (the default where the repo runs PR checks) babysits the draft PR
+with T3's PR watch until every Merging condition but the merge holds, then
+reports `Ready:`, `WAITING:` or `Blocked:`, and writes a T3 review guide when
+it waits on you; **pr** stops at the draft PR, for a repo with no PR checks or
+when you ask for just the PR; **merge** is gate, then the merge, only when you
+ask for one in plain words. You never have to name a skill: "council", "sol
+loop", "full stop" and "full send" at the start of a message only force a
+choice. The two tstack skills are copied in unchanged and pinned, and
+`routing.md` overrides their lines that clash with the rules (no model names
+in the PR body, 3 rounds at most, Sol at medium, Neon when Codex is out).
 
 When the agent can't tell TRIVIAL from DEEP, it picks DEEP. On **Claude
 (attended)** it names the route and its first steps and asks before editing.
@@ -783,8 +801,9 @@ a different model family checking the result.
 | Swarm workers, verification, the adversarial pass | Sonnet 5.5, high |
 | Chores: lookups, CI and log triage, summaries, mechanical edits | Codex Luna, medium, up to 4 per DEEP task |
 | A first spec or research draft | Codex Sol, medium, one per DEEP task |
-| Cross-family review of the final diff | Codex Sol, medium, one per PR |
-| Second opinion: the plan check, interrogate, arena judging | Gemini 4 Neon, high, as a child only |
+| Cross-family review of the final diff | Codex Sol, medium: the loop or its council seat, up to 3 rounds per PR |
+| A council's Claude seat | Opus 5.5, high, a fresh review child |
+| Second opinion: the plan check, interrogate, arena judging, a council seat | Gemini 4 Neon, high, as a child only |
 | Deep thinker | Fable 5.2, high, as a child only |
 
 Neon holds the second-opinion seat that Gemini 4 Argon held in Theo's
@@ -798,8 +817,8 @@ credits, so a Fable child that reports a limit or credit use ends Fable for
 the run, and its step is redone on Opus.
 
 Codex's 5-hour Plus window is shared by every Codex session here, so per
-DEEP task it gets at most one Sol draft, the one Sol review and four Luna
-chores. On a Codex limit the work moves to Claude and the PR says so. Recheck
+DEEP task it gets at most one Sol draft, Sol in the review (up to 3 rounds)
+and four Luna chores. On a Codex limit the work moves to Claude and the PR says so. Recheck
 these limits when ChatGPT and Codex move to one shared allowance in December.
 
 **The budget.** At most 4 children at once, every child a leaf, 3 review
@@ -838,8 +857,10 @@ throwaway branch:
 | Message | First line of the reply |
 | --- | --- |
 | "Why does chezmoi diff show the plist every run?" | `Route: QUESTION`, no edits |
-| "Fix the typo 'recieve' in docs/setup-mini.md" | `Route: TRIVIAL`, no child threads |
-| "Add a --json flag to dotfiles doctor" | `Route: DEEP`, child threads in the lineage view |
+| "Fix the typo 'recieve' in docs/setup-mini.md" | `Route: TRIVIAL, end: gate`, no child threads |
+| "Add a --json flag to dotfiles doctor" | `Route: DEEP, review: loop, end: gate`, child threads in the lineage view |
+| "Let agents write the Todoist token to 1Password" (in hurin) | `Route: DEEP, review: council, end: gate` |
+| "Ship it: fix the Lindir poster cache" (in rivendell) | `Route: DEEP, review: loop, end: merge` |
 | "The worktree-ttl job sometimes deletes live worktrees; find out why" | `Route: DEEP` |
 | "-- print pins.yaml" | `Route: SKIP` |
 | "Add a /hooks/github endpoint that checks the webhook secret" (in hurin) | `Route: DEEP`, and an adversarial child on Sonnet after interrogate |

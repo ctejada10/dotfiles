@@ -55,6 +55,11 @@ top.
   department-of-internal-arguments-Apache-2.0.txt here.
   department-of-internal-arguments-NOTICE.txt here is an unmodified copy of
   that commit's NOTICE file, which Apache-2.0 section 4(d) requires.
+- The skills sol-loop and council under home/dot_claude/skills are unmodified
+  copies of skills/sol-loop/SKILL.md and skills/council/SKILL.md from
+  t3dotgg/tstack at commit 11e37a74d0a6868c121cd0910ab2b3bd9873b92a, under
+  the MIT licence (Copyright (c) 2026 Theo Browne), whose text is
+  tstack-MIT.txt here.
 
 Not copied here, because they carry no licence to copy them under: the
 OpenSCAD skill (swh/openscad-skill) and two of George Wang's skills

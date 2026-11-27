@@ -94,7 +94,7 @@ The grant is a line Carlos typed in this thread that asks for a merge in plain w
 ## Done means
 
 - Run the repo's own gates, from its AGENTS.md, CLAUDE.md, Makefile or CI config: targeted tests first, then the full suite, lint and type-check. Put a time limit on tests with `timeout -s INT -k 30 <seconds>`, because a plain `timeout` kills pytest before it releases its temp folders, which then stay for three days.
-- Every branch ends with the full suite, a push and a draft PR (or a PR merged under Merging), even when a gate fails; put the failing output in the PR body. A delegated child returns to its parent instead.
+- Every branch ends with the full suite, a push and a draft PR (or a PR merged under Merging), even when a gate fails; put the failing output in the PR body. In Claude Code, routing.md's end can then watch the draft PR to the merge gate. A delegated child returns to its parent instead.
 - Python repos have nothing on PATH. Run everything through `uv run`.
 - hurin, rivendell and media-organizer weld coverage into addopts, so a subset run needs `--no-cov` (`uv run pytest --no-cov tests/test_x.py`) or it fails with every test passing. In those three, run the full `make test` before pushing.
 - For a feature or behavior change in a repo with tests, write the test first.
@@ -110,7 +110,7 @@ Write it for a reviewer who was not in the thread, after Google's guide to chang
 
 No other headings or parts: no decisions, rulings, verification narrative or notes. Anything else for Carlos goes in your final message.
 
-Just before you push for the PR, write `rules: mini 2026-11-26a` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
+Just before you push for the PR, write `rules: mini 2026-11-26b` on a line of its own in the thread, so Carlos can see this file loaded. Never put it in the PR or a commit.
 
 Base every claim on a tool result from this run.
 
