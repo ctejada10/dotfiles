@@ -141,6 +141,11 @@ if role == "laptop"
     mas "Userscripts", id: 1463298887
   end
 
+  # iPhone and iPad apps the laptop runs, which mas can't install: get them
+  # from the App Store's "iPhone & iPad Apps" by hand.
+  #   CARROT Weather
+  #   Sequel
+
   vscode "aaron-bond.better-comments"
   vscode "anthropic.claude-code"
   vscode "antyos.openscad"

@@ -73,6 +73,10 @@ the link into Dropbox ([`~/.config`](#config) says how) and writes 1Password's
 repos don't wait for Dropbox: the first apply already cloned them into `~/src`
 from GitHub.
 
+**iPhone and iPad apps.** CARROT Weather and Sequel run on the laptop as
+iPhone and iPad apps, which mas can't install. Get them from the App Store's
+**iPhone & iPad Apps** tab; the Brewfile lists them in a comment.
+
 **Time zone.** The laptop's time zone follows its location. That needs System
 Settings → Privacy & Security → Location Services → System Services → Setting
 time zone turned on, which no script can do.
