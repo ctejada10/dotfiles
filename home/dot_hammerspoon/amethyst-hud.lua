@@ -8,13 +8,21 @@
 --
 -- Each Space has a default layout per screen: the laptop's own, or any other
 -- (the Sony, always in clamshell). The first time Hammerspoon ever sees a
--- Space it sets that default, once, and records it in hs.settings; after that
--- it never presses a key for that Space again. Amethyst remembers each
--- Space's layout itself, across switches and restarts, so a layout changed by
--- hand stays. A change within a Space shows the HUD. For a moment after a
--- Space switch the log is ignored: Amethyst's lines for the old Space can
--- land after macOS already reports the new one. ⌥⌃I shows the HUD on request
--- and ⌥⌃/ restarts Amethyst with its log on.
+-- Space it sets that default, and once Amethyst reports it, records it in
+-- hs.settings; after that it never sets a layout for that Space again.
+-- Amethyst remembers each Space's layout itself, across switches and
+-- restarts, so a layout changed by hand stays. A change within a Space shows
+-- the HUD. For a moment after a Space switch the log is ignored: Amethyst's
+-- lines for the old Space can land after macOS already reports the new one.
+-- Then, on a Space not yet set, Hammerspoon asks Amethyst to re-tile, so it
+-- reports the Space's layout.
+--
+-- Amethyst re-tiles when a window closes only if macOS says it was
+-- destroyed. Electron apps such as Beeper hide a window on close instead, so
+-- its slot stayed empty. Any window that's destroyed or stops being visible
+-- has Hammerspoon ask Amethyst to re-tile.
+--
+-- ⌥⌃I shows the HUD on request and ⌥⌃/ restarts Amethyst with its log on.
 
 local M = {}
 
@@ -25,17 +33,24 @@ M.defaults = {
     external = { "center", "bsp-left", "tall-left", "tall-left", "float" },
 }
 
--- Each layout's select key in ~/.amethyst.yml, with ⌥⌃.
+-- Each layout's select key in ~/.amethyst.yml, with ⌥⌃, and its
+-- reevaluate-windows key, which re-tiles without changing a layout.
 local MODS = { "ctrl", "alt" }
 local KEYS = { center = "d", grid = "v", ["bsp-left"] = "b", ["tall-left"] = "t", float = "f" }
+local RETILE = ","
 
 local LOG = os.getenv("HOME") .. "/Library/Logs/amethyst.log"
 local LOG_LIMIT = 20 * 1024 * 1024
 local AGENT = "com.carlosetejada.amethyst"
 local HUD_NOTE = "com.carlosetejada.layout-hud.show"
-local SEEDED = "amethystHud.seeded"
+-- v2: the first record also held Spaces marked set when their key press was
+-- lost, such as the Sony's Space 3, so every Space gets its default once more.
+local SEEDED = "amethystHud.seeded.v2"
 -- Seconds the log is ignored after a Space switch.
 local SETTLE = 0.6
+-- Seconds to wait after a window goes before re-tiling, so a burst of them
+-- re-tiles once.
+local RETILE_DELAY = 0.3
 
 local log = hs.logger.new("amethystHud", "info")
 local seeded = hs.settings.get(SEEDED) or {} -- "laptop:2" -> true once set
@@ -79,15 +94,9 @@ local function seed(key)
     hs.settings.set(SEEDED, seeded)
 end
 
--- The first version kept every layout changed by hand here. Those Spaces
--- already have Carlos's layout, so they count as set.
-local OLD_STORE = "amethystHud.spaceLayouts"
-local old = hs.settings.get(OLD_STORE)
-if type(old) == "table" then
-    for key in pairs(old) do seeded[key] = true end
-    hs.settings.set(SEEDED, seeded)
-    hs.settings.clear(OLD_STORE)
-end
+-- Earlier records, retired.
+hs.settings.clear("amethystHud.spaceLayouts")
+hs.settings.clear("amethystHud.seeded")
 
 -- The screen a reported frame is on.
 local function screenFor(frame)
@@ -105,6 +114,10 @@ local function focusedOn(screen)
     return on ~= nil and on:getUUID() == screen:getUUID()
 end
 
+local function retile()
+    hs.eventtap.keyStroke(MODS, RETILE, 20000)
+end
+
 local function onReport(report)
     if not KEYS[report.layout] then return end
     if hs.timer.secondsSinceEpoch() < settleUntil then return end
@@ -115,7 +128,10 @@ local function onReport(report)
     current[id] = report.layout
 
     if pending[id] then
-        if report.layout == pending[id] then pending[id] = nil end
+        if report.layout == pending[id] then
+            pending[id] = nil
+            if key then seed(key) end
+        end
         return
     end
 
@@ -124,10 +140,11 @@ local function onReport(report)
             seed(key)
         elseif focusedOn(screen) then
             -- A select key toggles back when its layout is already on, so it
-            -- is pressed only when Amethyst reports another one.
+            -- is pressed only when Amethyst reports another one. The Space
+            -- counts as set once Amethyst reports the new layout; a press
+            -- that's lost is tried again on the next report.
             pending[id] = want
-            seed(key)
-            log.i(string.format("%s: %s -> %s, once", key, report.layout, want))
+            log.i(string.format("%s: %s -> %s", key, report.layout, want))
             hs.eventtap.keyStroke(MODS, KEYS[want], 20000)
             hs.timer.doAfter(2, function()
                 if pending[id] == want then pending[id] = nil end
@@ -188,8 +205,17 @@ M.appWatcher = hs.application.watcher.new(function(_, event, app)
     end
 end):start()
 
+-- After the pause, a Space not yet set is asked for its layout: Amethyst's
+-- lines for it came during the pause, and nothing may re-tile it after.
+local function askUnseeded()
+    local screen = hs.screen.mainScreen()
+    local _, key, want = slot(screen)
+    if key and want and not seeded[key] and focusedOn(screen) then retile() end
+end
+
 M.spaceWatcher = hs.spaces.watcher.new(function()
     settleUntil = hs.timer.secondsSinceEpoch() + SETTLE
+    hs.timer.doAfter(SETTLE + 0.05, askUnseeded)
 end):start()
 
 -- A screen plugged in or out: its Spaces are other Spaces.
@@ -197,6 +223,12 @@ M.screenWatcher = hs.screen.watcher.new(function()
     pending, current = {}, {}
     settleUntil = hs.timer.secondsSinceEpoch() + SETTLE
 end):start()
+
+M.retileTimer = hs.timer.delayed.new(RETILE_DELAY, retile)
+M.windowFilter = hs.window.filter.new()
+M.windowFilter:subscribe({ hs.window.filter.windowDestroyed, hs.window.filter.windowNotVisible }, function()
+    M.retileTimer:start()
+end)
 
 M.trim = hs.timer.doEvery(600, function()
     local size = hs.fs.attributes(LOG, "size")
