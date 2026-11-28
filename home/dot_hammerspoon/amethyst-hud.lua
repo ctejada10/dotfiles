@@ -147,9 +147,13 @@ local function onOutput(_, out)
         local line, rest = buffer:match("^(.-)\n(.*)$")
         if not line then break end
         buffer = rest
+        -- Only the layouts' own lines: decoding anything else makes
+        -- Hammerspoon log a JSON error for every other line of the log.
         local json = line:match("amethyst%-hud (%b{})")
-        local ok, report = pcall(hs.json.decode, json or "")
-        if json and ok and type(report) == "table" then onReport(report) end
+        if json then
+            local ok, report = pcall(hs.json.decode, json)
+            if ok and type(report) == "table" then onReport(report) end
+        end
     end
     return true
 end
