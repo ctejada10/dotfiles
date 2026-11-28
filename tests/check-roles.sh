@@ -52,6 +52,7 @@ for role in "${roles[@]}"; do
       has "$list" ".amethyst.yml" \
         && has "$list" "Library/Application Support/Amethyst/Layouts/almost-maximize.js" \
         && has "$list" "Library/Application Support/Amethyst/Layouts/grid.js" \
+        && has "$list" "Library/Application Support/Amethyst/Layouts/bsp-left.js" \
         && pass "has Amethyst's config and custom layouts" || fail "has Amethyst's config and custom layouts"
       has "$list" ".config" && pass "manages the ~/.config link" || fail "manages the ~/.config link"
       grep -q '^\.config/' <<< "$list" && fail "manages nothing inside ~/.config" "$(grep '^\.config/' <<< "$list")" || pass "manages nothing inside ~/.config"

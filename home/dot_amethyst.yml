@@ -8,9 +8,8 @@
 # back to its built-in key with these modifiers, so every command that has
 # one and isn't used here is set to false.
 #
-# The two custom layouts are in
-# ~/Library/Application Support/Amethyst/Layouts/: almost-maximize.js and
-# grid.js.
+# The custom layouts are in ~/Library/Application Support/Amethyst/Layouts/:
+# almost-maximize.js, bsp-left.js and grid.js.
 
 mod1:
   - option
@@ -25,7 +24,7 @@ mod2:
 layouts:
   - almost-maximize
   - grid
-  - bsp
+  - bsp-left
   - tall
 
 # Layouts ######################################################################
@@ -38,7 +37,7 @@ select-grid-layout:
   mod: mod1
   key: v
 
-select-bsp-layout:
+select-bsp-left-layout:
   mod: mod1
   key: b
 

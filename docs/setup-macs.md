@@ -282,8 +282,9 @@ Libron comes from the `font-libron` cask.
 ## Amethyst
 
 The laptop tiles its windows with Amethyst. Its config is `~/.amethyst.yml`,
-from `home/dot_amethyst.yml`, and its two custom layouts, almost-maximize and
-grid, are in `~/Library/Application Support/Amethyst/Layouts`. Amethyst reads
+from `home/dot_amethyst.yml`, and its custom layouts, almost-maximize, grid,
+and bsp-left (BSP with the main window on the left, which Amethyst's own bsp
+can't do), are in `~/Library/Application Support/Amethyst/Layouts`. Amethyst reads
 both only when it starts, so after an apply that changed them restart it with
 ⌥⌃/. The window keys are the ⌥⌃ layer, with ⇧ for the second action in a
 family; the config lists them, and switches off every key Amethyst would
