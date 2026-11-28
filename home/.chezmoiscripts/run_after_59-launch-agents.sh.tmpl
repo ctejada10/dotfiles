@@ -3,7 +3,8 @@
 # Keeps this Mac's LaunchAgents loaded: on the mini, the worktree cleanup job
 # and the repos' snapshot job; on the laptop, the personal backup. Each is
 # reloaded when its own plist changes, judged against its own marker, so a
-# change to one never reloads another. Over SSH, with no one logged in at the
+# change to one never reloads another. On the laptop also Amethyst, with its
+# log on, and the layout HUD. Over SSH, with no one logged in at the
 # Mac, launchd has no GUI session to load them into; the next apply from the
 # Mac's own session does.
 
@@ -47,7 +48,7 @@ plists=0
 {{- if .isAgent }}
 jobs="worktree-ttl repo-snapshots hermes-logs{{ if .hermes.hurin.enabled }} hurin-bridge{{ end }}"
 {{- else }}
-jobs="personal-backup"
+jobs="personal-backup amethyst layout-hud"
 {{- end }}
 for name in $jobs; do
   [ -f "$HOME/Library/LaunchAgents/com.carlosetejada.$name.plist" ] && plists=$((plists + 1))
@@ -70,6 +71,8 @@ load hurin-bridge "Hurin Mac bridge" "always on" "Hurin can't reach this Mac"
 {{- end }}
 {{- else }}
 load personal-backup "personal backup" "Sundays at 03:47" "no backup is made"
+load amethyst "Amethyst, with its log on" "at login" "Amethyst isn't started at login"
+load layout-hud "layout HUD" "always on" "no layout HUD shows"
 {{- end }}
 exit 0
 {{ end -}}

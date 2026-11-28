@@ -1,0 +1,40 @@
+{{- if eq .role "laptop" -}}
+#!/bin/bash
+# Builds the Amethyst layout HUD into ~/.local/bin/layout-hud from the
+# scripts repo's interfaces/layout-hud/main.swift, with the Command Line
+# Tools' swiftc, when the binary is missing or older than its source, then
+# restarts it if its LaunchAgent is loaded. The laptop's clone of scripts is
+# pulled by hand, so a new version builds on the apply after a pull. A Mac
+# without the clone or the Command Line Tools, or a failed build, says so and
+# the next apply tries again; the HUD is all that's missing meanwhile.
+
+set -uo pipefail
+SCRIPT=layout-hud
+{{ template "script-lib.sh" . }}
+
+src="$HOME/src/scripts/interfaces/layout-hud/main.swift"
+bin="$HOME/.local/bin/layout-hud"
+if [ ! -f "$src" ]; then
+  warn "the layout HUD isn't built: $src is missing. The scripts clone may predate it; pull it, and the next apply builds the HUD."
+  exit 0
+fi
+mkdir -p "$(dirname "$bin")"
+[ -x "$bin" ] && [ ! "$src" -nt "$bin" ] && exit 0
+
+if ! swiftc=$(xcrun --find swiftc 2>/dev/null); then
+  warn "the layout HUD isn't built: swiftc is missing. Install the Command Line Tools (xcode-select --install); the next apply builds it."
+  exit 0
+fi
+if ! out=$("$swiftc" -O -swift-version 5 -framework AppKit -o "$bin.new" "$src" 2>&1); then
+  rm -f "$bin.new"
+  warn "FAILED to build the layout HUD; the next apply tries again:"
+  printf '%s\n' "$out" >&2
+  exit 0
+fi
+mv -f "$bin.new" "$bin"
+say "built the layout HUD"
+
+label="gui/$(id -u)/com.carlosetejada.layout-hud"
+launchctl print "$label" >/dev/null 2>&1 && launchctl kickstart -k "$label" >/dev/null 2>&1
+exit 0
+{{ end -}}

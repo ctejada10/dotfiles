@@ -1,0 +1,35 @@
+{{- if eq .role "laptop" -}}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.carlosetejada.layout-hud</string>
+
+	<!-- The Amethyst layout HUD, a Liquid Glass tile Hammerspoon asks for.
+	     run_after_58-layout-hud.sh builds it from the scripts repo's
+	     interfaces/layout-hud/main.swift. Its label is in MonoLisa, the
+	     family fonts.toml names. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{ .chezmoi.homeDir }}/.local/bin/layout-hud</string>
+		<string>--font</string>
+		<string>{{ .fonts.monolisa.family }}</string>
+	</array>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+
+	<key>StandardOutPath</key>
+	<string>/dev/null</string>
+	<key>StandardErrorPath</key>
+	<string>{{ .chezmoi.homeDir }}/Library/Logs/layout-hud.stderr.log</string>
+</dict>
+</plist>
+{{ end -}}

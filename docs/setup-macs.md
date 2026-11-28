@@ -282,17 +282,44 @@ Libron comes from the `font-libron` cask.
 ## Amethyst
 
 The laptop tiles its windows with Amethyst. Its config is `~/.amethyst.yml`,
-from `home/dot_amethyst.yml`, and its custom layouts, almost-maximize, grid,
-and bsp-left (BSP with the main window on the left, which Amethyst's own bsp
-can't do), are in `~/Library/Application Support/Amethyst/Layouts`. Amethyst reads
-both only when it starts, so after an apply that changed them restart it with
-⌥⌃/. The window keys are the ⌥⌃ layer, with ⇧ for the second action in a
-family; the config lists them, and switches off every key Amethyst would
-otherwise bring back on its own.
+from `home/dot_amethyst.yml`. Its layouts are all custom ones, in
+`~/Library/Application Support/Amethyst/Layouts`: Center (`center`, the window
+centred at 90% of the width), Grid (`grid`), BSP (`bsp-left`, the main window
+always on the left), Tall (`tall-left`) and Floating (`float`, no layout). The
+window keys are the ⌥⌃ layer, with ⇧ for the second action in a family; the
+config lists them, and switches off every key Amethyst would otherwise bring
+back on its own.
 
-The first time Amethyst opens, allow it under System Settings → Privacy &
-Security → Accessibility, and turn on **Start Amethyst on login** in its menu.
-It keeps each Space's layout itself, across restarts.
+**Which layout is on.** Amethyst can't tell anything else which layout a Space
+has, so each layout writes every arrangement to Amethyst's log, and Hammerspoon
+reads it (`~/.hammerspoon/amethyst-hud.lua`). For that, Amethyst runs from the
+LaunchAgent `com.carlosetejada.amethyst` with its log on, written to
+`~/Library/Logs/amethyst.log`, and not as a login item. Started any other way,
+by its own menu or an update, it has no log, and Hammerspoon restarts it from
+the LaunchAgent. ⌥⌃/ restarts it the same way, so it's Hammerspoon's key, not
+Amethyst's.
+
+**A layout per Space.** Each Space has a layout on the laptop's own screen and
+one on any other (the Sony, used in clamshell); the defaults are at the top of
+`amethyst-hud.lua`. The first time a Space shows up in a session, Hammerspoon
+gives it its layout by pressing its key. A layout changed by hand is kept for
+that Space and screen, in Hammerspoon's settings, and comes back after a
+restart.
+
+**The HUD.** A layout changed by hand shows a small Liquid Glass tile at the
+bottom of the screen with the layout's glyph and name for a second, and ⌥⌃I
+shows it on request. It's `layout-hud`, a small AppKit program whose source
+is in the scripts repo, `interfaces/layout-hud/main.swift`. The apply builds
+it from the laptop's clone into `~/.local/bin/layout-hud` with the Command
+Line Tools' swiftc whenever the source is newer, so a new version builds on
+the apply after pulling scripts, and the LaunchAgent
+`com.carlosetejada.layout-hud` keeps it running. Hammerspoon asks for it with
+a distributed notification.
+
+The first time each runs, allow Amethyst and Hammerspoon under System Settings
+→ Privacy & Security → Accessibility: Hammerspoon presses the layout keys.
+After an apply that changed a layout or the config, restart Amethyst with ⌥⌃/;
+it reads both only when it starts.
 
 Amethyst moves a window to a Space by pressing macOS's Switch to Desktop
 shortcut for it, so the settings script turns those on: ⌃1 to ⌃4 for
