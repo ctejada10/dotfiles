@@ -603,6 +603,81 @@ fw_ensure --getstealthmode --setstealthmode on "mode is on" "stealth mode"
 # on for System Services > Setting time zone, which only System Settings can
 # turn on; the README lists it.
 defaults_set_root /Library/Preferences/com.apple.timezone.auto Active bool true
+
+###############################################################################
+# The laptop: Spaces for Amethyst                                             #
+###############################################################################
+
+# Amethyst throws a window to a Space by pressing macOS's own Switch to Desktop
+# shortcut, so Desktops 1-4 get ⌃1-⌃4 and Desktop 5 ⌃9, as amethyst.yml
+# expects. Select next input source (⌃⌥Space) goes off: Amethyst cycles
+# layouts there. They're merged into the shortcuts' plist like Finder's view
+# settings, then made live without logging out.
+hotkeys=$(cat <<'HOTKEYS'
+{{ template "symbolic-hotkeys.plist" . }}
+HOTKEYS
+)
+# A Mac whose shortcuts were never changed has no such domain yet.
+hk_now=$(defaults export com.apple.symbolichotkeys - 2>/dev/null) \
+  || hk_now='<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict/></plist>'
+if ! hk_new=$(printf '%s' "$hk_now" | /usr/bin/python3 -I -c "$merge_py" "$hotkeys"); then
+  warn "FAILED to read and merge the keyboard shortcuts"; FAILED=$((FAILED + 1))
+elif [ -z "$hk_new" ]; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would set Switch to Desktop 1-5 and turn off ⌃⌥Space for input sources"; CHANGED=$((CHANGED + 1))
+elif printf '%s' "$hk_new" | defaults import com.apple.symbolichotkeys -; then
+  /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u >/dev/null 2>&1 || true
+  say "set Switch to Desktop 1-5 and turned off ⌃⌥Space for input sources"; CHANGED=$((CHANGED + 1))
+else
+  warn "FAILED to set the keyboard shortcuts"; FAILED=$((FAILED + 1))
+fi
+
+# Five Spaces on the main display, the ones those keys reach. macOS lists them
+# in com.apple.spaces but makes them only through Mission Control, so missing
+# ones are added with its add button. That needs this terminal allowed under
+# System Settings > Privacy & Security > Accessibility; without it, the apply
+# says so and the next one tries again. Extra Spaces are left alone.
+spaces_wanted=5
+spaces_count() {
+  defaults export com.apple.spaces - 2>/dev/null | /usr/bin/python3 -I -c 'import plistlib, sys
+try: d = plistlib.loads(sys.stdin.buffer.read())
+except Exception: print(1); sys.exit()
+mons = d.get("SpacesDisplayConfiguration", {}).get("Management Data", {}).get("Monitors", [])
+spaces = next((m["Spaces"] for m in mons if m.get("Spaces")), [])
+print(max(1, sum(1 for s in spaces if s.get("type", 0) == 0)))'
+}
+spaces=$(spaces_count)
+if [ "$spaces" -ge "$spaces_wanted" ]; then
+  UNCHANGED=$((UNCHANGED + 1))
+elif [ "$CHECK" = 1 ]; then
+  say "would add $((spaces_wanted - spaces)) Spaces, for $spaces_wanted"; CHANGED=$((CHANGED + 1))
+else
+  timeout_run 60 osascript - "$((spaces_wanted - spaces))" >/dev/null 2>&1 <<'APPLESCRIPT'
+on run argv
+  do shell script "open -b com.apple.exposelauncher"
+  delay 1
+  try
+    tell application "System Events" to tell process "Dock"
+      set spacesBar to group "Spaces Bar" of group 1 of group "Mission Control"
+      repeat (item 1 of argv) as integer times
+        click button 1 of spacesBar
+        delay 0.5
+      end repeat
+    end tell
+  end try
+  tell application "System Events" to key code 53
+end run
+APPLESCRIPT
+  sleep 1
+  spaces_now=$(spaces_count)
+  if [ "$spaces_now" -ge "$spaces_wanted" ]; then
+    say "added $((spaces_now - spaces)) Spaces, for $spaces_wanted"; CHANGED=$((CHANGED + 1))
+  else
+    warn "couldn't add Spaces ($spaces_now of $spaces_wanted): this terminal may need Accessibility, or Mission Control has changed. Add them in Mission Control; the next apply tries again."
+    SKIPPED=$((SKIPPED + 1))
+  fi
+fi
 {{- end }}
 
 restart_touched

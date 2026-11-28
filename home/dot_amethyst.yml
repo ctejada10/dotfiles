@@ -1,0 +1,196 @@
+# Amethyst, the laptop's tiling window manager. Amethyst reads ~/.amethyst.yml
+# before ~/.config/amethyst/amethyst.yml, and either overrides its settings
+# window. After an edit, restart Amethyst with ⌥⌃/.
+#
+# Window keys live in the ⌥⌃ layer (mod1); ⇧ adds the second action in the
+# same family (mod2). ⌘ stays macOS's, ⌥ Raycast's and Hyper the app
+# launcher's. A command left out of this file isn't unbound: Amethyst falls
+# back to its built-in key with these modifiers, so every command that has
+# one and isn't used here is set to false.
+#
+# The two custom layouts are in
+# ~/Library/Application Support/Amethyst/Layouts/: almost-maximize.js and
+# grid.js.
+
+mod1:
+  - option
+  - control
+
+mod2:
+  - option
+  - control
+  - shift
+
+# The first is the layout of a Space that has never been set.
+layouts:
+  - almost-maximize
+  - grid
+  - bsp
+  - tall
+
+# Layouts ######################################################################
+
+select-almost-maximize-layout:
+  mod: mod1
+  key: f
+
+select-grid-layout:
+  mod: mod1
+  key: v
+
+select-bsp-layout:
+  mod: mod1
+  key: b
+
+select-tall-layout:
+  mod: mod1
+  key: t
+
+cycle-layout:
+  mod: mod1
+  key: space
+
+cycle-layout-backward:
+  mod: mod2
+  key: space
+
+expand-main:
+  mod: mod1
+  key: '='
+
+shrink-main:
+  mod: mod1
+  key: '-'
+
+# Focus and order ##############################################################
+
+focus-ccw:
+  mod: mod1
+  key: j
+
+focus-cw:
+  mod: mod1
+  key: k
+
+focus-main:
+  mod: mod1
+  key: m
+
+swap-main:
+  mod: mod1
+  key: enter
+
+swap-ccw:
+  mod: mod2
+  key: j
+
+swap-cw:
+  mod: mod2
+  key: k
+
+# Spaces #######################################################################
+# Amethyst moves a window by pressing macOS's own Switch to Desktop shortcut,
+# so these need it on for that Space. The settings script turns on ⌃1–⌃4 for
+# Desktops 1–4 and ⌃9 for Desktop 5.
+
+throw-space-left:
+  mod: mod2
+  key: h
+
+throw-space-right:
+  mod: mod2
+  key: l
+
+throw-space-1:
+  mod: mod2
+  key: '1'
+
+throw-space-2:
+  mod: mod2
+  key: '2'
+
+throw-space-3:
+  mod: mod2
+  key: '3'
+
+throw-space-4:
+  mod: mod2
+  key: '4'
+
+throw-space-5:
+  mod: mod2
+  key: '9'
+
+follow-space-thrown-windows: true
+
+# Tiling #######################################################################
+
+toggle-float:
+  mod: mod1
+  key: q
+
+toggle-tiling:
+  mod: mod1
+  key: '.'
+
+reevaluate-windows:
+  mod: mod1
+  key: ','
+
+relaunch-amethyst:
+  mod: mod1
+  key: '/'
+
+# Off: built-in keys that would otherwise come back ############################
+
+select-wide-layout: false
+select-fullscreen-layout: false
+select-column-layout: false
+increase-main: false
+decrease-main: false
+focus-screen-ccw: false
+focus-screen-cw: false
+focus-screen-1: false
+focus-screen-2: false
+focus-screen-3: false
+focus-screen-4: false
+focus-screen-5: false
+throw-screen-1: false
+throw-screen-2: false
+throw-screen-3: false
+throw-screen-4: false
+throw-screen-5: false
+swap-screen-ccw: false
+swap-screen-cw: false
+throw-space-6: false
+throw-space-7: false
+throw-space-8: false
+throw-space-9: false
+throw-space-10: false
+display-current-layout: false
+toggle-focus-follows-mouse: false
+
+# Behaviour ####################################################################
+
+# No layout HUD: its size, place and font can't be changed.
+enables-layout-hud: false
+enables-layout-hud-on-space-change: false
+
+floating:
+  - com.apple.systempreferences
+  - com.1password.1password
+floating-is-blacklist: true
+float-small-windows: true
+small-window-size: 500
+
+window-margins: true
+window-margin-size: 8
+smart-window-margins: false
+window-resize-step: 5
+
+mouse-follows-focus: false
+focus-follows-mouse: false
+mouse-swaps-windows: true
+mouse-resizes-windows: true
+
+restore-layouts-on-launch: true
