@@ -35,6 +35,7 @@ run tests/worktree-ttl.sh
 run tests/repo-snapshots.sh
 run tests/storage-watch.sh
 run tests/dock.sh
+run tests/amethyst.sh
 run tests/hermes.sh
 run tests/personal-backup.sh
 run tests/amonsul-ssh.sh

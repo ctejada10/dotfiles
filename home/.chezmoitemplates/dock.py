@@ -13,9 +13,9 @@ def keys(a):
     if url: k.add(os.path.basename(url.rstrip('/')).replace('%20',' ').lower())
     return k
 groups = [
-    [('company.thebrowser.dia','Dia.app')],
-    [('com.tinyspeck.slackmacgap','Slack.app'), ('com.apple.MobileSMS','Messages.app'),
-     ('com.apple.mail','Mail.app'), ('com.automattic.beeper.desktop','Beeper Desktop.app')],
+    [('com.kagi.kagimacOS','Orion.app')],
+    [('com.mimestream.Mimestream','Mimestream.app'), ('com.tinyspeck.slackmacgap','Slack.app'),
+     ('com.apple.MobileSMS','Messages.app'), ('com.automattic.beeper.desktop','Beeper Desktop.app')],
     [('com.t3tools.t3code','T3 Code (Beta).app'), ('com.mitchellh.ghostty','Ghostty.app')],
     [('md.obsidian','Obsidian.app'), ('com.flexibits.fantastical2.mac','Fantastical.app'), ('com.todoist.mac.Todoist','Todoist.app')],
 ]

@@ -20,7 +20,7 @@ def app(bundle, name):
     return {'tile-data': td, 'tile-type': 'file-tile'}
 apps = [app('com.apple.Safari', 'Safari.app'), app('com.mitchellh.ghostty', 'Ghostty.app'),
         {'tile-data': {}, 'tile-type': 'spacer-tile'}, app('md.obsidian', 'Obsidian.app'),
-        app('company.thebrowser.dia', 'Dia.app'), app('com.apple.mail', 'Mail.app'),
+        app('com.kagi.kagimacOS', 'Orion.app'), app('com.mimestream.Mimestream', 'Mimestream.app'),
         app(None, 'T3 Code (Beta).app'), app('com.tinyspeck.slackmacgap', 'Slack.app')]
 plistlib.dump({'persistent-apps': apps, 'tilesize': 36}, open(sys.argv[1], 'wb'))
 PY
@@ -34,10 +34,10 @@ for a in plistlib.load(sys.stdin.buffer)["persistent-apps"]:
 
 section "dock.py"
 python3 -I "$dock" < "$T/before.plist" > "$T/after.plist"
-want="company.thebrowser.dia
+want="com.kagi.kagimacOS
 small-spacer-tile
+com.mimestream.Mimestream
 com.tinyspeck.slackmacgap
-com.apple.mail
 small-spacer-tile
 file:///Applications/T3%20Code%20(Beta).app/
 com.mitchellh.ghostty

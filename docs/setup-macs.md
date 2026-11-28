@@ -73,6 +73,10 @@ the link into Dropbox ([`~/.config`](#config) says how) and writes 1Password's
 repos don't wait for Dropbox: the first apply already cloned them into `~/src`
 from GitHub.
 
+**iPhone and iPad apps.** CARROT Weather and Sequel run on the laptop as
+iPhone and iPad apps, which mas can't install. Get them from the App Store's
+**iPhone & iPad Apps** tab; the Brewfile lists them in a comment.
+
 **Time zone.** The laptop's time zone follows its location. That needs System
 Settings → Privacy & Security → Location Services → System Services → Setting
 time zone turned on, which no script can do.
@@ -188,7 +192,9 @@ The preflight also stops the apply while
 
 This repo writes nothing inside that link except 1Password's `agent.toml`,
 which has to live there. Its own files sit outside it: the shell in `~/.zsh`,
-and Ghostty's config in `~/Library/Application Support/com.mitchellh.ghostty`.
+Ghostty's config in `~/Library/Application Support/com.mitchellh.ghostty`, and
+Amethyst's in `~/.amethyst.yml`, which Amethyst reads before anything in
+`~/.config/amethyst`.
 The personal age key is on no Mac at all (see
 [Re-sealing secrets](setup-servers.md#re-sealing-secrets)).
 
@@ -272,6 +278,28 @@ Ghostty's config. The mini needs 1Password's CLI integration on for that apply
 (see [its guide](setup-mini.md#fonts-on-the-mini)).
 
 Libron comes from the `font-libron` cask.
+
+## Amethyst
+
+The laptop tiles its windows with Amethyst. Its config is `~/.amethyst.yml`,
+from `home/dot_amethyst.yml`, and its two custom layouts, almost-maximize and
+grid, are in `~/Library/Application Support/Amethyst/Layouts`. Amethyst reads
+both only when it starts, so after an apply that changed them restart it with
+⌥⌃/. The window keys are the ⌥⌃ layer, with ⇧ for the second action in a
+family; the config lists them, and switches off every key Amethyst would
+otherwise bring back on its own.
+
+The first time Amethyst opens, allow it under System Settings → Privacy &
+Security → Accessibility, and turn on **Start Amethyst on login** in its menu.
+It keeps each Space's layout itself, across restarts.
+
+Amethyst moves a window to a Space by pressing macOS's Switch to Desktop
+shortcut for it, so the settings script turns those on: ⌃1 to ⌃4 for
+Desktops 1 to 4 and ⌃9 for Desktop 5, matching ⌥⌃⇧1 to 4 and ⌥⌃⇧9. It also
+turns off ⌃⌥Space for switching input sources, which Amethyst uses to cycle
+layouts, and adds Spaces through Mission Control until the main display has
+five. That last step needs the terminal running the apply allowed under
+Accessibility too; without it the apply says so and tries again next time.
 
 ## Renaming a Mac
 

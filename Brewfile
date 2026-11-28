@@ -39,6 +39,7 @@ cask "tailscale-app"
 # The laptop ###################################################################
 
 if role == "laptop"
+  tap "carlocab/personal"
   tap "thedavidweng/tap"
 
   brew "btop"
@@ -59,37 +60,41 @@ if role == "laptop"
   brew "rclone"
   brew "rmlint"
   brew "rsync"
+  # RAR archives; Homebrew's own unrar is gone.
+  brew "carlocab/personal/unrar", trusted: true
 
   cask "adguard"
   cask "adobe-creative-cloud"
   cask "airbuddy"
-  cask "aldente"
   cask "alt-tab"
+  cask "amethyst"
+  cask "backblaze"
   cask "bambu-studio"
   cask "beeper"
   cask "claude"
   cask "cleanshot"
+  cask "codex"
   cask "devonthink"
   cask "ente-auth"
   cask "fantastical"
   cask "freedom"
-  cask "google-chrome"
   cask "hazel"
   cask "iina"
   cask "latest"
-  cask "logi-options+"
-  cask "lunar"
   cask "mactex-no-gui"
+  cask "mimestream"
+  cask "orion"
   cask "raycast"
-  cask "rectangle-pro"
+  # Rectangle Pro is out while Amethyst is tried; both claim ⌥⌃.
+  # cask "rectangle-pro"
+  cask "replacicon"
   cask "slack"
+  cask "soundsource"
   cask "t3-code"
-  cask "thebrowsercompany-dia"
   cask "thedavidweng/tap/monarchmoney-cli", trusted: true
   cask "todoist-app"
   cask "visual-studio-code"
   cask "zoom"
-  cask "zotero"
 
   cask "font-fira-code"
   cask "font-fira-code-nerd-font"
@@ -118,7 +123,7 @@ if role == "laptop"
     mas "Foodnoms", id: 1479461686
     mas "GoodLinks", id: 1474335294
     mas "Infuse", id: 1136220934
-    mas "Monarch Money Tweaks", id: 6753774259
+    mas "MM-Tweaks for Monarch Money", id: 6753774259
     mas "No Youtube Shorts", id: 6502996298
     mas "Numbers", id: 361304891
     mas "OverPicture", id: 1188020834
@@ -126,15 +131,35 @@ if role == "laptop"
     mas "Parcel", id: 375589283
     mas "Play", id: 1596506190
     mas "Raycast Companion", id: 6738274497
+    mas "Reeder", id: 6475002485
     mas "Refined GitHub", id: 1519867270
     mas "Shortery", id: 1594183810
     mas "Sink It", id: 6449873635
     mas "Sleeve", id: 1606145041
     mas "SponsorBlock", id: 1573461917
     mas "Timery", id: 1425368544
+    mas "Userscripts", id: 1463298887
   end
 
+  # iPhone and iPad apps the laptop runs, which mas can't install: get them
+  # from the App Store's "iPhone & iPad Apps" by hand.
+  #   CARROT Weather
+  #   Sequel
+
+  vscode "aaron-bond.better-comments"
+  vscode "anthropic.claude-code"
+  vscode "antyos.openscad"
+  vscode "blinkshellinc.blink-fs"
+  vscode "chouzz.vscode-better-align"
+  vscode "eamodio.gitlens"
+  vscode "esbenp.prettier-vscode"
   vscode "james-yu.latex-workshop"
+  vscode "ms-python.debugpy"
+  vscode "ms-python.isort"
+  vscode "ms-python.python"
+  vscode "ms-python.vscode-pylance"
+  vscode "ms-python.vscode-python-envs"
+  vscode "ms-toolsai.jupyter-renderers"
   vscode "ms-vscode-remote.remote-ssh"
   vscode "ms-vscode-remote.remote-ssh-edit"
   vscode "ms-vscode.remote-explorer"
