@@ -21,11 +21,14 @@ fi
 mkdir -p "$(dirname "$bin")"
 [ -x "$bin" ] && [ ! "$src" -nt "$bin" ] && exit 0
 
-if ! swiftc=$(xcrun --find swiftc 2>/dev/null); then
+if ! xcrun --find swiftc >/dev/null 2>&1; then
   warn "the layout HUD isn't built: swiftc is missing. Install the Command Line Tools (xcode-select --install); the next apply builds it."
   exit 0
 fi
-if ! out=$("$swiftc" -O -swift-version 5 -framework AppKit -o "$bin.new" "$src" 2>&1); then
+# Through xcrun, which hands swiftc the macOS SDK: run on its own, swiftc
+# can't load the standard library ("unable to load standard library for
+# target arm64-apple-macosx27.2.0").
+if ! out=$(xcrun swiftc -O -swift-version 5 -framework AppKit -o "$bin.new" "$src" 2>&1); then
   rm -f "$bin.new"
   warn "FAILED to build the layout HUD; the next apply tries again:"
   printf '%s\n' "$out" >&2
