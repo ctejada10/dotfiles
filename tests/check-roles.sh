@@ -50,10 +50,17 @@ for role in "${roles[@]}"; do
       has "$list" "Library/CloudStorage/Dropbox/config-files/1Password/ssh/agent.toml" \
         && pass "writes 1Password's agent.toml into Dropbox's config-files" || fail "writes 1Password's agent.toml into Dropbox's config-files"
       has "$list" ".amethyst.yml" \
-        && has "$list" "Library/Application Support/Amethyst/Layouts/almost-maximize.js" \
+        && has "$list" "Library/Application Support/Amethyst/Layouts/center.js" \
+        && has "$list" "Library/Application Support/Amethyst/Layouts/tall-left.js" \
+        && has "$list" "Library/Application Support/Amethyst/Layouts/float.js" \
         && has "$list" "Library/Application Support/Amethyst/Layouts/grid.js" \
         && has "$list" "Library/Application Support/Amethyst/Layouts/bsp-left.js" \
         && pass "has Amethyst's config and custom layouts" || fail "has Amethyst's config and custom layouts"
+      has "$list" ".hammerspoon/amethyst-hud.lua" \
+        && has "$list" "Library/LaunchAgents/com.carlosetejada.amethyst.plist" \
+        && has "$list" "Library/LaunchAgents/com.carlosetejada.layout-hud.plist" \
+        && pass "has the layout HUD, Hammerspoon's module and their LaunchAgents" \
+        || fail "has the layout HUD, Hammerspoon's module and their LaunchAgents"
       has "$list" ".config" && pass "manages the ~/.config link" || fail "manages the ~/.config link"
       grep -q '^\.config/' <<< "$list" && fail "manages nothing inside ~/.config" "$(grep '^\.config/' <<< "$list")" || pass "manages nothing inside ~/.config"
       lacks "$list" ".ssh/authorized_keys" && pass "has no authorized_keys" || fail "has no authorized_keys"
@@ -62,7 +69,7 @@ for role in "${roles[@]}"; do
     agent-mini)
       lacks "$list" ".claude/pstack-models.md" && pass "has no pstack model sheet" || fail "has no pstack model sheet"
       grep -q 'Dropbox/config-files' <<< "$list" && fail "writes nothing into Dropbox's config-files" || pass "writes nothing into Dropbox's config-files"
-      grep -qE '^(\.amethyst\.yml|Library/Application Support/Amethyst)' <<< "$list" && fail "has no Amethyst config or layouts" || pass "has no Amethyst config or layouts"
+      grep -qE '^(\.amethyst\.yml|\.hammerspoon|Library/Application Support/Amethyst|Library/LaunchAgents/com\.carlosetejada\.(amethyst|layout-hud))' <<< "$list" && fail "has no Amethyst, Hammerspoon or layout HUD" || pass "has no Amethyst, Hammerspoon or layout HUD"
       grep -q '^\.config' <<< "$list" && fail "keeps a local ~/.config, untouched" || pass "keeps a local ~/.config, untouched"
       has "$list" "agent-drafts" && pass "has agent-drafts" || fail "has agent-drafts"
       # The laptop logs in to the mini with its 1Password login key, and the

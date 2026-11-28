@@ -84,6 +84,9 @@ Library/CloudStorage/Dropbox
 Library/LaunchAgents/com.carlosetejada.personal-backup.plist
 Library/Application Support/Amethyst
 .amethyst.yml
+.hammerspoon
+Library/LaunchAgents/com.carlosetejada.amethyst.plist
+Library/LaunchAgents/com.carlosetejada.layout-hud.plist
 {{- end }}
 
 {{- /* The mini: where all development happens. */}}

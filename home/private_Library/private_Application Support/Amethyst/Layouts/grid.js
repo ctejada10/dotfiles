@@ -7,10 +7,17 @@
 //   3 windows → two on top, one full-width below
 //   4 windows → 2×2
 //   5+        → grows to 3×2, 3×3 … ; a short last row stretches to fill the width
+// Each arrangement is written to Amethyst's log, which Hammerspoon reads to
+// know the layout of every Space: ~/.hammerspoon/amethyst-hud.lua.
+const report = (layout, screenFrame) => console.log("amethyst-hud " + JSON.stringify({
+    layout, x: screenFrame.x, y: screenFrame.y, w: screenFrame.width, h: screenFrame.height
+}));
+
 function layout() {
     return {
         name: "Grid",
         getFrameAssignments: (windows, screenFrame) => {
+            report("grid", screenFrame);
             const n = windows.length;
             if (n === 0) return {};
             const cols = Math.max(1, Math.ceil(Math.sqrt(n)));

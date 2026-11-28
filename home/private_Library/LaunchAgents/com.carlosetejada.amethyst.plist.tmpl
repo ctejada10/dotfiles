@@ -1,0 +1,43 @@
+{{- if eq .role "laptop" -}}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.carlosetejada.amethyst</string>
+
+	<!-- Amethyst with its log on, written to ~/Library/Logs/amethyst.log,
+	     where Hammerspoon reads which layout each Space is on. Amethyst's
+	     argument parser refuses the log flag on its own and the app exits;
+	     "test" first skips the parser and changes nothing else. This replaces
+	     a login item, which can't pass arguments. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/Amethyst.app/Contents/MacOS/Amethyst</string>
+		<string>test</string>
+		<string>--log</string>
+	</array>
+
+	<!-- Started at login, and again if it crashes; quitting it on purpose
+	     leaves it quit. ⌥⌃/ restarts it through launchctl kickstart. -->
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+
+	<!-- Amethyst's log goes to its error output. Hammerspoon empties the file
+	     when it passes 20 MB. -->
+	<key>StandardOutPath</key>
+	<string>{{ .chezmoi.homeDir }}/Library/Logs/amethyst.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{ .chezmoi.homeDir }}/Library/Logs/amethyst.log</string>
+</dict>
+</plist>
+{{ end -}}

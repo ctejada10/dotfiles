@@ -1,6 +1,6 @@
 # Amethyst, the laptop's tiling window manager. Amethyst reads ~/.amethyst.yml
 # before ~/.config/amethyst/amethyst.yml, and either overrides its settings
-# window. After an edit, restart Amethyst with ⌥⌃/.
+# window. After an edit, restart Amethyst with ⌥⌃/ (Hammerspoon).
 #
 # Window keys live in the ⌥⌃ layer (mod1); ⇧ adds the second action in the
 # same family (mod2). ⌘ stays macOS's, ⌥ Raycast's and Hyper the app
@@ -8,8 +8,12 @@
 # back to its built-in key with these modifiers, so every command that has
 # one and isn't used here is set to false.
 #
-# The custom layouts are in ~/Library/Application Support/Amethyst/Layouts/:
-# almost-maximize.js, bsp-left.js and grid.js.
+# Every layout is a custom one, in ~/Library/Application Support/Amethyst/
+# Layouts/, and writes each arrangement to Amethyst's log. Amethyst runs from
+# a LaunchAgent with that log on, and Hammerspoon reads it to give each Space
+# its layout and to show the layout HUD (~/.hammerspoon/amethyst-hud.lua).
+# ⌥⌃I shows the HUD and ⌥⌃/ restarts Amethyst; both are Hammerspoon's, since
+# Amethyst's own restart would drop the log.
 
 mod1:
   - option
@@ -22,16 +26,17 @@ mod2:
 
 # The first is the layout of a Space that has never been set.
 layouts:
-  - almost-maximize
+  - center
   - grid
   - bsp-left
-  - tall
+  - tall-left
+  - float
 
 # Layouts ######################################################################
 
-select-almost-maximize-layout:
+select-center-layout:
   mod: mod1
-  key: f
+  key: d
 
 select-grid-layout:
   mod: mod1
@@ -41,9 +46,13 @@ select-bsp-left-layout:
   mod: mod1
   key: b
 
-select-tall-layout:
+select-tall-left-layout:
   mod: mod1
   key: t
+
+select-float-layout:
+  mod: mod1
+  key: f
 
 cycle-layout:
   mod: mod1
@@ -136,12 +145,9 @@ reevaluate-windows:
   mod: mod1
   key: ','
 
-relaunch-amethyst:
-  mod: mod1
-  key: '/'
-
 # Off: built-in keys that would otherwise come back ############################
 
+select-tall-layout: false
 select-wide-layout: false
 select-fullscreen-layout: false
 select-column-layout: false
@@ -167,6 +173,7 @@ throw-space-8: false
 throw-space-9: false
 throw-space-10: false
 display-current-layout: false
+relaunch-amethyst: false
 toggle-focus-follows-mouse: false
 
 # Behaviour ####################################################################
@@ -176,8 +183,10 @@ enables-layout-hud: false
 enables-layout-hud-on-space-change: false
 
 floating:
+  - com.apple.finder
   - com.apple.systempreferences
-  - com.1password.1password
+  - com.apple.FaceTime
+  - com.apple.mobilephone
 floating-is-blacklist: true
 float-small-windows: true
 small-window-size: 500

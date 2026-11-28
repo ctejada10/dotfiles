@@ -16,9 +16,15 @@ const MAX_RATIO = 0.8;
 
 const clamp = (ratio) => Math.min(MAX_RATIO, Math.max(MIN_RATIO, ratio));
 
+// Each arrangement is written to Amethyst's log, which Hammerspoon reads to
+// know the layout of every Space: ~/.hammerspoon/amethyst-hud.lua.
+const report = (layout, screenFrame) => console.log("amethyst-hud " + JSON.stringify({
+    layout, x: screenFrame.x, y: screenFrame.y, w: screenFrame.width, h: screenFrame.height
+}));
+
 function layout() {
     return {
-        name: "BSP, main on the left",
+        name: "BSP",
         initialState: { mainPaneRatio: 0.5 },
         commands: {
             expandMain: {
@@ -32,6 +38,7 @@ function layout() {
         },
         recommendMainPaneRatio: (ratio, state) => ({ ...state, mainPaneRatio: clamp(ratio) }),
         getFrameAssignments: (windows, screenFrame, state) => {
+            report("bsp-left", screenFrame);
             const frames = {};
             let region = { x: screenFrame.x, y: screenFrame.y, width: screenFrame.width, height: screenFrame.height };
             windows.forEach((window, index) => {
