@@ -6,12 +6,15 @@
 -- the LaunchAgent com.carlosetejada.amethyst with that log in
 -- ~/Library/Logs/amethyst.log. This reads it as it grows.
 --
--- Each Space has a layout per screen: the laptop's own, or any other (the
--- Sony, always in clamshell). The first time a Space is seen in a session it
--- gets its layout: the one last chosen there, or else its default below. A
--- layout changed by hand after that is remembered for that Space and screen,
--- in hs.settings, and the HUD shows it. ⌥⌃I shows the HUD on request and ⌥⌃/
--- restarts Amethyst with its log on.
+-- Each Space has a default layout per screen: the laptop's own, or any other
+-- (the Sony, always in clamshell). The first time Hammerspoon ever sees a
+-- Space it sets that default, once, and records it in hs.settings; after that
+-- it never presses a key for that Space again. Amethyst remembers each
+-- Space's layout itself, across switches and restarts, so a layout changed by
+-- hand stays. A change within a Space shows the HUD. For a moment after a
+-- Space switch the log is ignored: Amethyst's lines for the old Space can
+-- land after macOS already reports the new one. ⌥⌃I shows the HUD on request
+-- and ⌥⌃/ restarts Amethyst with its log on.
 
 local M = {}
 
@@ -30,13 +33,15 @@ local LOG = os.getenv("HOME") .. "/Library/Logs/amethyst.log"
 local LOG_LIMIT = 20 * 1024 * 1024
 local AGENT = "com.carlosetejada.amethyst"
 local HUD_NOTE = "com.carlosetejada.layout-hud.show"
-local STORE = "amethystHud.spaceLayouts"
+local SEEDED = "amethystHud.seeded"
+-- Seconds the log is ignored after a Space switch.
+local SETTLE = 0.6
 
 local log = hs.logger.new("amethystHud", "info")
-local saved = hs.settings.get(STORE) or {}
+local seeded = hs.settings.get(SEEDED) or {} -- "laptop:2" -> true once set
 local current = {} -- space id -> the layout Amethyst last reported there
-local synced = {}  -- space id -> true once it has had its layout this session
 local pending = {} -- space id -> the layout just asked of Amethyst
+local settleUntil = 0
 
 local function uid()
     return hs.execute("/usr/bin/id -u"):gsub("%s+", "")
@@ -60,14 +65,28 @@ local function spaceNumber(screen, spaceID)
     end
 end
 
--- The active Space on a screen, its key in the saved table, and its layout:
--- the one chosen last, or the default.
+-- The active Space on a screen, its key in the seeded table, and its default.
 local function slot(screen)
     local id = hs.spaces.activeSpaceOnScreen(screen)
     local number = id and spaceNumber(screen, id)
     if not number then return id end
     local key = profile(screen) .. ":" .. number
-    return id, key, saved[key] or (M.defaults[profile(screen)] or {})[number]
+    return id, key, (M.defaults[profile(screen)] or {})[number]
+end
+
+local function seed(key)
+    seeded[key] = true
+    hs.settings.set(SEEDED, seeded)
+end
+
+-- The first version kept every layout changed by hand here. Those Spaces
+-- already have Carlos's layout, so they count as set.
+local OLD_STORE = "amethystHud.spaceLayouts"
+local old = hs.settings.get(OLD_STORE)
+if type(old) == "table" then
+    for key in pairs(old) do seeded[key] = true end
+    hs.settings.set(SEEDED, seeded)
+    hs.settings.clear(OLD_STORE)
 end
 
 -- The screen a reported frame is on.
@@ -88,6 +107,7 @@ end
 
 local function onReport(report)
     if not KEYS[report.layout] then return end
+    if hs.timer.secondsSinceEpoch() < settleUntil then return end
     local screen = screenFor(report)
     local id, key, want = slot(screen)
     if not id then return end
@@ -95,21 +115,19 @@ local function onReport(report)
     current[id] = report.layout
 
     if pending[id] then
-        if report.layout == pending[id] then
-            pending[id] = nil
-            synced[id] = true
-        end
+        if report.layout == pending[id] then pending[id] = nil end
         return
     end
 
-    if not synced[id] then
+    if key and not seeded[key] then
         if not want or report.layout == want then
-            synced[id] = true
+            seed(key)
         elseif focusedOn(screen) then
             -- A select key toggles back when its layout is already on, so it
             -- is pressed only when Amethyst reports another one.
             pending[id] = want
-            log.i(string.format("%s: %s -> %s", key, report.layout, want))
+            seed(key)
+            log.i(string.format("%s: %s -> %s, once", key, report.layout, want))
             hs.eventtap.keyStroke(MODS, KEYS[want], 20000)
             hs.timer.doAfter(2, function()
                 if pending[id] == want then pending[id] = nil end
@@ -118,11 +136,7 @@ local function onReport(report)
         return
     end
 
-    if before and report.layout ~= before and key then
-        saved[key] = report.layout
-        hs.settings.set(STORE, saved)
-        showHud(report.layout)
-    end
+    if before and report.layout ~= before then showHud(report.layout) end
 end
 
 -- Lines come in chunks that can end mid-line.
@@ -170,9 +184,14 @@ M.appWatcher = hs.application.watcher.new(function(_, event, app)
     end
 end):start()
 
--- A screen plugged in or out: every Space gets its layout again.
+M.spaceWatcher = hs.spaces.watcher.new(function()
+    settleUntil = hs.timer.secondsSinceEpoch() + SETTLE
+end):start()
+
+-- A screen plugged in or out: its Spaces are other Spaces.
 M.screenWatcher = hs.screen.watcher.new(function()
-    synced, pending, current = {}, {}, {}
+    pending, current = {}, {}
+    settleUntil = hs.timer.secondsSinceEpoch() + SETTLE
 end):start()
 
 M.trim = hs.timer.doEvery(600, function()
@@ -185,7 +204,7 @@ M.showKey = hs.hotkey.bind(MODS, "i", function()
     showHud(id and current[id] or want)
 end)
 M.restartKey = hs.hotkey.bind(MODS, "/", function()
-    synced, pending, current = {}, {}, {}
+    pending, current = {}, {}
     restartAmethyst()
 end)
 

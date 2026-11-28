@@ -299,12 +299,15 @@ by its own menu or an update, it has no log, and Hammerspoon restarts it from
 the LaunchAgent. ⌥⌃/ restarts it the same way, so it's Hammerspoon's key, not
 Amethyst's.
 
-**A layout per Space.** Each Space has a layout on the laptop's own screen and
-one on any other (the Sony, used in clamshell); the defaults are at the top of
-`amethyst-hud.lua`. The first time a Space shows up in a session, Hammerspoon
-gives it its layout by pressing its key. A layout changed by hand is kept for
-that Space and screen, in Hammerspoon's settings, and comes back after a
-restart.
+**A layout per Space.** Each Space has a default layout on the laptop's own
+screen and one on any other (the Sony, used in clamshell); the defaults are at
+the top of `amethyst-hud.lua`. The first time Hammerspoon ever sees a Space,
+it sets that default by pressing its key, once, and records it in its
+settings. After that it never touches the Space: Amethyst remembers each
+Space's layout itself, across switches and restarts, so a layout changed by
+hand stays. To have a Space take its default again, clear its entry with
+`hs.settings.set("amethystHud.seeded", nil)` in Hammerspoon's console (which
+clears them all) and reload.
 
 **The HUD.** A layout changed by hand shows a small Liquid Glass tile at the
 bottom of the screen with the layout's glyph and name for a second, and ⌥⌃I
